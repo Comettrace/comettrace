@@ -1,0 +1,78 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+    paths:
+      - "crates/**"
+      - "apps/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/ci.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [fmt, clippy, test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.task != 'fmt'
+        with:
+          shared-key: rust-${{ matrix.task }}
+          cache-on-failure: true
+      - name: fmt
+        if: matrix.task == 'fmt'
+        run: cargo fmt --all -- --check
+      - name: clippy
+        if: matrix.task == 'clippy'
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: test
+        if: matrix.task == 'test'
+        run: |
+          cargo test --workspace --locked
+          cargo test --doc --workspace --locked
+
+  ee-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-ee-gate
+          cache-on-failure: true
+      - name: the default build excludes the ee crate
+        run: |
+          if cargo tree -p comettrace -e normal --locked | grep -q comettrace-ee; then
+            echo "::error::comettrace-ee is in the default dependency graph"
+            exit 1
+          fi
+      - name: the ee feature pulls the ee crate in
+        run: |
+          if ! cargo tree -p comettrace -e normal --features ee --locked | grep -q comettrace-ee; then
+            echo "::error::the ee feature does not pull comettrace-ee in"
+            exit 1
+          fi
+      - name: the ee crate builds behind its feature
+        run: cargo build -p comettrace --features ee --locked
