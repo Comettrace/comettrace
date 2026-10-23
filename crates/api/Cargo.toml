@@ -3,6 +3,30 @@ name = "comettrace-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
+
+[dependencies]
+comettrace-core.workspace = true
+comettrace-otlp.workspace = true
+axum.workspace = true
+bytes.workspace = true
+opentelemetry-proto.workspace = true
+prost.workspace = true
+thiserror.workspace = true
+tonic.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+comettrace-core.workspace = true
+comettrace-storage.workspace = true
+opentelemetry-proto.workspace = true
+prost.workspace = true
+flate2.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tower = { workspace = true, features = ["util"] }
+uuid.workspace = true
 
 [lints]
 workspace = true
