@@ -7,6 +7,9 @@ publish = false
 
 [dependencies]
 comettrace-core.workspace = true
+clickhouse.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
 sha2.workspace = true
 subtle.workspace = true
 
