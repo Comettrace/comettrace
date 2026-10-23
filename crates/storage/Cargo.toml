@@ -9,11 +9,16 @@ publish = false
 comettrace-core.workspace = true
 clickhouse.workspace = true
 serde = { workspace = true, features = ["derive"] }
+serde_repr.workspace = true
+uuid.workspace = true
 thiserror.workspace = true
 sha2.workspace = true
 subtle.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
 
 [dev-dependencies]
+clickhouse = { workspace = true, features = ["test-util"] }
 tokio.workspace = true
 uuid.workspace = true
 

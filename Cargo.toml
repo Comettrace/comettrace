@@ -31,17 +31,18 @@ comettrace-ee = { path = "crates/ee" }
 anyhow = "1.0.104"
 axum = "0.8.9"
 bytes = "1.12.1"
-clickhouse = { version = "0.15.3", features = ["uuid"] }
+clickhouse = { version = "0.15.3", features = ["uuid", "inserter"] }
 figment = { version = "0.10.19", features = ["env", "toml"] }
 flate2 = "1.1.6"
 opentelemetry-proto = { version = "0.33.1", default-features = false, features = ["gen-tonic", "trace"] }
 prost = "0.14.4"
 serde = { version = "1.0.229", features = ["derive"] }
+serde_repr = "0.1.20"
 sha2 = "0.11.1"
 subtle = "2.6.1"
 thiserror = "2.0.21"
 tokio-stream = "0.1.17"
-tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "signal", "net", "time"] }
+tokio = { version = "1.54.0", features = ["rt-multi-thread", "macros", "signal", "net", "time", "sync"] }
 tonic = { version = "0.14.3", features = ["gzip"] }
 tower = "0.5.3"
 tower-http = { version = "0.7.1", features = ["decompression-gzip", "limit", "trace"] }

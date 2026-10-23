@@ -104,4 +104,6 @@ jobs:
           shared-key: rust-clickhouse
           cache-on-failure: true
       - name: migrations up, down and up again against a real server
-        run: cargo test -p comettrace-storage --test clickhouse_migrations --locked -- --test-threads=4
+        run: cargo test -p comettrace-storage --test clickhouse_migrations --test span_sink --locked
+      - name: small versus large batches
+        run: cargo run -p comettrace-storage --example batching_benchmark --release --locked

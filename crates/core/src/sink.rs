@@ -7,6 +7,8 @@ use crate::tenant::TenantId;
 pub enum SinkError {
     #[error("the span sink is unavailable")]
     Unavailable,
+    #[error("a span timestamp falls outside the range the span store can hold")]
+    TimestampOutOfRange,
     #[error("the sink accepts at most {limit} spans per batch")]
     BatchTooLarge { limit: usize },
 }
