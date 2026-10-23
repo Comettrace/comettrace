@@ -125,7 +125,9 @@ impl Migrator {
 }
 
 fn statements(sql: &str) -> impl Iterator<Item = &str> {
-    sql.split(';').map(str::trim).filter(|part| !part.is_empty())
+    sql.split(';')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
 }
 
 #[cfg(test)]
