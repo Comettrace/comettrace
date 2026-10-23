@@ -64,6 +64,7 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 cast_precision_loss = "allow"
 return_self_not_must_use = "allow"
+duration_suboptimal_units = "allow"
 
 [profile.release]
 lto = "thin"
