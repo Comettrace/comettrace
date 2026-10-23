@@ -90,13 +90,13 @@ async fn the_spans_table_carries_the_intended_key_partition_and_ttl() {
 
     let sorting_key = one_text(
         &client,
-        "SELECT sorting_key FROM system.tables \
+        "SELECT sorting_key AS value FROM system.tables \
          WHERE database = currentDatabase() AND name = 'spans'",
     )
     .await;
     let partition_key = one_text(
         &client,
-        "SELECT partition_key FROM system.tables \
+        "SELECT partition_key AS value FROM system.tables \
          WHERE database = currentDatabase() AND name = 'spans'",
     )
     .await;
@@ -115,7 +115,7 @@ async fn the_spans_table_carries_the_intended_key_partition_and_ttl() {
 
     let ttl = one_text(
         &client,
-        "SELECT create_table_query FROM system.tables \
+        "SELECT create_table_query AS value FROM system.tables \
          WHERE database = currentDatabase() AND name = 'spans'",
     )
     .await;
@@ -134,19 +134,19 @@ async fn the_promoted_columns_sit_beside_the_attribute_map() {
 
     let attributes = one_text(
         &client,
-        "SELECT type FROM system.columns \
+        "SELECT type AS value FROM system.columns \
          WHERE database = currentDatabase() AND table = 'spans' AND name = 'attributes'",
     )
     .await;
     let http_status = one_text(
         &client,
-        "SELECT type FROM system.columns \
+        "SELECT type AS value FROM system.columns \
          WHERE database = currentDatabase() AND table = 'spans' AND name = 'http_status_code'",
     )
     .await;
     let service = one_text(
         &client,
-        "SELECT type FROM system.columns \
+        "SELECT type AS value FROM system.columns \
          WHERE database = currentDatabase() AND table = 'spans' AND name = 'service_name'",
     )
     .await;
@@ -167,7 +167,7 @@ async fn up_then_down_then_up_leaves_one_recorded_version() {
     let reverted = migrator.down_to(0).await.expect("the down");
     let gone = client
         .query(
-            "SELECT count() FROM system.tables \
+            "SELECT count() AS value FROM system.tables \
              WHERE database = currentDatabase() AND name = 'spans'",
         )
         .fetch_one::<Count>()
