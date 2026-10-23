@@ -13,16 +13,14 @@ struct Count {
 }
 
 fn endpoint() -> Option<String> {
-    match std::env::var("CLICKHOUSE_URL") {
-        Ok(url) => Some(url),
-        Err(_) => {
-            assert!(
-                std::env::var("REQUIRE_CLICKHOUSE_URL").is_err(),
-                "REQUIRE_CLICKHOUSE_URL is set but CLICKHOUSE_URL is not"
-            );
-            None
-        }
+    if let Ok(url) = std::env::var("CLICKHOUSE_URL") {
+        return Some(url);
     }
+    assert!(
+        std::env::var("REQUIRE_CLICKHOUSE_URL").is_err(),
+        "REQUIRE_CLICKHOUSE_URL is set but CLICKHOUSE_URL is not"
+    );
+    None
 }
 
 async fn fresh_database(name: &str) -> Option<Client> {
@@ -97,7 +95,10 @@ async fn the_spans_table_carries_the_intended_key_partition_and_ttl() {
         "the key must lead with the tenant, got {sorting_key}"
     );
     assert!(sorting_key.contains("service_name"), "{sorting_key}");
-    assert!(sorting_key.contains("toStartOfHour(start_time)"), "{sorting_key}");
+    assert!(
+        sorting_key.contains("toStartOfHour(start_time)"),
+        "{sorting_key}"
+    );
     assert!(sorting_key.contains("trace_id"), "{sorting_key}");
     assert_eq!(partition_key, "toDate(start_time)");
 
@@ -171,7 +172,11 @@ async fn up_then_down_then_up_leaves_one_recorded_version() {
         MIGRATIONS.iter().map(|m| m.version).collect::<Vec<_>>()
     );
     assert_eq!(
-        migrator.applied().await.expect("the recorded versions").len(),
+        migrator
+            .applied()
+            .await
+            .expect("the recorded versions")
+            .len(),
         MIGRATIONS.len()
     );
 }
