@@ -3,16 +3,28 @@ name = "comettrace"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
-comettrace-core = { workspace = true }
-comettrace-otlp = { workspace = true }
-comettrace-storage = { workspace = true }
-comettrace-api = { workspace = true }
+comettrace-api.workspace = true
+comettrace-core.workspace = true
+comettrace-storage.workspace = true
 comettrace-ee = { workspace = true, optional = true }
+anyhow.workspace = true
+axum.workspace = true
+figment.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio.workspace = true
+tonic.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
 
 [features]
 ee = ["dep:comettrace-ee"]
+
+[dev-dependencies]
+figment = { workspace = true, features = ["test"] }
 
 [lints]
 workspace = true
