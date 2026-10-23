@@ -31,6 +31,7 @@ comettrace-ee = { path = "crates/ee" }
 anyhow = "1.0.104"
 axum = "0.8.9"
 bytes = "1.12.1"
+clickhouse = { version = "0.15.3", features = ["uuid"] }
 figment = { version = "0.10.19", features = ["env", "toml"] }
 flate2 = "1.1.6"
 opentelemetry-proto = { version = "0.33.1", default-features = false, features = ["gen-tonic", "trace"] }
