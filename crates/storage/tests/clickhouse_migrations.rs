@@ -23,9 +23,20 @@ fn endpoint() -> Option<String> {
     None
 }
 
+fn connected(url: &str) -> Client {
+    let mut client = Client::default().with_url(url);
+    if let Ok(user) = std::env::var("CLICKHOUSE_USER") {
+        client = client.with_user(user);
+    }
+    if let Ok(password) = std::env::var("CLICKHOUSE_PASSWORD") {
+        client = client.with_password(password);
+    }
+    client
+}
+
 async fn fresh_database(name: &str) -> Option<Client> {
     let url = endpoint()?;
-    let root = Client::default().with_url(&url);
+    let root = connected(&url);
     root.query(&format!("DROP DATABASE IF EXISTS {name}"))
         .execute()
         .await
@@ -34,7 +45,7 @@ async fn fresh_database(name: &str) -> Option<Client> {
         .execute()
         .await
         .expect("creating the test database");
-    Some(Client::default().with_url(&url).with_database(name))
+    Some(connected(&url).with_database(name))
 }
 
 async fn one_text(client: &Client, query: &str) -> String {
