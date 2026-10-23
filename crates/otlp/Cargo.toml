@@ -3,6 +3,13 @@ name = "comettrace-otlp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
+
+[dependencies]
+comettrace-core.workspace = true
+opentelemetry-proto.workspace = true
+prost.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true
