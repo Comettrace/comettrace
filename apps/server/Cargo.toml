@@ -1,0 +1,18 @@
+[package]
+name = "comettrace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+comettrace-core = { workspace = true }
+comettrace-otlp = { workspace = true }
+comettrace-storage = { workspace = true }
+comettrace-api = { workspace = true }
+comettrace-ee = { workspace = true, optional = true }
+
+[features]
+ee = ["dep:comettrace-ee"]
+
+[lints]
+workspace = true
