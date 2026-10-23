@@ -26,9 +26,9 @@ async fn main() {
             &client,
             BatchLimits {
                 max_rows: threshold,
-                period: Duration::from_hours(1),
+                period: Duration::from_secs(60 * 60),
             },
-            Duration::from_days(7),
+            Duration::from_secs(7 * 24 * 60 * 60),
             SystemClock,
         );
 

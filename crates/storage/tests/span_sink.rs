@@ -60,9 +60,9 @@ async fn the_clickhouse_sink_honours_the_contract() {
         &client,
         BatchLimits {
             max_rows: 1,
-            period: Duration::from_mins(1),
+            period: Duration::from_secs(60),
         },
-        Duration::from_hours(1),
+        Duration::from_secs(60 * 60),
         FixedClock::at(NOW),
     );
 
@@ -143,7 +143,12 @@ async fn stored_expire_at(client: &Client) -> u32 {
 }
 
 fn sink_with(client: &Client, limits: BatchLimits) -> ClickhouseSink<FixedClock> {
-    ClickhouseSink::new(client, limits, Duration::from_days(7), FixedClock::at(NOW))
+    ClickhouseSink::new(
+        client,
+        limits,
+        Duration::from_secs(7 * 24 * 60 * 60),
+        FixedClock::at(NOW),
+    )
 }
 
 #[tokio::test]
@@ -155,7 +160,7 @@ async fn the_row_threshold_flushes_without_an_explicit_call() {
         &client,
         BatchLimits {
             max_rows: 2,
-            period: Duration::from_hours(1),
+            period: Duration::from_secs(60 * 60),
         },
     );
 
@@ -179,7 +184,7 @@ async fn one_buffer_carries_rows_from_several_tenants() {
         &client,
         BatchLimits {
             max_rows: 1_000,
-            period: Duration::from_hours(1),
+            period: Duration::from_secs(60 * 60),
         },
     );
 
@@ -245,7 +250,7 @@ async fn expire_at_is_the_clock_plus_the_retention() {
         &client,
         BatchLimits {
             max_rows: 1,
-            period: Duration::from_hours(1),
+            period: Duration::from_secs(60 * 60),
         },
     );
 
