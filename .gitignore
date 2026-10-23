@@ -1,0 +1,13 @@
+/target
+**/*.rs.bk
+*.pdb
+
+.claude/
+.env
+.env.*
+
+node_modules/
+web/dist/
+web/.vite/
+
+.DS_Store
