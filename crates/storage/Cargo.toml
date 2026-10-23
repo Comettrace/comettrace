@@ -3,6 +3,16 @@ name = "comettrace-storage"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
+
+[dependencies]
+comettrace-core.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true
