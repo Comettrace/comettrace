@@ -60,7 +60,11 @@ impl<C: Clock> ClickhouseSink<C> {
 
     pub async fn flush(&self) -> Result<u64, SinkError> {
         let mut inserter = self.inserter.lock().await;
-        Ok(inserter.force_commit().await.map_err(refused)?.rows)
+        Ok(inserter
+            .force_commit()
+            .await
+            .map_err(|error| refused(&error))?
+            .rows)
     }
 
     pub async fn pending_rows(&self) -> u64 {
@@ -81,14 +85,17 @@ impl<C: Clock + Send + Sync> SpanSink for ClickhouseSink<C> {
         let mut inserter = self.inserter.lock().await;
         for span in &spans {
             let row = SpanRow::of(tenant, span, expire_at)?;
-            inserter.write(&row).await.map_err(refused)?;
+            inserter
+                .write(&row)
+                .await
+                .map_err(|error| refused(&error))?;
         }
-        inserter.commit().await.map_err(refused)?;
+        inserter.commit().await.map_err(|error| refused(&error))?;
         Ok(())
     }
 }
 
-fn refused(error: ClickhouseError) -> SinkError {
+fn refused(error: &ClickhouseError) -> SinkError {
     tracing::error!(%error, "the span store refused a batch");
     SinkError::Unavailable
 }
