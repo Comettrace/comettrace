@@ -1,3 +1,4 @@
+mod clock;
 mod ingest;
 mod key;
 mod sink;
@@ -5,6 +6,7 @@ mod span;
 mod tenant;
 mod usage;
 
+pub use clock::{Clock, UnixSeconds};
 pub use ingest::{Ingest, IngestError, Payload};
 pub use key::IngestKey;
 pub use sink::{SinkError, SpanSink};

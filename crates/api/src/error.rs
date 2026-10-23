@@ -23,7 +23,9 @@ impl ApiError {
                 StatusCode::UNAUTHORIZED
             }
             Self::UnsupportedContentType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            Self::Decode(_) => StatusCode::BAD_REQUEST,
+            Self::Decode(_) | Self::Ingest(IngestError::Sink(SinkError::TimestampOutOfRange)) => {
+                StatusCode::BAD_REQUEST
+            }
             Self::Ingest(IngestError::Sink(SinkError::Unavailable)) => {
                 StatusCode::SERVICE_UNAVAILABLE
             }
@@ -51,7 +53,9 @@ impl From<ApiError> for Status {
             ApiError::MissingBearer | ApiError::Ingest(IngestError::UnknownKey(UnknownKey)) => {
                 Self::unauthenticated(message)
             }
-            ApiError::UnsupportedContentType | ApiError::Decode(_) => {
+            ApiError::UnsupportedContentType
+            | ApiError::Decode(_)
+            | ApiError::Ingest(IngestError::Sink(SinkError::TimestampOutOfRange)) => {
                 Self::invalid_argument(message)
             }
             ApiError::Ingest(IngestError::Sink(SinkError::Unavailable)) => {
