@@ -16,6 +16,7 @@ mod quota;
 mod resets;
 mod sessions;
 mod sink;
+mod spans;
 mod usage;
 
 pub use accounts::{AccountError, PostgresAccounts};
@@ -38,4 +39,5 @@ pub use quota::{Allowance, StaticQuota};
 pub use resets::PostgresResets;
 pub use sessions::PostgresSessions;
 pub use sink::MemorySink;
+pub use spans::{SpanStoreSettings, open as open_span_store};
 pub use usage::MemoryMeter;

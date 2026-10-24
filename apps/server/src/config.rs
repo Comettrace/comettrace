@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use comettrace_core::DecompressedBytes;
-use comettrace_storage::Allowance;
+use comettrace_storage::{Allowance, SpanStoreSettings};
 use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Toml};
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,8 @@ pub struct Config {
     pub database_url: Option<String>,
     #[serde(default)]
     pub redis_url: Option<String>,
+    #[serde(default)]
+    pub spans: Option<SpansConfig>,
     #[serde(default)]
     pub tenants: Vec<TenantKey>,
     #[serde(default)]
@@ -38,6 +40,35 @@ fn yes() -> bool {
 
 fn console() -> String {
     "/console".to_owned()
+}
+
+fn a_month() -> u64 {
+    30
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpansConfig {
+    pub url: String,
+    #[serde(default)]
+    pub database: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default = "a_month")]
+    pub retention_days: u64,
+}
+
+impl From<SpansConfig> for SpanStoreSettings {
+    fn from(spans: SpansConfig) -> Self {
+        Self {
+            url: spans.url,
+            database: spans.database,
+            user: spans.user,
+            password: spans.password,
+            retention_days: spans.retention_days,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +121,7 @@ impl Default for Config {
             http_address: SocketAddr::from(([0, 0, 0, 0], 4318)),
             database_url: None,
             redis_url: None,
+            spans: None,
             tenants: Vec::new(),
             oidc: None,
             mail: None,
@@ -193,6 +225,49 @@ mod tests {
                 config.tenants[1].allowance,
                 TenantAllowance::Overage(10_485_760)
             );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn a_span_store_needs_only_its_url_and_keeps_a_month() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                FILE,
+                r#"
+                [spans]
+                url = "http://clickhouse:8123"
+                "#,
+            )?;
+
+            let config: Config = figment().extract()?;
+            let spans = config.spans.expect("a span store");
+
+            assert_eq!(spans.url, "http://clickhouse:8123");
+            assert_eq!(spans.retention_days, 30);
+            assert_eq!(spans.database, None);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn a_retention_in_the_file_wins_over_the_default() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                FILE,
+                r#"
+                [spans]
+                url = "http://clickhouse:8123"
+                database = "comettrace"
+                retention_days = 7
+                "#,
+            )?;
+
+            let config: Config = figment().extract()?;
+            let spans = config.spans.expect("a span store");
+
+            assert_eq!(spans.retention_days, 7);
+            assert_eq!(spans.database.as_deref(), Some("comettrace"));
             Ok(())
         });
     }

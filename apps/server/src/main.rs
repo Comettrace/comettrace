@@ -14,13 +14,14 @@ use comettrace_api::{
 use comettrace_core::{
     AccountId, AuthSources, Clock, DecompressedBytes, Email, FederatedSignIn, Ingest, IngestKey,
     NoProvider, OrgRole, ProvisionPolicy, ResetPassword, ResetStore, ResetToken, SessionLifetime,
-    SignIn, TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
+    SignIn, SinkError, Span, SpanSink, TenantDirectory, TenantId, UnknownKey, UsageMeter,
+    UsageReader, Whoami,
 };
 use comettrace_storage::{
-    Allowance, Argon2Hasher, LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink,
-    OidcProvider, OidcSettings, PostgresAccounts, PostgresDirectory, PostgresFlows,
-    PostgresMemberships, PostgresResets, PostgresSessions, RedisMeter, SmtpMailer, StaticDirectory,
-    StaticQuota, SystemClock, load_allowances,
+    Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseSink, LocalPasswordProvider, MailSettings,
+    MemoryMeter, MemorySink, OidcProvider, OidcSettings, PostgresAccounts, PostgresDirectory,
+    PostgresFlows, PostgresMemberships, PostgresResets, PostgresSessions, RedisMeter, SmtpMailer,
+    SpanStoreSettings, StaticDirectory, StaticQuota, SystemClock, load_allowances, open_span_store,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -32,8 +33,25 @@ use uuid::Uuid;
 use crate::config::Config;
 
 const SECONDS_PER_HOUR: u64 = 3600;
+const FLUSH_FALLBACK: Duration = Duration::from_secs(5);
+const MIN_FLUSH_WAIT: Duration = Duration::from_millis(100);
 
-type Gateway = Ingest<Directory, StaticQuota<Arc<Meter>>, Arc<MemorySink>, Arc<Meter>>;
+type Gateway = Ingest<Directory, StaticQuota<Arc<Meter>>, Arc<Sink>, Arc<Meter>>;
+
+#[derive(Debug)]
+enum Sink {
+    Memory(MemorySink),
+    Spans(ClickhouseSink<SystemClock>),
+}
+
+impl SpanSink for Sink {
+    async fn accept(&self, tenant: TenantId, spans: Vec<Span>) -> Result<(), SinkError> {
+        match self {
+            Self::Memory(sink) => sink.accept(tenant, spans).await,
+            Self::Spans(sink) => sink.accept(tenant, spans).await,
+        }
+    }
+}
 
 #[derive(Debug)]
 enum Meter {
@@ -243,7 +261,14 @@ async fn main() -> anyhow::Result<()> {
     if let (Some(pool), Meter::Redis(_)) = (pool.as_ref(), meter.as_ref()) {
         tokio::spawn(roll_up_hourly(Arc::clone(&meter), pool.clone()));
     }
-    let gateway = Arc::new(gateway_of(directory_of(pool.as_ref()), allowances, meter));
+    let sink = Arc::new(sink_of(&config).await?);
+    tokio::spawn(flush_spans(Arc::clone(&sink)));
+    let gateway = Arc::new(gateway_of(
+        directory_of(pool.as_ref()),
+        allowances,
+        meter,
+        Arc::clone(&sink),
+    ));
 
     tracing::info!(
         grpc = %config.grpc_address,
@@ -260,6 +285,7 @@ async fn main() -> anyhow::Result<()> {
     let grpc = tokio::spawn(serve_grpc(config.grpc_address, gateway));
 
     let (http, grpc) = tokio::try_join!(http, grpc).context("joining the listeners")?;
+    flush_once(&sink).await;
     http?;
     grpc?;
     Ok(())
@@ -269,12 +295,16 @@ async fn control_plane_pool(config: &Config) -> anyhow::Result<Option<PgPool>> {
     let Some(url) = config.database_url.as_deref() else {
         return Ok(None);
     };
-    PgPoolOptions::new()
+    let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(url)
         .await
-        .map(Some)
-        .context("connecting to the control plane")
+        .context("connecting to the control plane")?;
+    CONTROL_PLANE
+        .run(&pool)
+        .await
+        .context("migrating the control plane")?;
+    Ok(Some(pool))
 }
 
 async fn allowances_of(
@@ -346,9 +376,59 @@ fn gateway_of(
     directory: Directory,
     allowances: BTreeMap<TenantId, Allowance>,
     meter: Arc<Meter>,
+    sink: Arc<Sink>,
 ) -> Gateway {
     let quota = StaticQuota::new(Arc::clone(&meter), allowances);
-    Ingest::new(directory, quota, Arc::new(MemorySink::default()), meter)
+    Ingest::new(directory, quota, sink, meter)
+}
+
+async fn sink_of(config: &Config) -> anyhow::Result<Sink> {
+    let Some(spans) = config.spans.clone() else {
+        tracing::warn!(
+            "no span store is configured, so accepted spans are held in memory and \
+             lost when this process ends; set spans.url to keep them"
+        );
+        return Ok(Sink::Memory(MemorySink::default()));
+    };
+    let settings = SpanStoreSettings::from(spans);
+    let sink = open_span_store(&settings, SystemClock)
+        .await
+        .context("opening the span store")?;
+    tracing::info!(
+        url = %settings.url,
+        retention_days = settings.retention_days,
+        "spans are written to the span store"
+    );
+    Ok(Sink::Spans(sink))
+}
+
+async fn flush_spans(sink: Arc<Sink>) {
+    let Sink::Spans(spans) = sink.as_ref() else {
+        return;
+    };
+    loop {
+        let wait = spans
+            .time_left()
+            .unwrap_or(FLUSH_FALLBACK)
+            .max(MIN_FLUSH_WAIT);
+        tokio::time::sleep(wait).await;
+        match spans.flush().await {
+            Ok(0) => {}
+            Ok(rows) => tracing::debug!(rows, "a span batch was committed on its deadline"),
+            Err(error) => tracing::error!(%error, "a span batch could not be committed"),
+        }
+    }
+}
+
+async fn flush_once(sink: &Sink) {
+    let Sink::Spans(spans) = sink else {
+        return;
+    };
+    match spans.flush().await {
+        Ok(0) => {}
+        Ok(rows) => tracing::info!(rows, "the last span batch was committed before leaving"),
+        Err(error) => tracing::error!(%error, "the last span batch was lost"),
+    }
 }
 
 type LocalSource = LocalPasswordProvider<Argon2Hasher>;

@@ -3,7 +3,10 @@ use std::time::Duration;
 
 use clickhouse::Client;
 use comettrace_core::{Span, SpanId, SpanKind, SpanSink, SpanStatus, TenantId, TraceId};
-use comettrace_storage::{BatchLimits, ClickhouseMigrator, ClickhouseSink, FixedClock, MemorySink};
+use comettrace_storage::{
+    BatchLimits, ClickhouseMigrator, ClickhouseSink, FixedClock, MemorySink, SpanStoreSettings,
+    open_span_store,
+};
 use uuid::Uuid;
 
 const NOW: u64 = 4_000_000_000;
@@ -306,5 +309,92 @@ async fn a_timestamp_the_store_cannot_hold_is_refused() {
     assert_eq!(
         outcome,
         Err(comettrace_core::SinkError::TimestampOutOfRange)
+    );
+}
+
+async fn an_empty_database(name: &str) -> Option<String> {
+    let url = endpoint()?;
+    let root = connected(&url);
+    root.query(&format!("DROP DATABASE IF EXISTS {name}"))
+        .execute()
+        .await
+        .expect("dropping a leftover database");
+    root.query(&format!("CREATE DATABASE {name}"))
+        .execute()
+        .await
+        .expect("creating the test database");
+    Some(url)
+}
+
+fn settings_for(url: &str, database: &str) -> SpanStoreSettings {
+    SpanStoreSettings {
+        database: Some(database.to_owned()),
+        user: std::env::var("CLICKHOUSE_USER").ok(),
+        password: std::env::var("CLICKHOUSE_PASSWORD").ok(),
+        ..SpanStoreSettings::at(url)
+    }
+}
+
+#[tokio::test]
+async fn opening_a_span_store_migrates_a_database_that_carries_no_schema() {
+    let database = "span_store_opened";
+    let Some(url) = an_empty_database(database).await else {
+        return;
+    };
+
+    let sink = open_span_store(&settings_for(&url, database), FixedClock::at(NOW))
+        .await
+        .expect("the span store opens");
+    sink.accept(
+        TenantId::new(Uuid::from_u128(1)),
+        vec![a_span(1, "checkout")],
+    )
+    .await
+    .expect("a batch is accepted");
+    sink.flush().await.expect("the batch commits");
+
+    assert_eq!(
+        stored_rows(&connected(&url).with_database(database)).await,
+        1,
+        "a store opened on an empty database must be ready to write"
+    );
+}
+
+#[tokio::test]
+async fn opening_a_span_store_twice_leaves_what_the_first_one_wrote() {
+    let database = "span_store_reopened";
+    let Some(url) = an_empty_database(database).await else {
+        return;
+    };
+    let settings = settings_for(&url, database);
+
+    let first = open_span_store(&settings, FixedClock::at(NOW))
+        .await
+        .expect("the first open");
+    first
+        .accept(
+            TenantId::new(Uuid::from_u128(1)),
+            vec![a_span(1, "checkout")],
+        )
+        .await
+        .expect("a batch is accepted");
+    first.flush().await.expect("the batch commits");
+
+    let second = open_span_store(&settings, FixedClock::at(NOW))
+        .await
+        .expect("a second open must not refuse an applied schema");
+    second
+        .accept(
+            TenantId::new(Uuid::from_u128(1)),
+            vec![a_span(2, "checkout")],
+        )
+        .await
+        .expect("a batch is accepted");
+    second.flush().await.expect("the batch commits");
+
+    assert_eq!(
+        stored_rows(&connected(&url).with_database(database)).await,
+        2,
+        "reopening must migrate nothing and drop nothing"
     );
 }
