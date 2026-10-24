@@ -37,6 +37,7 @@ pub use ingest::{Ingest, IngestError, Payload};
 pub use key::IngestKey;
 pub use membership::{Membership, Memberships, OrgRole, Who, Whoami, WhoamiError};
 pub use oidc::{CodeVerifier, FlowError, OidcFlows, PendingFlow};
+pub use password::{ChangeError, ChangePassword};
 pub use quota::{Admission, QuotaPolicy, Unmetered};
 pub use reset::{Mailer, ResetError, ResetPassword, ResetStore};
 pub use secret::{RESET_PREFIX, ResetToken, SESSION_PREFIX, SecretHash, SessionToken};
