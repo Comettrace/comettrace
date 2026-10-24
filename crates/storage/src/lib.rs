@@ -24,7 +24,7 @@ pub use counter::{CounterError, RedisMeter};
 pub use directory::StaticDirectory;
 pub use flows::PostgresFlows;
 pub use hasher::Argon2Hasher;
-pub use keys::PostgresDirectory;
+pub use keys::{KeyError, PostgresDirectory};
 pub use local::LocalPasswordProvider;
 pub use month::{BillingHour, BillingMonth};
 pub use oidc::{OidcError, OidcProvider, OidcSettings};

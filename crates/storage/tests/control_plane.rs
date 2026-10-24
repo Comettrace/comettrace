@@ -639,3 +639,80 @@ async fn a_sighting_is_recorded_once_then_left_alone_for_a_while() {
     assert_eq!(unchanged, first, "a sighting inside the gap costs no write");
     assert_ne!(moved, first, "a sighting past the gap is recorded");
 }
+
+#[tokio::test]
+async fn an_issued_key_authenticates_at_once() {
+    let Some(pool) = migrated("keys_issued").await else {
+        return;
+    };
+    let org = TenantId::new(seeded_org(&pool).await);
+    let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));
+
+    let issued = directory.issue(org, None).await.expect("a key is issued");
+    let resolved = directory.resolve(&issued).await;
+
+    assert_eq!(resolved, Ok(org));
+    assert_eq!(directory.live_keys(org).await.expect("a count"), 1);
+}
+
+#[tokio::test]
+async fn an_issued_key_carries_a_prefix_and_a_long_secret() {
+    let Some(pool) = migrated("keys_shape").await else {
+        return;
+    };
+    let org = TenantId::new(seeded_org(&pool).await);
+    let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));
+
+    let issued = directory.issue(org, None).await.expect("a key is issued");
+    let (prefix, secret) = issued.split().expect("it splits");
+
+    assert!(prefix.starts_with("ct_live_"), "{prefix}");
+    assert_eq!(secret.len(), 64, "a 32 byte secret in hex");
+    assert_eq!(format!("{issued:?}"), "IngestKey(redacted)");
+}
+
+#[tokio::test]
+async fn two_issued_keys_never_collide() {
+    let Some(pool) = migrated("keys_distinct").await else {
+        return;
+    };
+    let org = TenantId::new(seeded_org(&pool).await);
+    let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));
+
+    let first = directory.issue(org, None).await.expect("the first");
+    let second = directory.issue(org, None).await.expect("the second");
+
+    assert_ne!(first.exposed(), second.exposed());
+    assert_eq!(directory.resolve(&first).await, Ok(org));
+    assert_eq!(directory.resolve(&second).await, Ok(org));
+    assert_eq!(directory.live_keys(org).await.expect("a count"), 2);
+}
+
+#[tokio::test]
+async fn revoking_a_key_stops_it_without_touching_the_others() {
+    let Some(pool) = migrated("keys_revoke").await else {
+        return;
+    };
+    let org = TenantId::new(seeded_org(&pool).await);
+    let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));
+    let doomed = directory.issue(org, None).await.expect("the first");
+    let kept = directory.issue(org, None).await.expect("the second");
+    let (prefix, _) = doomed.split().expect("it splits");
+
+    let revoked = directory.revoke(prefix).await.expect("a revocation");
+
+    assert!(revoked);
+    assert_eq!(directory.resolve(&doomed).await, Err(UnknownKey));
+    assert_eq!(directory.resolve(&kept).await, Ok(org));
+    assert_eq!(directory.live_keys(org).await.expect("a count"), 1);
+}
+
+#[tokio::test]
+async fn revoking_a_prefix_nobody_issued_changes_nothing() {
+    let Some(pool) = migrated("keys_revoke_absent").await else {
+        return;
+    };
+    let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));
+
+    assert!(!directory.revoke("ct_live_nothing").await.expect("a call"));
+}
