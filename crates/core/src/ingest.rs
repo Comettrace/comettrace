@@ -2,7 +2,7 @@ use crate::key::IngestKey;
 use crate::quota::{Admission, QuotaPolicy};
 use crate::sink::{SinkError, SpanSink};
 use crate::span::Span;
-use crate::tenant::{Scope, TenantDirectory, TenantId, UnknownKey};
+use crate::tenant::{TenantDirectory, TenantId, UnknownKey};
 use crate::usage::{DecompressedBytes, UsageMeter};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
