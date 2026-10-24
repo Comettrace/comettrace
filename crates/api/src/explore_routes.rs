@@ -235,7 +235,7 @@ where
     Ok(Json(laid_out(id, spans)))
 }
 
-fn carried(headers: &HeaderMap) -> Result<SessionToken, LookRefused> {
+pub(crate) fn carried(headers: &HeaderMap) -> Result<SessionToken, LookRefused> {
     if !headers.contains_key(&REQUESTED_WITH) {
         return Err(LookRefused::NotFromOurOrigin);
     }

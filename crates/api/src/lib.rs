@@ -1,4 +1,5 @@
 mod auth;
+mod catalogue_routes;
 mod error;
 mod explore_routes;
 mod grpc;
@@ -12,6 +13,7 @@ mod sign_in;
 mod web_routes;
 mod whoami_routes;
 
+pub use catalogue_routes::catalogue_router;
 pub use error::ApiError;
 pub use explore_routes::{LookRefused, explore_router};
 pub use grpc::{TraceGateway, trace_server};

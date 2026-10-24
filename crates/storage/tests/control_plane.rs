@@ -1,10 +1,10 @@
 use comettrace_core::{
-    DecompressedBytes, Email, IngestKey, Issuer, ProvisionPolicy, ResolvedIdentity, SecretHash,
-    Subject, TenantDirectory, TenantId, UnknownKey,
+    DecompressedBytes, Email, IngestKey, Issuer, Projects, ProvisionPolicy, ResolvedIdentity,
+    SecretHash, Subject, TenantDirectory, TenantId, UnknownKey,
 };
 use comettrace_storage::{
     AccountError, Allowance, CONTROL_PLANE, FixedClock, OVERAGE_FEATURE, PostgresAccounts,
-    PostgresDirectory, SELF_HOSTED_PLAN,
+    PostgresDirectory, PostgresProjects, ProjectError, SELF_HOSTED_PLAN,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
@@ -766,4 +766,84 @@ async fn revoking_a_prefix_nobody_issued_changes_nothing() {
     let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));
 
     assert!(!directory.revoke("ct_live_nothing").await.expect("a call"));
+}
+
+#[tokio::test]
+async fn an_organisation_holds_the_projects_it_was_given() {
+    let Some(pool) = migrated("projects_held").await else {
+        return;
+    };
+    let org = TenantId::new(seeded_org(&pool).await);
+    let projects = PostgresProjects::new(pool.clone());
+
+    let storefront = projects.create(org, "storefront").await.expect("one");
+    projects.create(org, "payments").await.expect("another");
+
+    let held = projects.of(org).await.expect("the projects read");
+
+    assert_eq!(held.len(), 2);
+    assert_eq!(
+        held.iter().map(|p| &*p.name).collect::<Vec<_>>(),
+        vec!["payments", "storefront"],
+        "a list a person reads is ordered by name"
+    );
+    assert!(held.iter().any(|p| p.id == storefront));
+    assert!(held.iter().all(|p| p.org == org));
+}
+
+#[tokio::test]
+async fn two_organisations_may_each_hold_a_project_of_the_same_name() {
+    let Some(pool) = migrated("projects_same_name").await else {
+        return;
+    };
+    let mine = TenantId::new(seeded_org(&pool).await);
+    let theirs = TenantId::new(seeded_org(&pool).await);
+    let projects = PostgresProjects::new(pool.clone());
+
+    projects.create(mine, "storefront").await.expect("mine");
+    projects.create(theirs, "storefront").await.expect("theirs");
+
+    assert_eq!(projects.of(mine).await.expect("a read").len(), 1);
+    assert_eq!(projects.of(theirs).await.expect("a read").len(), 1);
+    assert!(
+        matches!(
+            projects.create(mine, "storefront").await,
+            Err(ProjectError::Taken(_))
+        ),
+        "one organisation cannot hold the same name twice"
+    );
+}
+
+#[tokio::test]
+async fn a_project_of_an_organisation_nobody_holds_is_refused() {
+    let Some(pool) = migrated("projects_no_org").await else {
+        return;
+    };
+
+    let refused = PostgresProjects::new(pool.clone())
+        .create(TenantId::new(Uuid::new_v4()), "storefront")
+        .await;
+
+    assert!(matches!(refused, Err(ProjectError::NoSuchOrg(_))));
+}
+
+#[tokio::test]
+async fn the_only_project_is_named_only_when_there_is_exactly_one() {
+    let Some(pool) = migrated("projects_only").await else {
+        return;
+    };
+    let org = TenantId::new(seeded_org(&pool).await);
+    let projects = PostgresProjects::new(pool.clone());
+
+    assert_eq!(projects.only(org).await.expect("a read"), None, "none yet");
+
+    let first = projects.create(org, "storefront").await.expect("one");
+    assert_eq!(projects.only(org).await.expect("a read"), Some(first));
+
+    projects.create(org, "payments").await.expect("another");
+    assert_eq!(
+        projects.only(org).await.expect("a read"),
+        None,
+        "with two, the choice is the operator's"
+    );
 }
