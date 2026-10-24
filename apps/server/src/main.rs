@@ -6,14 +6,15 @@ use std::sync::Arc;
 use anyhow::Context;
 use comettrace_api::{router, trace_server};
 use comettrace_core::{Ingest, TenantId};
-use comettrace_storage::{MemoryMeter, MemorySink, StaticDirectory};
+use comettrace_storage::{MemoryMeter, MemorySink, StaticDirectory, StaticQuota};
 use tokio::net::TcpListener;
 use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
 
-type Gateway = Ingest<StaticDirectory, Arc<MemorySink>, Arc<MemoryMeter>>;
+type Gateway =
+    Ingest<StaticDirectory, StaticQuota<Arc<MemoryMeter>>, Arc<MemorySink>, Arc<MemoryMeter>>;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -47,11 +48,15 @@ fn gateway_of(config: &Config) -> Gateway {
             .iter()
             .map(|tenant| (tenant.key.clone(), TenantId::new(tenant.id))),
     );
-    Ingest::new(
-        directory,
-        Arc::new(MemorySink::default()),
-        Arc::new(MemoryMeter::default()),
-    )
+    let meter = Arc::new(MemoryMeter::default());
+    let quota = StaticQuota::new(
+        Arc::clone(&meter),
+        config
+            .tenants
+            .iter()
+            .map(|tenant| (TenantId::new(tenant.id), tenant.allowance.into())),
+    );
+    Ingest::new(directory, quota, Arc::new(MemorySink::default()), meter)
 }
 
 async fn serve_http(address: SocketAddr, gateway: Arc<Gateway>) -> anyhow::Result<()> {

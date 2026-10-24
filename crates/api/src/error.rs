@@ -26,6 +26,7 @@ impl ApiError {
             Self::Decode(_) | Self::Ingest(IngestError::Sink(SinkError::TimestampOutOfRange)) => {
                 StatusCode::BAD_REQUEST
             }
+            Self::Ingest(IngestError::Capped { .. }) => StatusCode::TOO_MANY_REQUESTS,
             Self::Ingest(IngestError::Sink(SinkError::Unavailable)) => {
                 StatusCode::SERVICE_UNAVAILABLE
             }
@@ -58,6 +59,7 @@ impl From<ApiError> for Status {
             | ApiError::Ingest(IngestError::Sink(SinkError::TimestampOutOfRange)) => {
                 Self::invalid_argument(message)
             }
+            ApiError::Ingest(IngestError::Capped { .. }) => Self::resource_exhausted(message),
             ApiError::Ingest(IngestError::Sink(SinkError::Unavailable)) => {
                 Self::unavailable(message)
             }

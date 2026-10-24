@@ -7,7 +7,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use bytes::Bytes;
-use comettrace_core::{DecompressedBytes, Ingest, Payload, SpanSink, TenantDirectory, UsageMeter};
+use comettrace_core::{
+    DecompressedBytes, Ingest, Payload, QuotaPolicy, SpanSink, TenantDirectory, UsageMeter,
+};
 use comettrace_otlp::decode_traces;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceResponse;
 use prost::Message;
@@ -20,27 +22,29 @@ use crate::error::ApiError;
 pub const MAX_DECOMPRESSED_BYTES: usize = 4 * 1024 * 1024;
 const PROTOBUF: &str = "application/x-protobuf";
 
-pub fn router<D, S, M>(ingest: Arc<Ingest<D, S, M>>) -> Router
+pub fn router<D, Q, S, M>(ingest: Arc<Ingest<D, Q, S, M>>) -> Router
 where
     D: TenantDirectory + Send + Sync + 'static,
+    Q: QuotaPolicy + Send + Sync + 'static,
     S: SpanSink + Send + Sync + 'static,
     M: UsageMeter + Send + Sync + 'static,
 {
     Router::new()
-        .route("/v1/traces", post(traces::<D, S, M>))
+        .route("/v1/traces", post(traces::<D, Q, S, M>))
         .layer(RequestBodyLimitLayer::new(MAX_DECOMPRESSED_BYTES))
         .layer(RequestDecompressionLayer::new().gzip(true))
         .with_state(ingest)
 }
 
-async fn traces<D, S, M>(
-    State(ingest): State<Arc<Ingest<D, S, M>>>,
+async fn traces<D, Q, S, M>(
+    State(ingest): State<Arc<Ingest<D, Q, S, M>>>,
     headers: HeaderMap,
     Bearer(key): Bearer,
     body: Bytes,
 ) -> Result<Response, ApiError>
 where
     D: TenantDirectory + Send + Sync + 'static,
+    Q: QuotaPolicy + Send + Sync + 'static,
     S: SpanSink + Send + Sync + 'static,
     M: UsageMeter + Send + Sync + 'static,
 {
