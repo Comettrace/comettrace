@@ -14,7 +14,7 @@ pub use clickhouse::{
 pub use clock::{FixedClock, SystemClock};
 pub use counter::{CounterError, RedisMeter};
 pub use directory::StaticDirectory;
-pub use month::BillingMonth;
+pub use month::{BillingHour, BillingMonth};
 pub use postgres::{CONTROL_PLANE, OVERAGE_FEATURE, SELF_HOSTED_PLAN, load_allowances};
 pub use quota::{Allowance, StaticQuota};
 pub use sink::MemorySink;
