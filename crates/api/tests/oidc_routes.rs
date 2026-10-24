@@ -7,7 +7,7 @@ use comettrace_api::{SessionCookie, oidc_router};
 use comettrace_core::{
     AccountDirectory, AccountId, AuthError, AuthProvider, Authorizer, CodeVerifier,
     FederatedSignIn, FlowError, Issuer, OidcFlows, PendingFlow, ProvisionPolicy, ResolvedIdentity,
-    Session, SessionError, SessionStore, SessionToken, SignInProof, Subject, TenantId, UnixSeconds,
+    Session, SessionError, SessionStore, SessionToken, SignInProof, Subject, TenantId,
 };
 use tower::ServiceExt;
 use uuid::Uuid;
