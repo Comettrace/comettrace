@@ -11,6 +11,8 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - ".github/workflows/ci.yaml"
+      - "Dockerfile"
+      - "deploy/**"
 
 permissions:
   contents: read
@@ -146,3 +148,114 @@ jobs:
         run: cargo test -p comettrace-storage --test clickhouse_migrations --test span_sink --locked
       - name: small versus large batches
         run: cargo run -p comettrace-storage --example batching_benchmark --release --locked
+
+  self-hosting:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: the image builds
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: comettrace:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: the stack comes up on a clean machine
+        working-directory: deploy
+        run: |
+          docker compose up --detach --no-build --wait --wait-timeout 180
+      - name: the server migrated the span store it was pointed at
+        working-directory: deploy
+        run: |
+          set -eu
+          exists=$(docker compose exec -T clickhouse clickhouse-client \
+            --user=comettrace --password=comettrace --database=comettrace \
+            --query="EXISTS TABLE spans")
+          test "$exists" = "1" || { echo "the spans table is missing"; exit 1; }
+          applied=$(docker compose exec -T clickhouse clickhouse-client \
+            --user=comettrace --password=comettrace --database=comettrace \
+            --query="SELECT max(version) FROM schema_migrations FINAL")
+          test "$applied" = "1" || { echo "the span schema is at $applied"; exit 1; }
+      - name: the server migrated its control plane
+        working-directory: deploy
+        run: |
+          set -eu
+          tables=$(docker compose exec -T postgres psql --username comettrace \
+            --dbname comettrace --tuples-only --no-align \
+            --command "SELECT count(*) FROM information_schema.tables \
+                       WHERE table_schema = 'public' AND table_name IN \
+                       ('accounts', 'orgs', 'org_members', 'api_keys', 'sessions')")
+          test "$tables" = "5" || { echo "only $tables control plane tables exist"; exit 1; }
+      - name: bootstrap gives the deployment a way in, once
+        working-directory: deploy
+        run: |
+          set -eu
+          docker compose exec -T server comettrace bootstrap \
+            --email operator@example.com > token.txt 2> bootstrap.log
+          cat bootstrap.log
+          test -s token.txt || { echo "no token was printed"; exit 1; }
+          grep -q '^ct_pr_' token.txt || { echo "that is not a reset token"; exit 1; }
+          docker compose exec -T server comettrace bootstrap \
+            --email someone.else@example.com 2>&1 | tee second.log
+          grep -q "already holds an organisation" second.log \
+            || { echo "bootstrap was not idempotent"; exit 1; }
+      - name: the token sets a password and the password opens a session
+        working-directory: deploy
+        run: |
+          set -eu
+          token=$(cat token.txt)
+          curl --fail --silent --show-error -X POST \
+            http://localhost:4318/auth/reset/confirm \
+            -H 'x-requested-with: ci' -H 'content-type: application/json' \
+            -d "{\"token\":\"$token\",\"password\":\"a long enough one\"}"
+          curl --fail --silent --show-error -X POST \
+            http://localhost:4318/auth/sign-in \
+            -H 'x-requested-with: ci' -H 'content-type: application/json' \
+            -d '{"email":"operator@example.com","password":"a long enough one"}' \
+            --cookie-jar jar.txt
+          grep -q ct_session jar.txt || { echo "no session cookie was set"; exit 1; }
+      - name: a short password is refused with the rule that refused it
+        working-directory: deploy
+        run: |
+          set -eu
+          code=$(curl --silent --output body.txt --write-out '%{http_code}' -X POST \
+            http://localhost:4318/auth/reset/confirm \
+            -H 'x-requested-with: ci' -H 'content-type: application/json' \
+            -d '{"token":"ct_pr_whatever","password":"short"}')
+          test "$code" = "422" || { echo "a weak password answered $code"; exit 1; }
+          grep -q "at least 12 characters" body.txt || { cat body.txt; exit 1; }
+      - name: the session carries the organisation it owns
+        working-directory: deploy
+        run: |
+          set -eu
+          curl --fail --silent --show-error http://localhost:4318/auth/me \
+            -H 'x-requested-with: ci' --cookie jar.txt > me.json
+          cat me.json
+          grep -q '"role":"owner"' me.json || { echo "the owner lost its role"; exit 1; }
+      - name: an issued key authenticates a payload and an unissued one does not
+        working-directory: deploy
+        run: |
+          set -eu
+          org=$(docker compose exec -T postgres psql --username comettrace \
+            --dbname comettrace --tuples-only --no-align \
+            --command "SELECT id FROM orgs LIMIT 1" | tr -d '[:space:]')
+          key=$(docker compose exec -T server comettrace issue-key --org "$org" 2>/dev/null \
+            | tr -d '[:space:]')
+          accepted=$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST \
+            http://localhost:4318/v1/traces -H "authorization: Bearer $key" \
+            -H 'content-type: application/x-protobuf' --data-binary '')
+          test "$accepted" = "200" || { echo "an issued key answered $accepted"; exit 1; }
+          refused=$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST \
+            http://localhost:4318/v1/traces -H "authorization: Bearer ct_live_nonsense.nonsense" \
+            -H 'content-type: application/x-protobuf' --data-binary '')
+          test "$refused" = "401" || { echo "an unissued key answered $refused"; exit 1; }
+      - name: what the server said
+        if: always()
+        working-directory: deploy
+        run: docker compose logs server
+      - name: stop
+        if: always()
+        working-directory: deploy
+        run: docker compose down --volumes
