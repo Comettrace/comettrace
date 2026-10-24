@@ -1,5 +1,6 @@
 mod clock;
 mod credential;
+mod explore;
 mod federated;
 mod identity;
 mod ingest;
@@ -19,6 +20,10 @@ mod usage;
 pub use clock::{Clock, UnixSeconds};
 pub use credential::{
     Email, InvalidCredential, Issuer, Password, PasswordPolicy, Subject, WeakPassword,
+};
+pub use explore::{
+    BadWindow, Explore, ExploreError, ReadError, SpanReader, TraceFilter, TraceOrder, TraceSummary,
+    Window,
 };
 pub use federated::{Authorizer, FederatedError, FederatedSignIn};
 pub use identity::{

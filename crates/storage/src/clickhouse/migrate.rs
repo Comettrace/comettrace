@@ -11,12 +11,20 @@ pub struct Migration {
     down: &'static str,
 }
 
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "spans",
-    up: include_str!("../../migrations/clickhouse/0001_spans.up.sql"),
-    down: include_str!("../../migrations/clickhouse/0001_spans.down.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "spans",
+        up: include_str!("../../migrations/clickhouse/0001_spans.up.sql"),
+        down: include_str!("../../migrations/clickhouse/0001_spans.down.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "trace_lookup",
+        up: include_str!("../../migrations/clickhouse/0002_trace_lookup.up.sql"),
+        down: include_str!("../../migrations/clickhouse/0002_trace_lookup.down.sql"),
+    },
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum MigrateError {
