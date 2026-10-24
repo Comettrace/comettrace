@@ -6,10 +6,12 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use comettrace_api::{router, trace_server};
-use comettrace_core::{Ingest, TenantId};
+use comettrace_core::{DecompressedBytes, Ingest, TenantId, UsageMeter, UsageReader};
 use comettrace_storage::{
-    Allowance, MemoryMeter, MemorySink, StaticDirectory, StaticQuota, load_allowances,
+    Allowance, MemoryMeter, MemorySink, RedisMeter, StaticDirectory, StaticQuota, SystemClock,
+    load_allowances,
 };
+use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
 use tonic::transport::Server;
@@ -17,8 +19,31 @@ use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
 
-type Gateway =
-    Ingest<StaticDirectory, StaticQuota<Arc<MemoryMeter>>, Arc<MemorySink>, Arc<MemoryMeter>>;
+type Gateway = Ingest<StaticDirectory, StaticQuota<Arc<Meter>>, Arc<MemorySink>, Arc<Meter>>;
+
+#[derive(Debug)]
+enum Meter {
+    Memory(MemoryMeter),
+    Redis(RedisMeter<SystemClock>),
+}
+
+impl UsageMeter for Meter {
+    async fn record_ingest(&self, tenant: TenantId, decompressed: DecompressedBytes) {
+        match self {
+            Self::Memory(meter) => meter.record_ingest(tenant, decompressed).await,
+            Self::Redis(meter) => meter.record_ingest(tenant, decompressed).await,
+        }
+    }
+}
+
+impl UsageReader for Meter {
+    async fn used(&self, tenant: TenantId) -> DecompressedBytes {
+        match self {
+            Self::Memory(meter) => meter.used(tenant).await,
+            Self::Redis(meter) => meter.used(tenant).await,
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -27,8 +52,13 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = config::load().context("reading the configuration")?;
-    let allowances = allowances_of(&config).await?;
-    let gateway = Arc::new(gateway_of(&config, allowances));
+    let pool = control_plane_pool(&config).await?;
+    let allowances = allowances_of(&config, pool.as_ref()).await?;
+    let meter = Arc::new(meter_of(&config, pool.as_ref()).await?);
+    if let Some(pool) = pool {
+        pool.close().await;
+    }
+    let gateway = Arc::new(gateway_of(&config, allowances, meter));
 
     tracing::info!(
         grpc = %config.grpc_address,
@@ -46,25 +76,32 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn allowances_of(config: &Config) -> anyhow::Result<BTreeMap<TenantId, Allowance>> {
+async fn control_plane_pool(config: &Config) -> anyhow::Result<Option<PgPool>> {
     let Some(url) = config.database_url.as_deref() else {
+        return Ok(None);
+    };
+    PgPoolOptions::new()
+        .max_connections(2)
+        .connect(url)
+        .await
+        .map(Some)
+        .context("connecting to the control plane")
+}
+
+async fn allowances_of(
+    config: &Config,
+    pool: Option<&PgPool>,
+) -> anyhow::Result<BTreeMap<TenantId, Allowance>> {
+    let Some(pool) = pool else {
         return Ok(config
             .tenants
             .iter()
             .map(|tenant| (TenantId::new(tenant.id), tenant.allowance.into()))
             .collect());
     };
-
-    let pool = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(url)
+    let loaded = load_allowances(pool)
         .await
-        .context("connecting to the control plane")?;
-    let loaded = load_allowances(&pool)
-        .await
-        .context("reading the tenant allowances");
-    pool.close().await;
-    let loaded = loaded?;
+        .context("reading the tenant allowances")?;
     tracing::info!(
         tenants = loaded.len(),
         "allowances read from the control plane"
@@ -72,14 +109,35 @@ async fn allowances_of(config: &Config) -> anyhow::Result<BTreeMap<TenantId, All
     Ok(loaded)
 }
 
-fn gateway_of(config: &Config, allowances: BTreeMap<TenantId, Allowance>) -> Gateway {
+async fn meter_of(config: &Config, pool: Option<&PgPool>) -> anyhow::Result<Meter> {
+    let Some(url) = config.redis_url.as_deref() else {
+        return Ok(Meter::Memory(MemoryMeter::default()));
+    };
+
+    let meter = RedisMeter::connect(url, SystemClock)
+        .await
+        .context("connecting to the usage counter store")?;
+    if let Some(pool) = pool {
+        let seeded = meter
+            .rehydrate(pool)
+            .await
+            .context("rehydrating the usage counters")?;
+        tracing::info!(tenants = seeded, "usage counters rehydrated");
+    }
+    Ok(Meter::Redis(meter))
+}
+
+fn gateway_of(
+    config: &Config,
+    allowances: BTreeMap<TenantId, Allowance>,
+    meter: Arc<Meter>,
+) -> Gateway {
     let directory = StaticDirectory::from_plaintext(
         config
             .tenants
             .iter()
             .map(|tenant| (tenant.key.clone(), TenantId::new(tenant.id))),
     );
-    let meter = Arc::new(MemoryMeter::default());
     let quota = StaticQuota::new(Arc::clone(&meter), allowances);
     Ingest::new(directory, quota, Arc::new(MemorySink::default()), meter)
 }
