@@ -1,6 +1,6 @@
 use comettrace_storage::{CONTROL_PLANE, SELF_HOSTED_PLAN};
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{PgPool, Row};
+use sqlx::{AssertSqlSafe, PgPool, Row};
 
 fn url() -> Option<String> {
     if let Ok(url) = std::env::var("DATABASE_URL") {
@@ -20,11 +20,13 @@ async fn migrated(schema: &str) -> Option<PgPool> {
         .connect(&url)
         .await
         .expect("connecting to postgres");
-    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
-        .execute(&pool)
-        .await
-        .expect("dropping a leftover schema");
-    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+    sqlx::query(AssertSqlSafe(format!(
+        "DROP SCHEMA IF EXISTS {schema} CASCADE"
+    )))
+    .execute(&pool)
+    .await
+    .expect("dropping a leftover schema");
+    sqlx::query(AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
         .execute(&pool)
         .await
         .expect("creating the test schema");
@@ -35,7 +37,7 @@ async fn migrated(schema: &str) -> Option<PgPool> {
         .after_connect(move |connection, _| {
             let schema = schema.to_owned();
             Box::pin(async move {
-                sqlx::query(&format!("SET search_path TO {schema}"))
+                sqlx::query(AssertSqlSafe(format!("SET search_path TO {schema}")))
                     .execute(connection)
                     .await
                     .map(|_| ())
@@ -194,7 +196,7 @@ async fn dropping_an_org_takes_its_projects_and_keys() {
         .expect("the org goes");
 
     for table in ["projects", "api_keys"] {
-        let left: i64 = sqlx::query(&format!("SELECT count(*) AS n FROM {table}"))
+        let left: i64 = sqlx::query(AssertSqlSafe(format!("SELECT count(*) AS n FROM {table}")))
             .fetch_one(&pool)
             .await
             .expect("counting")
