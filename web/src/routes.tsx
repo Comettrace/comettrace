@@ -56,7 +56,7 @@ const forgotPasswordRoute = createRoute({ getParentRoute: () => rootRoute, path:
 
 const resetPasswordRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/auth/reset',
+  path: '/reset',
   component: ResetPassword,
   validateSearch: (search: Record<string, unknown>): { token?: string } => ({ token: typeof search.token === 'string' ? search.token : undefined }),
 })
