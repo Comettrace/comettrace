@@ -1,6 +1,6 @@
 use core::future::Future;
 
-use comettrace_core::{IngestKey, TenantDirectory, TenantId, UnknownKey};
+use comettrace_core::{IngestKey, Scope, TenantDirectory, TenantId, UnknownKey};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
@@ -46,11 +46,8 @@ impl StaticDirectory {
 }
 
 impl TenantDirectory for StaticDirectory {
-    fn resolve(
-        &self,
-        key: &IngestKey,
-    ) -> impl Future<Output = Result<TenantId, UnknownKey>> + Send {
-        let found = self.lookup(key).ok_or(UnknownKey);
+    fn resolve(&self, key: &IngestKey) -> impl Future<Output = Result<Scope, UnknownKey>> + Send {
+        let found = self.lookup(key).map(Scope::of).ok_or(UnknownKey);
         async move { found }
     }
 }
@@ -61,7 +58,7 @@ fn digest_of(plaintext: &str) -> Digest32 {
 
 #[cfg(test)]
 mod tests {
-    use comettrace_core::{IngestKey, TenantDirectory, TenantId, UnknownKey};
+    use comettrace_core::{IngestKey, Scope, TenantDirectory, TenantId, UnknownKey};
     use uuid::Uuid;
 
     use super::StaticDirectory;
@@ -75,7 +72,7 @@ mod tests {
             .resolve(&IngestKey::from_plaintext("secret"))
             .await;
 
-        assert_eq!(resolved, Ok(tenant));
+        assert_eq!(resolved, Ok(Scope::of(tenant)));
     }
 
     #[tokio::test]

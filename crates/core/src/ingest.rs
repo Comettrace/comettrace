@@ -2,7 +2,7 @@ use crate::key::IngestKey;
 use crate::quota::{Admission, QuotaPolicy};
 use crate::sink::{SinkError, SpanSink};
 use crate::span::Span;
-use crate::tenant::{TenantDirectory, TenantId, UnknownKey};
+use crate::tenant::{Scope, TenantDirectory, TenantId, UnknownKey};
 use crate::usage::{DecompressedBytes, UsageMeter};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,16 +45,20 @@ where
         }
     }
 
+    /* An allowance and a usage count belong to the organisation that pays for them, so the quota
+    and the meter are asked about the tenant while the sink is told the whole scope. */
     pub async fn accept(&self, key: &IngestKey, payload: Payload) -> Result<TenantId, IngestError> {
-        let tenant = self.directory.resolve(key).await?;
+        let scope = self.directory.resolve(key).await?;
         if let Admission::Capped { allowance } =
-            self.quota.admit(tenant, payload.decompressed).await
+            self.quota.admit(scope.tenant, payload.decompressed).await
         {
             return Err(IngestError::Capped { allowance });
         }
-        self.meter.record_ingest(tenant, payload.decompressed).await;
-        self.sink.accept(tenant, payload.spans).await?;
-        Ok(tenant)
+        self.meter
+            .record_ingest(scope.tenant, payload.decompressed)
+            .await;
+        self.sink.accept(scope, payload.spans).await?;
+        Ok(scope.tenant)
     }
 }
 #[cfg(test)]
@@ -70,7 +74,7 @@ mod tests {
     use crate::quota::{Admission, QuotaPolicy, Unmetered};
     use crate::sink::{SinkError, SpanSink};
     use crate::span::{Span, SpanId, SpanKind, SpanStatus, TraceId};
-    use crate::tenant::{TenantDirectory, TenantId, UnknownKey};
+    use crate::tenant::{Scope, TenantDirectory, TenantId, UnknownKey};
     use crate::usage::{DecompressedBytes, UsageMeter};
 
     #[derive(Debug, Default)]
@@ -86,17 +90,22 @@ mod tests {
         fn resolve(
             &self,
             key: &IngestKey,
-        ) -> impl Future<Output = Result<TenantId, UnknownKey>> + Send {
-            let found = self.0.get(key.exposed()).copied().ok_or(UnknownKey);
+        ) -> impl Future<Output = Result<Scope, UnknownKey>> + Send {
+            let found = self
+                .0
+                .get(key.exposed())
+                .copied()
+                .map(Scope::of)
+                .ok_or(UnknownKey);
             async move { found }
         }
     }
 
     #[derive(Debug, Default)]
-    struct RecordingSink(Mutex<Vec<(TenantId, Vec<Span>)>>);
+    struct RecordingSink(Mutex<Vec<(Scope, Vec<Span>)>>);
 
     impl RecordingSink {
-        fn batches(&self) -> Vec<(TenantId, Vec<Span>)> {
+        fn batches(&self) -> Vec<(Scope, Vec<Span>)> {
             self.0.lock().expect("sink lock").clone()
         }
     }
@@ -104,10 +113,10 @@ mod tests {
     impl SpanSink for RecordingSink {
         fn accept(
             &self,
-            tenant: TenantId,
+            scope: Scope,
             spans: Vec<Span>,
         ) -> impl Future<Output = Result<(), SinkError>> + Send {
-            self.0.lock().expect("sink lock").push((tenant, spans));
+            self.0.lock().expect("sink lock").push((scope, spans));
             async { Ok(()) }
         }
     }
@@ -116,7 +125,7 @@ mod tests {
     struct UnavailableSink;
 
     impl SpanSink for UnavailableSink {
-        async fn accept(&self, _tenant: TenantId, _spans: Vec<Span>) -> Result<(), SinkError> {
+        async fn accept(&self, _scope: Scope, _spans: Vec<Span>) -> Result<(), SinkError> {
             Err(SinkError::Unavailable)
         }
     }
@@ -199,7 +208,7 @@ mod tests {
             .expect("the key resolves");
 
         assert_eq!(resolved, tenant);
-        assert_eq!(sink.batches(), vec![(tenant, vec![a_span()])]);
+        assert_eq!(sink.batches(), vec![(Scope::of(tenant), vec![a_span()])]);
     }
 
     #[tokio::test]

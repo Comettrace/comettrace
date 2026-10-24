@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use clickhouse::Client;
 use comettrace_core::{
-    Span, SpanId, SpanKind, SpanReader, SpanSink, SpanStatus, TenantId, TraceFilter, TraceId,
-    Window,
+    ProjectId, Scope, Span, SpanId, SpanKind, SpanReader, SpanSink, SpanStatus, TenantId,
+    TraceFilter, TraceId, Window,
 };
 use comettrace_storage::{
     BatchLimits, ClickhouseMigrator, ClickhouseReader, ClickhouseSink, FixedClock, MemorySink,
@@ -33,16 +33,19 @@ async fn accepts_batches_from_several_tenants<S: SpanSink>(sink: &S) {
     let first = TenantId::new(Uuid::from_u128(1));
     let second = TenantId::new(Uuid::from_u128(2));
 
-    sink.accept(first, vec![a_span(1, "checkout"), a_span(2, "checkout")])
-        .await
-        .expect("the first tenant's batch is accepted");
-    sink.accept(second, vec![a_span(3, "payments")])
+    sink.accept(
+        Scope::of(first),
+        vec![a_span(1, "checkout"), a_span(2, "checkout")],
+    )
+    .await
+    .expect("the first tenant's batch is accepted");
+    sink.accept(Scope::of(second), vec![a_span(3, "payments")])
         .await
         .expect("the second tenant's batch is accepted");
 }
 
 async fn accepts_an_empty_batch<S: SpanSink>(sink: &S) {
-    sink.accept(TenantId::new(Uuid::from_u128(9)), Vec::new())
+    sink.accept(Scope::of(TenantId::new(Uuid::from_u128(9))), Vec::new())
         .await
         .expect("an empty batch is accepted");
 }
@@ -74,16 +77,19 @@ async fn the_clickhouse_sink_honours_the_contract() {
         FixedClock::at(NOW),
     );
 
-    sink.accept(first, vec![a_span(1, "checkout"), a_span(2, "checkout")])
-        .await
-        .expect("the first batch is accepted");
+    sink.accept(
+        Scope::of(first),
+        vec![a_span(1, "checkout"), a_span(2, "checkout")],
+    )
+    .await
+    .expect("the first batch is accepted");
     assert_eq!(
         (sink.pending_rows().await, stored_rows(&client).await),
         (0, 2),
         "two rows written under a one row threshold must have been sent"
     );
 
-    sink.accept(second, vec![a_span(3, "payments")])
+    sink.accept(Scope::of(second), vec![a_span(3, "payments")])
         .await
         .expect("the second batch is accepted");
     assert_eq!(
@@ -92,7 +98,7 @@ async fn the_clickhouse_sink_honours_the_contract() {
         "the row of the second tenant must have been sent too"
     );
 
-    sink.accept(second, Vec::new())
+    sink.accept(Scope::of(second), Vec::new())
         .await
         .expect("an empty batch is accepted");
     sink.flush().await.expect("the sink flushes");
@@ -196,7 +202,7 @@ async fn the_row_threshold_flushes_without_an_explicit_call() {
     );
 
     sink.accept(
-        TenantId::new(Uuid::from_u128(1)),
+        Scope::of(TenantId::new(Uuid::from_u128(1))),
         vec![a_span(1, "checkout"), a_span(2, "checkout")],
     )
     .await
@@ -220,13 +226,13 @@ async fn one_buffer_carries_rows_from_several_tenants() {
     );
 
     sink.accept(
-        TenantId::new(Uuid::from_u128(1)),
+        Scope::of(TenantId::new(Uuid::from_u128(1))),
         vec![a_span(1, "checkout")],
     )
     .await
     .expect("the first tenant is accepted");
     sink.accept(
-        TenantId::new(Uuid::from_u128(2)),
+        Scope::of(TenantId::new(Uuid::from_u128(2))),
         vec![a_span(2, "payments")],
     )
     .await
@@ -258,13 +264,13 @@ async fn the_interval_flushes_once_the_period_has_elapsed() {
     );
     let tenant = TenantId::new(Uuid::from_u128(1));
 
-    sink.accept(tenant, vec![a_span(1, "checkout")])
+    sink.accept(Scope::of(tenant), vec![a_span(1, "checkout")])
         .await
         .expect("the first batch is accepted");
     assert_eq!(sink.pending_rows().await, 1, "the row count did not flush");
 
     tokio::time::advance(Duration::from_secs(31)).await;
-    sink.accept(tenant, vec![a_span(2, "checkout")])
+    sink.accept(Scope::of(tenant), vec![a_span(2, "checkout")])
         .await
         .expect("the second batch is accepted");
 
@@ -286,7 +292,7 @@ async fn expire_at_is_the_clock_plus_the_retention() {
     );
 
     sink.accept(
-        TenantId::new(Uuid::from_u128(1)),
+        Scope::of(TenantId::new(Uuid::from_u128(1))),
         vec![a_span(1, "checkout")],
     )
     .await
@@ -306,7 +312,7 @@ async fn a_timestamp_the_store_cannot_hold_is_refused() {
     span.start_unix_nanos = u64::MAX;
 
     let outcome = sink
-        .accept(TenantId::new(Uuid::from_u128(1)), vec![span])
+        .accept(Scope::of(TenantId::new(Uuid::from_u128(1))), vec![span])
         .await;
 
     assert_eq!(
@@ -350,7 +356,7 @@ async fn opening_a_span_store_migrates_a_database_that_carries_no_schema() {
         .expect("the span store opens");
     let sink = store.sink;
     sink.accept(
-        TenantId::new(Uuid::from_u128(1)),
+        Scope::of(TenantId::new(Uuid::from_u128(1))),
         vec![a_span(1, "checkout")],
     )
     .await
@@ -378,7 +384,7 @@ async fn opening_a_span_store_twice_leaves_what_the_first_one_wrote() {
         .sink;
     first
         .accept(
-            TenantId::new(Uuid::from_u128(1)),
+            Scope::of(TenantId::new(Uuid::from_u128(1))),
             vec![a_span(1, "checkout")],
         )
         .await
@@ -391,7 +397,7 @@ async fn opening_a_span_store_twice_leaves_what_the_first_one_wrote() {
         .sink;
     second
         .accept(
-            TenantId::new(Uuid::from_u128(1)),
+            Scope::of(TenantId::new(Uuid::from_u128(1))),
             vec![a_span(2, "checkout")],
         )
         .await
@@ -444,7 +450,7 @@ async fn a_written_trace_is_read_back_whole_and_in_order() {
     );
     let trace = root.trace_id;
     store
-        .accept(tenant, vec![child.clone(), root.clone()])
+        .accept(Scope::of(tenant), vec![child.clone(), root.clone()])
         .await
         .expect("a batch is accepted");
     store.flush().await.expect("the batch commits");
@@ -481,7 +487,7 @@ async fn a_trace_belonging_to_another_tenant_is_not_read() {
     let theirs = TenantId::new(Uuid::from_u128(2));
     let span = a_span(1, "checkout");
     store
-        .accept(mine, vec![span.clone()])
+        .accept(Scope::of(mine), vec![span.clone()])
         .await
         .expect("a batch is accepted");
     store.flush().await.expect("the batch commits");
@@ -540,7 +546,7 @@ async fn the_trace_list_summarises_each_trace_once() {
         root.end_unix_nanos,
     );
     store
-        .accept(tenant, vec![root.clone(), child])
+        .accept(Scope::of(tenant), vec![root.clone(), child])
         .await
         .expect("a batch is accepted");
     store.flush().await.expect("the batch commits");
@@ -583,7 +589,7 @@ async fn the_trace_list_counts_errors_and_can_keep_only_traces_that_have_them() 
     let mut broken = a_span(3, "checkout");
     broken.status = SpanStatus::Error;
     store
-        .accept(tenant, vec![healthy.clone(), broken.clone()])
+        .accept(Scope::of(tenant), vec![healthy.clone(), broken.clone()])
         .await
         .expect("a batch is accepted");
     store.flush().await.expect("the batch commits");
@@ -631,7 +637,7 @@ async fn the_trace_list_can_be_narrowed_to_a_service_that_appears_anywhere_in_it
         root.end_unix_nanos,
     );
     store
-        .accept(tenant, vec![root.clone(), child])
+        .accept(Scope::of(tenant), vec![root.clone(), child])
         .await
         .expect("a batch is accepted");
     store.flush().await.expect("the batch commits");
@@ -677,7 +683,7 @@ async fn a_window_that_misses_the_spans_finds_nothing() {
     let tenant = TenantId::new(Uuid::from_u128(1));
     let span = a_span(1, "checkout");
     store
-        .accept(tenant, vec![span.clone()])
+        .accept(Scope::of(tenant), vec![span.clone()])
         .await
         .expect("a batch is accepted");
     store.flush().await.expect("the batch commits");
@@ -718,11 +724,11 @@ async fn the_trace_list_never_crosses_tenants() {
     let mine = TenantId::new(Uuid::from_u128(1));
     let theirs = TenantId::new(Uuid::from_u128(2));
     store
-        .accept(mine, vec![a_span(1, "checkout")])
+        .accept(Scope::of(mine), vec![a_span(1, "checkout")])
         .await
         .expect("a batch is accepted");
     store
-        .accept(theirs, vec![a_span(2, "billing")])
+        .accept(Scope::of(theirs), vec![a_span(2, "billing")])
         .await
         .expect("a batch is accepted");
     store.flush().await.expect("the batch commits");
@@ -762,7 +768,7 @@ async fn the_services_table_measures_only_the_spans_a_service_was_called_on() {
     );
     outgoing.kind = SpanKind::Client;
     store
-        .accept(tenant, vec![root.clone(), slow, outgoing])
+        .accept(Scope::of(tenant), vec![root.clone(), slow, outgoing])
         .await
         .expect("a batch is accepted");
     store.flush().await.expect("the batch commits");
@@ -804,12 +810,12 @@ async fn the_services_table_never_crosses_tenants() {
     .sink;
     let mine = TenantId::new(Uuid::from_u128(1));
     store
-        .accept(mine, vec![a_span(1, "checkout")])
+        .accept(Scope::of(mine), vec![a_span(1, "checkout")])
         .await
         .expect("a batch is accepted");
     store
         .accept(
-            TenantId::new(Uuid::from_u128(2)),
+            Scope::of(TenantId::new(Uuid::from_u128(2))),
             vec![a_span(2, "billing")],
         )
         .await
@@ -827,4 +833,68 @@ async fn the_services_table_never_crosses_tenants() {
 
 fn a_wide_window() -> Window {
     Window::new(1_600_000_000_000_000_000, 1_800_000_000_000_000_000).expect("a window")
+}
+
+#[derive(Debug, clickhouse::Row, serde::Deserialize)]
+struct Owner {
+    #[serde(with = "clickhouse::serde::uuid")]
+    value: Uuid,
+}
+
+async fn stored_project(client: &Client) -> Uuid {
+    client
+        .query("SELECT any(project_id) AS value FROM spans")
+        .fetch_one::<Owner>()
+        .await
+        .expect("reading the project")
+        .value
+}
+
+#[tokio::test]
+async fn a_span_carries_the_project_the_key_named() {
+    let Some(client) = prepared("comettrace_sink_project").await else {
+        return;
+    };
+    let project = ProjectId::new(Uuid::from_u128(42));
+    let scope = Scope::of(TenantId::new(Uuid::from_u128(1))).in_project(Some(project));
+    let sink = sink_with(
+        &client,
+        BatchLimits {
+            max_rows: 1,
+            period: Duration::from_secs(60),
+        },
+    );
+
+    sink.accept(scope, vec![a_span(1, "checkout")])
+        .await
+        .expect("the batch is accepted");
+
+    assert_eq!(stored_project(&client).await, project.as_uuid());
+}
+
+#[tokio::test]
+async fn a_span_from_a_key_naming_no_project_carries_none() {
+    let Some(client) = prepared("comettrace_sink_no_project").await else {
+        return;
+    };
+    let sink = sink_with(
+        &client,
+        BatchLimits {
+            max_rows: 1,
+            period: Duration::from_secs(60),
+        },
+    );
+
+    sink.accept(
+        Scope::of(TenantId::new(Uuid::from_u128(1))),
+        vec![a_span(1, "checkout")],
+    )
+    .await
+    .expect("the batch is accepted");
+
+    assert_eq!(
+        stored_project(&client).await,
+        Uuid::nil(),
+        "no project is the only honest answer a project filter can be given"
+    );
 }

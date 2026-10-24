@@ -1,4 +1,6 @@
-use comettrace_core::{Clock, IngestKey, SecretHash, TenantDirectory, TenantId, UnixSeconds};
+use comettrace_core::{
+    Clock, IngestKey, ProjectId, Scope, SecretHash, TenantDirectory, TenantId, UnixSeconds,
+};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -94,7 +96,7 @@ impl<C: Clock> PostgresDirectory<C> {
 }
 
 impl<C: Clock + Send + Sync> TenantDirectory for PostgresDirectory<C> {
-    async fn resolve(&self, key: &IngestKey) -> Result<TenantId, comettrace_core::UnknownKey> {
+    async fn resolve(&self, key: &IngestKey) -> Result<Scope, comettrace_core::UnknownKey> {
         let Some((prefix, secret)) = key.split() else {
             return Err(comettrace_core::UnknownKey);
         };
@@ -128,7 +130,8 @@ impl<C: Clock + Send + Sync> TenantDirectory for PostgresDirectory<C> {
 
         self.note_sighting(row.get("id"), row.get("last_used_at"))
             .await;
-        Ok(TenantId::new(row.get("org_id")))
+        Ok(Scope::of(TenantId::new(row.get("org_id")))
+            .in_project(row.get::<Option<Uuid>, _>("project_id").map(ProjectId::new)))
     }
 }
 

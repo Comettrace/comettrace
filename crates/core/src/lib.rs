@@ -46,5 +46,5 @@ pub use session::{
 pub use signin::{AccountDirectory, SignIn, SignInError};
 pub use sink::{SinkError, SpanSink};
 pub use span::{InvalidId, Span, SpanId, SpanKind, SpanStatus, TraceId};
-pub use tenant::{TenantDirectory, TenantId, UnknownKey};
+pub use tenant::{Scope, TenantDirectory, TenantId, UnknownKey};
 pub use usage::{DecompressedBytes, UsageMeter, UsageReader};

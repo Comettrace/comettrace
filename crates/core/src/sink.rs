@@ -1,7 +1,7 @@
 use core::future::Future;
 
 use crate::span::Span;
-use crate::tenant::TenantId;
+use crate::tenant::Scope;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SinkError {
@@ -16,7 +16,7 @@ pub enum SinkError {
 pub trait SpanSink {
     fn accept(
         &self,
-        tenant: TenantId,
+        scope: Scope,
         spans: Vec<Span>,
     ) -> impl Future<Output = Result<(), SinkError>> + Send;
 }
@@ -24,19 +24,19 @@ pub trait SpanSink {
 impl<T: SpanSink + Sync> SpanSink for &T {
     fn accept(
         &self,
-        tenant: TenantId,
+        scope: Scope,
         spans: Vec<Span>,
     ) -> impl Future<Output = Result<(), SinkError>> + Send {
-        (*self).accept(tenant, spans)
+        (*self).accept(scope, spans)
     }
 }
 
 impl<T: SpanSink + Send + Sync> SpanSink for std::sync::Arc<T> {
     fn accept(
         &self,
-        tenant: TenantId,
+        scope: Scope,
         spans: Vec<Span>,
     ) -> impl Future<Output = Result<(), SinkError>> + Send {
-        self.as_ref().accept(tenant, spans)
+        self.as_ref().accept(scope, spans)
     }
 }
