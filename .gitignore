@@ -17,4 +17,3 @@ deploy/*.log
 deploy/*.txt
 deploy/*.html
 deploy/*.js
-deploy/*.json
