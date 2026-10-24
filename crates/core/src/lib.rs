@@ -1,5 +1,6 @@
 mod clock;
 mod credential;
+mod federated;
 mod identity;
 mod ingest;
 mod key;
@@ -15,6 +16,7 @@ mod usage;
 
 pub use clock::{Clock, UnixSeconds};
 pub use credential::{Email, InvalidCredential, Issuer, Password, Subject};
+pub use federated::{Authorizer, FederatedError, FederatedSignIn};
 pub use identity::{
     AccountId, AuthError, AuthProvider, AuthSources, NoProvider, ProvisionPolicy, ResolvedIdentity,
     SignInProof,
