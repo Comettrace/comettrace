@@ -12,3 +12,9 @@ web/.vite/
 *.tsbuildinfo
 
 .DS_Store
+
+deploy/*.log
+deploy/*.txt
+deploy/*.html
+deploy/*.js
+deploy/*.json
