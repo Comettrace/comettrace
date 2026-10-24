@@ -59,7 +59,13 @@ async fn jwks(State(provider): State<Provider>) -> Json<Value> {
 
 async fn token(State(provider): State<Provider>) -> Json<Value> {
     let nonce = provider.nonce.lock().expect("the nonce lock").clone();
-    let now = 1_700_000_000_i64;
+    let now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_secs(),
+    )
+    .expect("a representable instant");
     let claims = json!({
         "iss": provider.issuer,
         "aud": CLIENT_ID,

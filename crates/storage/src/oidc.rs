@@ -9,7 +9,6 @@ use openidconnect::{
     OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
 
-const OPENID: &str = "openid";
 const EMAIL: &str = "email";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +72,6 @@ impl OidcProvider {
                 CsrfToken::new_random,
                 Nonce::new_random,
             )
-            .add_scope(Scope::new(OPENID.to_owned()))
             .add_scope(Scope::new(EMAIL.to_owned()))
             .set_pkce_challenge(challenge)
             .url();
@@ -116,13 +114,22 @@ impl AuthProvider for OidcProvider {
             .set_pkce_verifier(PkceCodeVerifier::new(code_verifier))
             .request_async(&self.http)
             .await
-            .map_err(|_| AuthError::Rejected)?;
+            .map_err(|error| {
+                tracing::warn!(%error, "the provider refused the code exchange");
+                AuthError::Rejected
+            })?;
 
-        let token = tokens.id_token().ok_or(AuthError::Rejected)?;
+        let token = tokens.id_token().ok_or_else(|| {
+            tracing::warn!("the provider returned no id token");
+            AuthError::Rejected
+        })?;
         let verifier = client.id_token_verifier();
         let claims = token
             .claims(&verifier, &Nonce::new(nonce))
-            .map_err(|_| AuthError::Rejected)?;
+            .map_err(|error| {
+                tracing::warn!(%error, "the id token did not validate");
+                AuthError::Rejected
+            })?;
 
         if let Some(expected) = claims.access_token_hash() {
             let algorithm = token.signing_alg().map_err(|_| AuthError::Rejected)?;
