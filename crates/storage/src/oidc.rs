@@ -1,6 +1,6 @@
 use comettrace_core::{
-    AuthError, AuthProvider, CodeVerifier, Email, Issuer, PendingFlow, ResolvedIdentity,
-    SignInProof, Subject,
+    AuthError, AuthProvider, Authorizer, CodeVerifier, Email, Issuer, PendingFlow,
+    ResolvedIdentity, SignInProof, Subject,
 };
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
 use openidconnect::reqwest;
@@ -150,6 +150,15 @@ impl AuthProvider for OidcProvider {
                 .map_err(|_| AuthError::Rejected)?,
             email: Email::try_from(address.as_str()).map_err(|_| AuthError::Rejected)?,
             email_verified: claims.email_verified().unwrap_or(false),
+        })
+    }
+}
+
+impl Authorizer for OidcProvider {
+    fn begin(&self) -> Result<(String, PendingFlow), AuthError> {
+        OidcProvider::begin(self).map_err(|error| {
+            tracing::error!(%error, "an authorization url could not be built");
+            AuthError::ProviderUnreachable
         })
     }
 }
