@@ -1,0 +1,147 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/comettrace/comettrace
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: community
+            features: ""
+            suffix: ""
+          - variant: cloud
+            features: "ee"
+            suffix: "-ee"
+    steps:
+      - uses: actions/checkout@v4
+      - name: what is being released
+        id: release
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in
+            *-rc.*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: the tags this variant carries
+        id: tags
+        run: |
+          set -eu
+          version="${{ steps.release.outputs.version }}"
+          suffix="${{ matrix.suffix }}"
+          tags="${IMAGE}:${version}${suffix}"
+          if [ "${{ matrix.variant }}" = "community" ] \
+            && [ "${{ steps.release.outputs.prerelease }}" = "false" ]; then
+            tags="$tags,${IMAGE}:latest"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: build and push for both architectures
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            FEATURES=${{ matrix.features }}
+          tags: ${{ steps.tags.outputs.tags }}
+          push: true
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=release-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.variant }}
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  release:
+    needs: images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: measure what was published
+        id: sizes
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo "| Image | Platform | Compressed |"
+            echo "| --- | --- | --- |"
+          } > sizes.md
+          for suffix in "" "-ee"; do
+            tag="${version}${suffix}"
+            docker buildx imagetools inspect "${IMAGE}:${tag}" --raw \
+              | jq -r '.manifests[]? | select(.platform.os == "linux")
+                       | select(.platform.architecture != "unknown")
+                       | "\(.platform.architecture) \(.digest)"' \
+              | while read -r arch digest; do
+                  bytes=$(docker buildx imagetools inspect "${IMAGE}@${digest}" --raw \
+                    | jq '[.layers[].size] | add')
+                  mib=$(awk -v b="$bytes" 'BEGIN { printf "%.1f", b / 1048576 }')
+                  echo "| \`${IMAGE}:${tag}\` | linux/${arch} | ${mib} MiB |" >> sizes.md
+                done
+          done
+          cat sizes.md >> "$GITHUB_STEP_SUMMARY"
+      - name: cut the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo "## Images"
+            echo
+            echo '```sh'
+            echo "docker pull ${IMAGE}:${version}"
+            echo '```'
+            echo
+            echo "The \`-ee\` tag carries the cloud build. Both are"
+            echo "linux/amd64 and linux/arm64 with provenance attached."
+            echo
+            cat sizes.md
+          } > body.md
+          echo >> body.md
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$GITHUB_REF_NAME" --jq .body >> body.md
+          prerelease=""
+          case "$version" in *-rc.*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file body.md \
+            $prerelease

@@ -53,7 +53,7 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: comettrace:local
+    image: ${COMETTRACE_IMAGE:-comettrace:local}
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,7 +75,7 @@ services:
       - "${OTLP_GRPC_PORT:-4317}:4317"
       - "${OTLP_HTTP_PORT:-4318}:4318"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:4318/health"]
+      test: ["CMD", "comettrace", "health"]
       interval: 5s
       timeout: 5s
       retries: 20

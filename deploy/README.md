@@ -54,6 +54,20 @@ curl -X POST http://localhost:4318/v1/traces \
   --data-binary @payload.pb
 ```
 
+## Using a published image instead of building
+
+Images land on `ghcr.io/comettrace/comettrace` for every released tag:
+`1.2.3` is the community build and `1.2.3-ee` the cloud one, both for
+linux/amd64 and linux/arm64.
+
+```sh
+export COMETTRACE_IMAGE=ghcr.io/comettrace/comettrace:1.2.3
+docker compose up --detach --no-build --pull always
+```
+
+Without `COMETTRACE_IMAGE` the compose file builds from this checkout,
+which is what `--build` above does.
+
 ## What to change before this faces anything real
 
 - **The passwords.** Postgres, ClickHouse and the server all default to
@@ -83,6 +97,7 @@ its field. `COMETTRACE_SPANS__RETENTION_DAYS` is `spans.retention_days`.
 | `OTLP_GRPC_PORT` | `4317` | Host port for OTLP over gRPC |
 | `OTLP_HTTP_PORT` | `4318` | Host port for OTLP over HTTP |
 | `RUST_LOG` | `info` | Log filter |
+| `COMETTRACE_IMAGE` | built locally | A published image to run instead |
 
 ## Signing in with an identity provider instead
 
