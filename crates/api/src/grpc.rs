@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use comettrace_core::{DecompressedBytes, Ingest, Payload, SpanSink, TenantDirectory, UsageMeter};
+use comettrace_core::{
+    DecompressedBytes, Ingest, Payload, QuotaPolicy, SpanSink, TenantDirectory, UsageMeter,
+};
 use comettrace_otlp::spans_of;
 use opentelemetry_proto::tonic::collector::trace::v1::trace_service_server::{
     TraceService, TraceServiceServer,
@@ -16,21 +18,22 @@ use crate::auth;
 use crate::error::ApiError;
 
 #[derive(Debug)]
-pub struct TraceGateway<D, S, M> {
-    ingest: Arc<Ingest<D, S, M>>,
+pub struct TraceGateway<D, Q, S, M> {
+    ingest: Arc<Ingest<D, Q, S, M>>,
 }
 
-impl<D, S, M> TraceGateway<D, S, M> {
-    pub fn new(ingest: Arc<Ingest<D, S, M>>) -> Self {
+impl<D, Q, S, M> TraceGateway<D, Q, S, M> {
+    pub fn new(ingest: Arc<Ingest<D, Q, S, M>>) -> Self {
         Self { ingest }
     }
 }
 
-pub fn trace_server<D, S, M>(
-    ingest: Arc<Ingest<D, S, M>>,
-) -> TraceServiceServer<TraceGateway<D, S, M>>
+pub fn trace_server<D, Q, S, M>(
+    ingest: Arc<Ingest<D, Q, S, M>>,
+) -> TraceServiceServer<TraceGateway<D, Q, S, M>>
 where
     D: TenantDirectory + Send + Sync + 'static,
+    Q: QuotaPolicy + Send + Sync + 'static,
     S: SpanSink + Send + Sync + 'static,
     M: UsageMeter + Send + Sync + 'static,
 {
@@ -38,9 +41,10 @@ where
 }
 
 #[tonic::async_trait]
-impl<D, S, M> TraceService for TraceGateway<D, S, M>
+impl<D, Q, S, M> TraceService for TraceGateway<D, Q, S, M>
 where
     D: TenantDirectory + Send + Sync + 'static,
+    Q: QuotaPolicy + Send + Sync + 'static,
     S: SpanSink + Send + Sync + 'static,
     M: UsageMeter + Send + Sync + 'static,
 {

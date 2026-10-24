@@ -1,4 +1,5 @@
 use crate::key::IngestKey;
+use crate::quota::{Admission, QuotaPolicy};
 use crate::sink::{SinkError, SpanSink};
 use crate::span::Span;
 use crate::tenant::{TenantDirectory, TenantId, UnknownKey};
@@ -14,26 +15,31 @@ pub struct Payload {
 pub enum IngestError {
     #[error(transparent)]
     UnknownKey(#[from] UnknownKey),
+    #[error("the tenant has used its allowance of {} bytes", allowance.get())]
+    Capped { allowance: DecompressedBytes },
     #[error(transparent)]
     Sink(#[from] SinkError),
 }
 
 #[derive(Debug, Clone)]
-pub struct Ingest<D, S, M> {
+pub struct Ingest<D, Q, S, M> {
     directory: D,
+    quota: Q,
     sink: S,
     meter: M,
 }
 
-impl<D, S, M> Ingest<D, S, M>
+impl<D, Q, S, M> Ingest<D, Q, S, M>
 where
     D: TenantDirectory,
+    Q: QuotaPolicy,
     S: SpanSink,
     M: UsageMeter,
 {
-    pub fn new(directory: D, sink: S, meter: M) -> Self {
+    pub fn new(directory: D, quota: Q, sink: S, meter: M) -> Self {
         Self {
             directory,
+            quota,
             sink,
             meter,
         }
@@ -41,12 +47,16 @@ where
 
     pub async fn accept(&self, key: &IngestKey, payload: Payload) -> Result<TenantId, IngestError> {
         let tenant = self.directory.resolve(key).await?;
+        if let Admission::Capped { allowance } =
+            self.quota.admit(tenant, payload.decompressed).await
+        {
+            return Err(IngestError::Capped { allowance });
+        }
         self.meter.record_ingest(tenant, payload.decompressed).await;
         self.sink.accept(tenant, payload.spans).await?;
         Ok(tenant)
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, HashMap};
@@ -57,6 +67,7 @@ mod tests {
 
     use super::{Ingest, IngestError, Payload};
     use crate::key::IngestKey;
+    use crate::quota::{Admission, QuotaPolicy, Unmetered};
     use crate::sink::{SinkError, SpanSink};
     use crate::span::{Span, SpanId, SpanKind, SpanStatus, TraceId};
     use crate::tenant::{TenantDirectory, TenantId, UnknownKey};
@@ -159,7 +170,7 @@ mod tests {
     async fn an_unknown_key_reaches_no_sink() {
         let sink = RecordingSink::default();
         let meter = RecordingMeter::default();
-        let ingest = Ingest::new(FakeDirectory::default(), &sink, &meter);
+        let ingest = Ingest::new(FakeDirectory::default(), Unmetered, &sink, &meter);
 
         let outcome = ingest
             .accept(&IngestKey::from_plaintext("absent"), a_payload(512))
@@ -175,7 +186,12 @@ mod tests {
         let tenant = TenantId::new(Uuid::from_u128(42));
         let sink = RecordingSink::default();
         let meter = RecordingMeter::default();
-        let ingest = Ingest::new(FakeDirectory::holding("live", tenant), &sink, &meter);
+        let ingest = Ingest::new(
+            FakeDirectory::holding("live", tenant),
+            Unmetered,
+            &sink,
+            &meter,
+        );
 
         let resolved = ingest
             .accept(&IngestKey::from_plaintext("live"), a_payload(512))
@@ -191,7 +207,12 @@ mod tests {
         let tenant = TenantId::new(Uuid::from_u128(7));
         let sink = RecordingSink::default();
         let meter = RecordingMeter::default();
-        let ingest = Ingest::new(FakeDirectory::holding("live", tenant), &sink, &meter);
+        let ingest = Ingest::new(
+            FakeDirectory::holding("live", tenant),
+            Unmetered,
+            &sink,
+            &meter,
+        );
 
         ingest
             .accept(&IngestKey::from_plaintext("live"), a_payload(4096))
@@ -210,6 +231,7 @@ mod tests {
         let meter = RecordingMeter::default();
         let ingest = Ingest::new(
             FakeDirectory::holding("live", tenant),
+            Unmetered,
             UnavailableSink,
             &meter,
         );
@@ -219,5 +241,118 @@ mod tests {
             .await;
 
         assert_eq!(outcome, Err(IngestError::Sink(SinkError::Unavailable)));
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct HardCap(u64);
+
+    impl QuotaPolicy for HardCap {
+        fn admit(
+            &self,
+            _tenant: TenantId,
+            incoming: DecompressedBytes,
+        ) -> impl Future<Output = Admission> + Send {
+            let allowance = DecompressedBytes::new(self.0);
+            let decision = if incoming > allowance {
+                Admission::Capped { allowance }
+            } else {
+                Admission::Within
+            };
+            async move { decision }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct AllowOverage(u64);
+
+    impl QuotaPolicy for AllowOverage {
+        fn admit(
+            &self,
+            _tenant: TenantId,
+            incoming: DecompressedBytes,
+        ) -> impl Future<Output = Admission> + Send {
+            let over = incoming.get().saturating_sub(self.0);
+            let decision = if over > 0 {
+                Admission::Overage {
+                    over_by: DecompressedBytes::new(over),
+                }
+            } else {
+                Admission::Within
+            };
+            async move { decision }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_capped_tenant_reaches_neither_the_meter_nor_the_sink() {
+        let tenant = TenantId::new(Uuid::from_u128(4));
+        let sink = RecordingSink::default();
+        let meter = RecordingMeter::default();
+        let ingest = Ingest::new(
+            FakeDirectory::holding("live", tenant),
+            HardCap(1024),
+            &sink,
+            &meter,
+        );
+
+        let outcome = ingest
+            .accept(&IngestKey::from_plaintext("live"), a_payload(4096))
+            .await;
+
+        assert_eq!(
+            outcome,
+            Err(IngestError::Capped {
+                allowance: DecompressedBytes::new(1024)
+            })
+        );
+        assert!(sink.batches().is_empty());
+        assert!(meter.readings().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_allowed_overage_is_accepted_and_counted_in_full() {
+        let tenant = TenantId::new(Uuid::from_u128(5));
+        let sink = RecordingSink::default();
+        let meter = RecordingMeter::default();
+        let ingest = Ingest::new(
+            FakeDirectory::holding("live", tenant),
+            AllowOverage(1024),
+            &sink,
+            &meter,
+        );
+
+        let resolved = ingest
+            .accept(&IngestKey::from_plaintext("live"), a_payload(4096))
+            .await
+            .expect("an overage is still accepted");
+
+        assert_eq!(resolved, tenant);
+        assert_eq!(sink.batches().len(), 1);
+        assert_eq!(
+            meter.readings(),
+            vec![(tenant, DecompressedBytes::new(4096))],
+            "the whole payload counts, not only the part inside the allowance"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_payload_inside_the_allowance_passes_untouched() {
+        let tenant = TenantId::new(Uuid::from_u128(6));
+        let sink = RecordingSink::default();
+        let meter = RecordingMeter::default();
+        let ingest = Ingest::new(
+            FakeDirectory::holding("live", tenant),
+            HardCap(8192),
+            &sink,
+            &meter,
+        );
+
+        ingest
+            .accept(&IngestKey::from_plaintext("live"), a_payload(4096))
+            .await
+            .expect("the payload fits");
+
+        assert_eq!(sink.batches().len(), 1);
+        assert_eq!(meter.readings().len(), 1);
     }
 }

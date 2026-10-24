@@ -42,3 +42,19 @@ impl<T: UsageMeter + Send + Sync> UsageMeter for std::sync::Arc<T> {
         self.as_ref().record_ingest(tenant, decompressed)
     }
 }
+
+pub trait UsageReader {
+    fn used(&self, tenant: TenantId) -> impl Future<Output = DecompressedBytes> + Send;
+}
+
+impl<T: UsageReader + Sync> UsageReader for &T {
+    fn used(&self, tenant: TenantId) -> impl Future<Output = DecompressedBytes> + Send {
+        (*self).used(tenant)
+    }
+}
+
+impl<T: UsageReader + Send + Sync> UsageReader for std::sync::Arc<T> {
+    fn used(&self, tenant: TenantId) -> impl Future<Output = DecompressedBytes> + Send {
+        self.as_ref().used(tenant)
+    }
+}

@@ -2,7 +2,7 @@ use core::future::Future;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use comettrace_core::{DecompressedBytes, TenantId, UsageMeter};
+use comettrace_core::{DecompressedBytes, TenantId, UsageMeter, UsageReader};
 
 #[derive(Debug, Default)]
 pub struct MemoryMeter {
@@ -74,5 +74,12 @@ mod tests {
         let meter = MemoryMeter::default();
 
         assert_eq!(meter.total_for(TenantId::new(Uuid::from_u128(9))), 0);
+    }
+}
+
+impl UsageReader for MemoryMeter {
+    fn used(&self, tenant: TenantId) -> impl Future<Output = DecompressedBytes> + Send {
+        let total = DecompressedBytes::new(self.total_for(tenant));
+        async move { total }
     }
 }

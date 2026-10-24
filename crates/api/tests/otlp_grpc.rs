@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use comettrace_api::trace_server;
-use comettrace_core::{Ingest, TenantId};
-use comettrace_storage::{MemoryMeter, MemorySink, StaticDirectory};
+use comettrace_core::{DecompressedBytes, Ingest, QuotaPolicy, TenantId, Unmetered};
+use comettrace_storage::{Allowance, MemoryMeter, MemorySink, StaticDirectory, StaticQuota};
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::trace_service_client::TraceServiceClient;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value::Value};
@@ -17,6 +17,7 @@ use tonic::{Code, Request};
 use uuid::Uuid;
 
 const KEY: &str = "live-key";
+const TENANT: u128 = 23;
 
 struct Running {
     endpoint: String,
@@ -26,11 +27,16 @@ struct Running {
 }
 
 async fn serving() -> Running {
-    let tenant = TenantId::new(Uuid::from_u128(23));
+    serving_with(Unmetered).await
+}
+
+async fn serving_with<Q: QuotaPolicy + Send + Sync + 'static>(quota: Q) -> Running {
+    let tenant = TenantId::new(Uuid::from_u128(TENANT));
     let sink = Arc::new(MemorySink::default());
     let meter = Arc::new(MemoryMeter::default());
     let ingest = Arc::new(Ingest::new(
         StaticDirectory::from_plaintext([(KEY, tenant)]),
+        quota,
         Arc::clone(&sink),
         Arc::clone(&meter),
     ));
@@ -160,4 +166,31 @@ async fn a_grpc_export_without_a_bearer_is_refused() {
 
     assert_eq!(status.code(), Code::Unauthenticated);
     assert_eq!(running.sink.accepted(), 0);
+}
+
+fn capped_at(bytes: u64) -> StaticQuota<MemoryMeter> {
+    StaticQuota::new(
+        MemoryMeter::default(),
+        [(
+            TenantId::new(Uuid::from_u128(TENANT)),
+            Allowance::Capped(DecompressedBytes::new(bytes)),
+        )],
+    )
+}
+
+#[tokio::test]
+async fn a_tenant_over_its_cap_is_told_the_resource_is_exhausted() {
+    let running = serving_with(capped_at(0)).await;
+    let mut client = TraceServiceClient::connect(running.endpoint.clone())
+        .await
+        .expect("the client connects");
+
+    let status = client
+        .export(authorised(a_request(1), KEY))
+        .await
+        .expect_err("the server refuses");
+
+    assert_eq!(status.code(), Code::ResourceExhausted);
+    assert_eq!(running.sink.accepted(), 0);
+    assert_eq!(running.meter.total_for(running.tenant), 0);
 }

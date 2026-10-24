@@ -5,8 +5,8 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use comettrace_api::router;
-use comettrace_core::{Ingest, TenantId};
-use comettrace_storage::{MemoryMeter, MemorySink, StaticDirectory};
+use comettrace_core::{DecompressedBytes, Ingest, QuotaPolicy, TenantId, Unmetered};
+use comettrace_storage::{Allowance, MemoryMeter, MemorySink, StaticDirectory, StaticQuota};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
@@ -18,6 +18,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 const KEY: &str = "live-key";
+const TENANT: u128 = 11;
 const PROTOBUF: &str = "application/x-protobuf";
 const TRACES: &str = "/v1/traces";
 
@@ -29,11 +30,16 @@ struct Harness {
 }
 
 fn harness() -> Harness {
-    let tenant = TenantId::new(Uuid::from_u128(11));
+    harness_with(Unmetered)
+}
+
+fn harness_with<Q: QuotaPolicy + Send + Sync + 'static>(quota: Q) -> Harness {
+    let tenant = TenantId::new(Uuid::from_u128(TENANT));
     let sink = Arc::new(MemorySink::default());
     let meter = Arc::new(MemoryMeter::default());
     let ingest = Arc::new(Ingest::new(
         StaticDirectory::from_plaintext([(KEY, tenant)]),
+        quota,
         Arc::clone(&sink),
         Arc::clone(&meter),
     ));
@@ -234,4 +240,45 @@ async fn a_malformed_payload_is_refused() {
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(harness.sink.accepted(), 0);
+}
+
+fn capped_at(bytes: u64) -> StaticQuota<MemoryMeter> {
+    StaticQuota::new(
+        MemoryMeter::default(),
+        [(
+            TenantId::new(Uuid::from_u128(TENANT)),
+            Allowance::Capped(DecompressedBytes::new(bytes)),
+        )],
+    )
+}
+
+#[tokio::test]
+async fn a_tenant_over_its_cap_gets_429_and_stores_nothing() {
+    let harness = harness_with(capped_at(0));
+
+    let response = harness
+        .router
+        .clone()
+        .oneshot(export(a_payload(1)))
+        .await
+        .expect("the router answers");
+
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(harness.sink.accepted(), 0);
+    assert_eq!(harness.meter.total_for(harness.tenant), 0);
+}
+
+#[tokio::test]
+async fn a_tenant_inside_its_cap_is_served_as_before() {
+    let harness = harness_with(capped_at(4 * 1024 * 1024));
+
+    let response = harness
+        .router
+        .clone()
+        .oneshot(export(a_payload(1)))
+        .await
+        .expect("the router answers");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(harness.sink.accepted(), 1);
 }
