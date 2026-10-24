@@ -6,7 +6,7 @@ use comettrace_core::{Span, SpanId, SpanKind, SpanSink, SpanStatus, TenantId, Tr
 use comettrace_storage::{BatchLimits, ClickhouseSink, FixedClock, MemorySink, Migrator};
 use uuid::Uuid;
 
-const NOW: u64 = 1_700_000_000;
+const NOW: u64 = 4_000_000_000;
 
 pub fn a_span(seed: u8, service: &str) -> Span {
     Span {
