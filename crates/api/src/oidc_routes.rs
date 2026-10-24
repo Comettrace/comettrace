@@ -58,7 +58,7 @@ where
     S: SessionStore + Send + Sync + 'static,
 {
     let url = federated.start().await?;
-    Ok(redirect(&url)?)
+    redirect(&url)
 }
 
 async fn callback<Z, W, A, S>(
