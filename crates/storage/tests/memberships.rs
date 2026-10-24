@@ -1,5 +1,5 @@
-use comettrace_core::{AccountId, Membership, Memberships, OrgRole, TenantId};
-use comettrace_storage::{CONTROL_PLANE, MembershipError, PostgresMemberships};
+use comettrace_core::{AccountId, Membership, Memberships, OrgName, OrgRole, Orgs, TenantId};
+use comettrace_storage::{CONTROL_PLANE, MembershipError, PostgresMemberships, PostgresOrgs};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 use uuid::Uuid;
@@ -211,4 +211,79 @@ async fn deleting_an_organisation_takes_its_memberships_with_it() {
             .expect("the memberships")
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn an_organisation_reads_back_with_its_name_its_plan_and_when_it_was_founded() {
+    let Some(pool) = control_plane("memberships_card").await else {
+        return;
+    };
+    an_account(&pool, "card@example.com").await;
+    let org = PostgresMemberships::new(pool.clone())
+        .found("Acme", "card@example.com")
+        .await
+        .expect("the organisation is founded");
+
+    let card = PostgresOrgs::new(pool.clone())
+        .only(org)
+        .await
+        .expect("the organisation is read")
+        .expect("a row carries it");
+
+    assert_eq!(card.id, org);
+    assert_eq!(&*card.name, "Acme");
+    assert_eq!(
+        &*card.plan, "Self-hosted",
+        "the plan the migration seeds every self-hosted deployment with"
+    );
+    assert!(
+        card.created_at_unix_nanos > 1_600_000_000_000_000_000,
+        "the column holds nanoseconds, not seconds: {}",
+        card.created_at_unix_nanos
+    );
+}
+
+#[tokio::test]
+async fn renaming_an_organisation_leaves_its_id_and_its_founding_instant_alone() {
+    let Some(pool) = control_plane("memberships_rename").await else {
+        return;
+    };
+    an_account(&pool, "rename@example.com").await;
+    let org = PostgresMemberships::new(pool.clone())
+        .found("Acme", "rename@example.com")
+        .await
+        .expect("the organisation is founded");
+    let orgs = PostgresOrgs::new(pool.clone());
+    let before = orgs
+        .only(org)
+        .await
+        .expect("the organisation is read")
+        .expect("a row carries it");
+
+    orgs.rename(org, &OrgName::try_from("Acme Payments").expect("a name"))
+        .await
+        .expect("the organisation is renamed");
+
+    let after = orgs
+        .only(org)
+        .await
+        .expect("the organisation is read")
+        .expect("a row carries it");
+    assert_eq!(&*after.name, "Acme Payments");
+    assert_eq!(after.id, before.id);
+    assert_eq!(after.created_at_unix_nanos, before.created_at_unix_nanos);
+}
+
+#[tokio::test]
+async fn an_id_no_organisation_carries_reads_as_nothing() {
+    let Some(pool) = control_plane("memberships_no_card").await else {
+        return;
+    };
+
+    let found = PostgresOrgs::new(pool)
+        .only(TenantId::new(Uuid::new_v4()))
+        .await
+        .expect("the organisation is read");
+
+    assert!(found.is_none());
 }

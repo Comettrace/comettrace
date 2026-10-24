@@ -240,19 +240,43 @@ where
     Ok(Json(laid_out(id, spans)))
 }
 
-pub(crate) fn carried(headers: &HeaderMap) -> Result<SessionToken, LookRefused> {
-    if !headers.contains_key(&REQUESTED_WITH) {
-        return Err(LookRefused::NotFromOurOrigin);
-    }
-    session_cookie::carried(headers).ok_or(LookRefused::NoSession)
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum LookRefused {
+/* Every organisation-scoped router needs this and each spells its own refusals, so the two
+answers it can give are a type of their own rather than one router's enum the others borrow. */
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+pub enum NotCarried {
     #[error("the request carries no x-requested-with header")]
     NotFromOurOrigin,
     #[error("the request carries no live session")]
     NoSession,
+}
+
+impl IntoResponse for NotCarried {
+    fn into_response(self) -> Response {
+        let status = match self {
+            Self::NotFromOurOrigin => StatusCode::FORBIDDEN,
+            Self::NoSession => StatusCode::UNAUTHORIZED,
+        };
+        (status, self.to_string()).into_response()
+    }
+}
+
+pub(crate) fn carried(headers: &HeaderMap) -> Result<SessionToken, NotCarried> {
+    if !headers.contains_key(&REQUESTED_WITH) {
+        return Err(NotCarried::NotFromOurOrigin);
+    }
+    session_cookie::carried(headers).ok_or(NotCarried::NoSession)
+}
+
+impl From<NotCarried> for LookRefused {
+    fn from(error: NotCarried) -> Self {
+        Self::Reaching(error)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum LookRefused {
+    #[error(transparent)]
+    Reaching(NotCarried),
     #[error("no such organisation")]
     NoSuchOrg,
     #[error("a window must end after it starts")]
@@ -268,7 +292,7 @@ pub enum LookRefused {
 impl From<ExploreError> for LookRefused {
     fn from(error: ExploreError) -> Self {
         match error {
-            ExploreError::NoSession => Self::NoSession,
+            ExploreError::NoSession => Self::Reaching(NotCarried::NoSession),
             ExploreError::NotYours => Self::NoSuchOrg,
             ExploreError::StoreUnreachable => Self::Unavailable,
         }
@@ -278,8 +302,7 @@ impl From<ExploreError> for LookRefused {
 impl IntoResponse for LookRefused {
     fn into_response(self) -> Response {
         let status = match self {
-            Self::NotFromOurOrigin => StatusCode::FORBIDDEN,
-            Self::NoSession => StatusCode::UNAUTHORIZED,
+            Self::Reaching(refused) => return refused.into_response(),
             Self::NoSuchOrg | Self::NoSuchTrace => StatusCode::NOT_FOUND,
             Self::Window | Self::TraceId => StatusCode::BAD_REQUEST,
             Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,

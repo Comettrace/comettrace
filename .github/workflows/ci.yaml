@@ -254,6 +254,35 @@ jobs:
           grep -q "\"role\":\"owner\"" me.json || { echo "the owner lost its role"; exit 1; }
           grep -q "operator@example.com" me.json || { echo "no address to show"; exit 1; }
           grep -q "\"name\":\"Default\"" me.json || { echo "no org name to show"; exit 1; }
+      - name: the organisation card is served and the owner can rename it
+        working-directory: deploy
+        run: |
+          set -eu
+          org=$(docker compose exec -T postgres psql --username comettrace \
+            --dbname comettrace --tuples-only --no-align \
+            --command "SELECT id FROM orgs LIMIT 1" | tr -d '[:space:]')
+          curl --fail --silent --show-error "http://localhost:4318/api/orgs/$org" \
+            -H 'x-requested-with: ci' --cookie jar.txt > card.json
+          cat card.json
+          grep -q "\"name\":\"Default\"" card.json || { echo "the card lost the name"; exit 1; }
+          grep -q "\"plan\":\"Self-hosted\"" card.json || { echo "no plan on the card"; exit 1; }
+          grep -q "\"version\":\"" card.json || { echo "no version on the card"; exit 1; }
+          grep -qE "\"created_at_ms\":1[0-9]{12}" card.json \
+            || { echo "created_at_ms is not a millisecond count"; exit 1; }
+          refused=$(curl --silent --output /dev/null --write-out '%{http_code}' -X PATCH \
+            "http://localhost:4318/api/orgs/$org" -H 'x-requested-with: ci' --cookie jar.txt \
+            -H 'content-type: application/json' --data '{"name":"   "}')
+          test "$refused" = "422" || { echo "a blank name answered $refused"; exit 1; }
+          curl --fail --silent --show-error -X PATCH "http://localhost:4318/api/orgs/$org" \
+            -H 'x-requested-with: ci' --cookie jar.txt -H 'content-type: application/json' \
+            --data '{"name":"  Renamed  "}' > renamed.json
+          cat renamed.json
+          grep -q "\"name\":\"Renamed\"" renamed.json \
+            || { echo "the rename did not take, or kept the space"; exit 1; }
+          curl --fail --silent --show-error http://localhost:4318/auth/me \
+            -H 'x-requested-with: ci' --cookie jar.txt > me-after.json
+          grep -q "\"name\":\"Renamed\"" me-after.json \
+            || { echo "the top bar would still show the old name"; exit 1; }
       - name: an issued key authenticates a payload and an unissued one does not
         working-directory: deploy
         run: |
