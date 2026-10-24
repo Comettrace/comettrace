@@ -99,3 +99,20 @@ did exactly that, and the token read back was two lines rather than one.
 The logger writes to stderr now. The convention that stdout carries at
 most one secret and nothing else is only true if nothing else ever writes
 there, and saying so was not enough to make it so.
+
+## Amended: the control plane answers the loopback
+
+This said no database port was published, and gave that as the reason the
+default passwords were acceptable. That is no longer true of Postgres: a
+database client on the host is worth more during development than the
+absolute of publishing nothing, so it is bound to `127.0.0.1`.
+
+The reason survives the change, narrowed. A port on the loopback answers
+processes on this machine and nothing that can reach it over a network, so
+`comettrace/comettrace` is still not offered to anybody who finds the
+host. `POSTGRES_BIND` is what would widen that, and the README says to set
+a password before touching it.
+
+ClickHouse and Redis stay unpublished. Nothing has asked to reach them
+from outside, and `docker compose exec` already answers the cases that
+come up.

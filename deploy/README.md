@@ -73,10 +73,12 @@ which is what `--build` above does.
 
 - **The passwords.** Postgres, ClickHouse and the server all default to
   `comettrace` so that `docker compose up` works on a clean machine with
-  no preparation. No database port is published to the host, so these are
-  reachable only from inside the compose network — but set
-  `POSTGRES_PASSWORD` and `CLICKHOUSE_PASSWORD` in a `.env` file beside
-  the compose file for anything that is not a laptop.
+  no preparation. ClickHouse and Redis are reachable only from inside the
+  compose network; Postgres answers this machine too, on the loopback, so
+  a database client can reach it. Set `POSTGRES_PASSWORD` and
+  `CLICKHOUSE_PASSWORD` in a `.env` file beside the compose file for
+  anything that is not a laptop — and before widening `POSTGRES_BIND`,
+  which is what would put that database on the network.
 - **`COOKIE_SECURE`.** It defaults to `false` because this compose file
   serves plain HTTP. Put the server behind TLS and set it to `true`, or
   session cookies travel in the clear.
@@ -98,6 +100,8 @@ its field. `COMETTRACE_SPANS__RETENTION_DAYS` is `spans.retention_days`.
 | `OTLP_GRPC_PORT` | `4317` | Host port for OTLP over gRPC |
 | `OTLP_HTTP_PORT` | `4318` | Host port for OTLP over HTTP |
 | `RUST_LOG` | `info` | Log filter |
+| `POSTGRES_BIND` | `127.0.0.1` | Which address the control plane answers on |
+| `POSTGRES_PORT` | `5432` | Host port for the control plane |
 | `COMETTRACE_WEB_ROOT` | set in the image | Where the built web application lives |
 | `COMETTRACE_IMAGE` | built locally | A published image to run instead |
 
@@ -125,3 +129,20 @@ Organisations exist and every span carries one, but a self-hosted
 deployment is expected to have exactly one. `bootstrap` creates it and
 refuses to create a second. Nothing stops you adding more with
 `create-org` and `grant-role`.
+
+## Looking at the databases
+
+Postgres answers `localhost:5432` as `comettrace` / `comettrace`, so any
+client reaches it:
+
+```sh
+psql postgres://comettrace:comettrace@localhost:5432/comettrace
+```
+
+ClickHouse and Redis are not published. Reach them through the container:
+
+```sh
+docker compose exec clickhouse clickhouse-client \
+  --user=comettrace --password=comettrace --database=comettrace
+docker compose exec redis redis-cli
+```
