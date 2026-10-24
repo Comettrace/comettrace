@@ -20,6 +20,30 @@ pub struct Config {
     pub redis_url: Option<String>,
     #[serde(default)]
     pub tenants: Vec<TenantKey>,
+    #[serde(default)]
+    pub oidc: Option<OidcConfig>,
+    #[serde(default = "yes")]
+    pub local_password: bool,
+    #[serde(default = "yes")]
+    pub cookie_secure: bool,
+    #[serde(default = "console")]
+    pub after_sign_in: String,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn console() -> String {
+    "/console".to_owned()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OidcConfig {
+    pub issuer: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub redirect_uri: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +81,10 @@ impl Default for Config {
             database_url: None,
             redis_url: None,
             tenants: Vec::new(),
+            oidc: None,
+            local_password: true,
+            cookie_secure: true,
+            after_sign_in: console(),
         }
     }
 }

@@ -6,11 +6,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use comettrace_api::{router, trace_server};
-use comettrace_core::{Clock, DecompressedBytes, Ingest, TenantId, UsageMeter, UsageReader};
+use axum::Router;
+use comettrace_api::{SessionCookie, auth_router, oidc_router, router, trace_server};
+use comettrace_core::{
+    AuthSources, Clock, DecompressedBytes, FederatedSignIn, Ingest, NoProvider, ProvisionPolicy,
+    SessionLifetime, SignIn, TenantId, UsageMeter, UsageReader,
+};
 use comettrace_storage::{
-    Allowance, MemoryMeter, MemorySink, RedisMeter, StaticDirectory, StaticQuota, SystemClock,
-    load_allowances,
+    Allowance, Argon2Hasher, LocalPasswordProvider, MemoryMeter, MemorySink, OidcProvider,
+    OidcSettings, PostgresAccounts, PostgresFlows, PostgresSessions, RedisMeter, StaticDirectory,
+    StaticQuota, SystemClock, load_allowances,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -58,12 +63,9 @@ async fn main() -> anyhow::Result<()> {
     let pool = control_plane_pool(&config).await?;
     let allowances = allowances_of(&config, pool.as_ref()).await?;
     let meter = Arc::new(meter_of(&config, pool.as_ref()).await?);
-    match (pool, meter.as_ref()) {
-        (Some(pool), Meter::Redis(_)) => {
-            tokio::spawn(roll_up_hourly(Arc::clone(&meter), pool));
-        }
-        (Some(pool), Meter::Memory(_)) => pool.close().await,
-        (None, _) => {}
+    let identity = identity_routes(&config, pool.as_ref()).await?;
+    if let (Some(pool), Meter::Redis(_)) = (pool.as_ref(), meter.as_ref()) {
+        tokio::spawn(roll_up_hourly(Arc::clone(&meter), pool.clone()));
     }
     let gateway = Arc::new(gateway_of(&config, allowances, meter));
 
@@ -74,7 +76,11 @@ async fn main() -> anyhow::Result<()> {
         "the ingestion gateway is starting"
     );
 
-    let http = tokio::spawn(serve_http(config.http_address, Arc::clone(&gateway)));
+    let http = tokio::spawn(serve_http(
+        config.http_address,
+        Arc::clone(&gateway),
+        identity,
+    ));
     let grpc = tokio::spawn(serve_grpc(config.grpc_address, gateway));
 
     let (http, grpc) = tokio::try_join!(http, grpc).context("joining the listeners")?;
@@ -149,11 +155,76 @@ fn gateway_of(
     Ingest::new(directory, quota, Arc::new(MemorySink::default()), meter)
 }
 
-async fn serve_http(address: SocketAddr, gateway: Arc<Gateway>) -> anyhow::Result<()> {
+type LocalSource = LocalPasswordProvider<Argon2Hasher>;
+type Sessions = PostgresSessions<SystemClock>;
+type PasswordSignIn = SignIn<LocalSource, NoProvider, PostgresAccounts, Arc<Sessions>>;
+type Federated =
+    FederatedSignIn<OidcProvider, PostgresFlows<SystemClock>, PostgresAccounts, Arc<Sessions>>;
+
+async fn identity_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Result<Router> {
+    let Some(pool) = pool else {
+        if config.local_password || config.oidc.is_some() {
+            tracing::warn!("no control plane is configured, so nobody can sign in");
+        }
+        return Ok(Router::new());
+    };
+
+    let cookie = SessionCookie {
+        secure: config.cookie_secure,
+        ..SessionCookie::default()
+    };
+    let accounts = PostgresAccounts::new(pool.clone());
+    let sessions = Arc::new(PostgresSessions::new(
+        pool.clone(),
+        SystemClock,
+        SessionLifetime::default(),
+    ));
+    let mut routes = Router::new();
+
+    if config.local_password {
+        let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
+        let sign_in: Arc<PasswordSignIn> = Arc::new(SignIn::new(
+            AuthSources::new(Some(LocalPasswordProvider::new(pool.clone(), hasher)), None),
+            accounts.clone(),
+            Arc::clone(&sessions),
+            ProvisionPolicy::default(),
+        ));
+        routes = routes.merge(auth_router(sign_in, cookie));
+        tracing::info!("local passwords accepted");
+    }
+
+    if let Some(settings) = &config.oidc {
+        let provider = OidcProvider::discover(OidcSettings {
+            issuer: settings.issuer.clone(),
+            client_id: settings.client_id.clone(),
+            client_secret: settings.client_secret.clone(),
+            redirect_uri: settings.redirect_uri.clone(),
+        })
+        .await
+        .context("reaching the identity provider")?;
+        let federated: Arc<Federated> = Arc::new(FederatedSignIn::new(
+            provider,
+            PostgresFlows::new(pool.clone(), SystemClock),
+            accounts,
+            sessions,
+            ProvisionPolicy::default(),
+        ));
+        routes = routes.merge(oidc_router(federated, cookie, config.after_sign_in.clone()));
+        tracing::info!(issuer = %settings.issuer, "federated sign in accepted");
+    }
+
+    Ok(routes)
+}
+
+async fn serve_http(
+    address: SocketAddr,
+    gateway: Arc<Gateway>,
+    identity: Router,
+) -> anyhow::Result<()> {
     let listener = TcpListener::bind(address)
         .await
         .with_context(|| format!("binding the OTLP HTTP listener on {address}"))?;
-    axum::serve(listener, router(gateway))
+    axum::serve(listener, router(gateway).merge(identity))
         .with_graceful_shutdown(shutdown())
         .await
         .context("serving OTLP over HTTP")
