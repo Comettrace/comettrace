@@ -38,6 +38,61 @@ impl<C: Clock> PostgresDirectory<C> {
     }
 }
 
+const PREFIX_LABEL: &str = "ct_live_";
+const PREFIX_BYTES: usize = 6;
+const SECRET_BYTES: usize = 32;
+
+#[derive(Debug, thiserror::Error)]
+pub enum KeyError {
+    #[error("the control plane refused the key")]
+    ControlPlane(#[from] sqlx::Error),
+}
+
+impl<C: Clock> PostgresDirectory<C> {
+    pub async fn issue(&self, org: TenantId, project: Option<Uuid>) -> Result<IngestKey, KeyError> {
+        let prefix_bytes: [u8; PREFIX_BYTES] = rand::random();
+        let secret_bytes: [u8; SECRET_BYTES] = rand::random();
+        let prefix = format!("{PREFIX_LABEL}{}", hex::encode(prefix_bytes));
+        let secret = hex::encode(secret_bytes);
+
+        sqlx::query(
+            "INSERT INTO api_keys (id, org_id, project_id, prefix, hash, secret_digest) \
+             VALUES (gen_random_uuid(), $1, $2, $3, '', $4)",
+        )
+        .bind(org.as_uuid())
+        .bind(project)
+        .bind(&prefix)
+        .bind(SecretHash::of(&secret).as_bytes().as_slice())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(IngestKey::from_plaintext(&format!("{prefix}.{secret}")))
+    }
+
+    pub async fn live_keys(&self, org: TenantId) -> Result<i64, KeyError> {
+        let counted = sqlx::query(
+            "SELECT count(*) AS n FROM api_keys \
+             WHERE org_id = $1 AND revoked_at IS NULL AND secret_digest IS NOT NULL",
+        )
+        .bind(org.as_uuid())
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(counted.get("n"))
+    }
+
+    pub async fn revoke(&self, prefix: &str) -> Result<bool, KeyError> {
+        let done = sqlx::query(
+            "UPDATE api_keys SET revoked_at = $2 \
+             WHERE prefix = $1 AND revoked_at IS NULL",
+        )
+        .bind(prefix)
+        .bind(to_nanos(self.clock.now()))
+        .execute(&self.pool)
+        .await?;
+        Ok(done.rows_affected() > 0)
+    }
+}
+
 impl<C: Clock + Send + Sync> TenantDirectory for PostgresDirectory<C> {
     async fn resolve(&self, key: &IngestKey) -> Result<TenantId, comettrace_core::UnknownKey> {
         let Some((prefix, secret)) = key.split() else {
