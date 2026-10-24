@@ -8,6 +8,7 @@ use comettrace_storage::{
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
+use uuid::Uuid;
 
 fn url() -> Option<String> {
     if let Ok(url) = std::env::var("DATABASE_URL") {
@@ -359,7 +360,6 @@ async fn an_org_on_the_default_plan_is_unlimited() {
 
     assert_eq!(allowances.get(&tenant), Some(&Allowance::Unlimited));
 }
-
 fn an_identity(issuer: Issuer, subject: &str, email: &str) -> ResolvedIdentity {
     ResolvedIdentity {
         issuer,
@@ -367,6 +367,10 @@ fn an_identity(issuer: Issuer, subject: &str, email: &str) -> ResolvedIdentity {
         email: Email::try_from(email).expect("an address"),
         email_verified: true,
     }
+}
+
+fn a_federated_identity(issuer: &str, subject: &str, email: &str) -> ResolvedIdentity {
+    an_identity(Issuer::federated(issuer).expect("a url"), subject, email)
 }
 
 async fn account_count(pool: &PgPool) -> i64 {
@@ -377,13 +381,21 @@ async fn account_count(pool: &PgPool) -> i64 {
         .get("n")
 }
 
+async fn link_count(pool: &PgPool) -> i64 {
+    sqlx::query("SELECT count(*) AS n FROM identity_links")
+        .fetch_one(pool)
+        .await
+        .expect("counting links")
+        .get("n")
+}
+
 #[tokio::test]
 async fn provisioning_creates_an_account_and_its_link_together() {
     let Some(pool) = migrated("identity_provision").await else {
         return;
     };
     let accounts = PostgresAccounts::new(pool.clone());
-    let identity = an_identity(Issuer::Local, "sub-1", "person@example.com");
+    let identity = a_federated_identity("https://id.example", "sub-1", "person@example.com");
 
     let account = accounts
         .provision(&identity, ProvisionPolicy::default())
@@ -403,7 +415,7 @@ async fn provisioning_the_same_identity_twice_returns_the_same_account() {
         return;
     };
     let accounts = PostgresAccounts::new(pool.clone());
-    let identity = an_identity(Issuer::Local, "sub-1", "person@example.com");
+    let identity = a_federated_identity("https://id.example", "sub-1", "person@example.com");
 
     let first = accounts
         .provision(&identity, ProvisionPolicy::default())
@@ -424,21 +436,17 @@ async fn two_providers_may_carry_the_same_subject() {
         return;
     };
     let accounts = PostgresAccounts::new(pool.clone());
-    let local = an_identity(Issuer::Local, "shared", "local@example.com");
-    let federated = an_identity(
-        Issuer::federated("https://id.example").expect("a url"),
-        "shared",
-        "federated@example.com",
-    );
+    let one = a_federated_identity("https://one.example", "shared", "one@example.com");
+    let other = a_federated_identity("https://other.example", "shared", "other@example.com");
 
     let first = accounts
-        .provision(&local, ProvisionPolicy::default())
+        .provision(&one, ProvisionPolicy::default())
         .await
-        .expect("the local identity");
+        .expect("the first provider");
     let second = accounts
-        .provision(&federated, ProvisionPolicy::default())
+        .provision(&other, ProvisionPolicy::default())
         .await
-        .expect("the federated identity");
+        .expect("the second provider");
 
     assert_ne!(
         first, second,
@@ -453,30 +461,73 @@ async fn linking_by_email_joins_an_existing_account() {
         return;
     };
     let accounts = PostgresAccounts::new(pool.clone());
-    let local = an_identity(Issuer::Local, "sub-1", "person@example.com");
-    let federated = an_identity(
-        Issuer::federated("https://id.example").expect("a url"),
-        "sub-2",
-        "person@example.com",
-    );
+    let first_provider = a_federated_identity("https://one.example", "sub-1", "person@example.com");
+    let second_provider =
+        a_federated_identity("https://other.example", "sub-2", "person@example.com");
 
     let first = accounts
-        .provision(&local, ProvisionPolicy::default())
+        .provision(&first_provider, ProvisionPolicy::default())
         .await
-        .expect("the local identity");
+        .expect("the first provider");
     let second = accounts
         .provision(
-            &federated,
+            &second_provider,
             ProvisionPolicy {
                 auto_provision: false,
                 link_by_email: true,
             },
         )
         .await
-        .expect("the federated identity joins by email");
+        .expect("the second provider joins by email");
 
     assert_eq!(first, second);
     assert_eq!(account_count(&pool).await, 1);
+}
+
+#[tokio::test]
+async fn a_local_identity_is_the_account_it_names_and_needs_no_link() {
+    let Some(pool) = migrated("identity_local").await else {
+        return;
+    };
+    let accounts = PostgresAccounts::new(pool.clone());
+    let id = Uuid::new_v4();
+    sqlx::query("INSERT INTO accounts (id, email, password_hash) VALUES ($1, $2, 'x')")
+        .bind(id)
+        .bind("person@example.com")
+        .execute(&pool)
+        .await
+        .expect("an account");
+    let local = an_identity(Issuer::Local, &id.to_string(), "person@example.com");
+
+    let resolved = accounts
+        .provision(&local, ProvisionPolicy::default())
+        .await
+        .expect("the local identity");
+
+    assert_eq!(resolved.as_uuid(), id);
+    assert_eq!(account_count(&pool).await, 1);
+    assert_eq!(
+        link_count(&pool).await,
+        0,
+        "a local account is its own identity, so it needs no link row"
+    );
+}
+
+#[tokio::test]
+async fn a_local_subject_that_is_not_an_account_id_is_refused() {
+    let Some(pool) = migrated("identity_local_nonsense").await else {
+        return;
+    };
+
+    let refused = PostgresAccounts::new(pool.clone())
+        .provision(
+            &an_identity(Issuer::Local, "not-a-uuid", "person@example.com"),
+            ProvisionPolicy::default(),
+        )
+        .await;
+
+    assert!(matches!(refused, Err(AccountError::NotProvisioned)));
+    assert_eq!(account_count(&pool).await, 0);
 }
 
 #[tokio::test]
@@ -485,7 +536,7 @@ async fn an_unknown_identity_is_refused_when_provisioning_is_off() {
         return;
     };
     let accounts = PostgresAccounts::new(pool.clone());
-    let identity = an_identity(Issuer::Local, "sub-1", "stranger@example.com");
+    let identity = a_federated_identity("https://id.example", "sub-1", "stranger@example.com");
 
     let refused = accounts
         .provision(
