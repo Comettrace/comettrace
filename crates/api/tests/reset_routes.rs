@@ -13,14 +13,15 @@ use uuid::Uuid;
 
 const TOKEN: &str = "ct_pr_0123456789";
 
+#[derive(Clone)]
 struct OnePending {
-    live: Mutex<Vec<SecretHash>>,
+    live: Arc<Mutex<Vec<SecretHash>>>,
 }
 
 impl Default for OnePending {
     fn default() -> Self {
         Self {
-            live: Mutex::new(vec![ResetToken::from_plaintext(TOKEN).hash()]),
+            live: Arc::new(Mutex::new(vec![ResetToken::from_plaintext(TOKEN).hash()])),
         }
     }
 }
@@ -31,7 +32,7 @@ impl OnePending {
     }
 }
 
-impl ResetStore for Arc<OnePending> {
+impl ResetStore for OnePending {
     async fn account_for(&self, _email: &Email) -> Result<Option<AccountId>, ResetError> {
         Ok(Some(AccountId::new(Uuid::nil())))
     }
@@ -113,9 +114,9 @@ fn choosing(token: &str, password: &str) -> Request<Body> {
         .expect("a request")
 }
 
-async fn served(pending: &Arc<OnePending>, request: Request<Body>) -> (StatusCode, String) {
+async fn served(pending: &OnePending, request: Request<Body>) -> (StatusCode, String) {
     let reset = Arc::new(ResetPassword::new(
-        Arc::clone(pending),
+        pending.clone(),
         Plain::default(),
         Dropped,
     ));
@@ -132,7 +133,7 @@ async fn served(pending: &Arc<OnePending>, request: Request<Body>) -> (StatusCod
 
 #[tokio::test]
 async fn a_password_below_the_floor_is_refused_with_the_rule_that_refused_it() {
-    let pending = Arc::new(OnePending::default());
+    let pending = OnePending::default();
 
     let (status, body) = served(&pending, choosing(TOKEN, "short")).await;
 
@@ -147,7 +148,7 @@ async fn a_password_below_the_floor_is_refused_with_the_rule_that_refused_it() {
 
 #[tokio::test]
 async fn a_long_enough_password_is_accepted_and_spends_the_link() {
-    let pending = Arc::new(OnePending::default());
+    let pending = OnePending::default();
 
     let (status, _) = served(&pending, choosing(TOKEN, "a long enough one")).await;
 
@@ -157,7 +158,7 @@ async fn a_long_enough_password_is_accepted_and_spends_the_link() {
 
 #[tokio::test]
 async fn a_weak_password_and_a_bad_link_do_not_answer_alike() {
-    let pending = Arc::new(OnePending::default());
+    let pending = OnePending::default();
 
     let (weak, _) = served(&pending, choosing(TOKEN, "short")).await;
     let (spent, _) = served(&pending, choosing("ct_pr_never", "a long enough one")).await;
