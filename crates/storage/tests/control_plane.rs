@@ -230,14 +230,14 @@ async fn the_migrations_reverse_and_reapply() {
         .expect("the migrations apply again");
 
     assert_eq!(gone, 0, "the down step left the orgs table behind");
-    assert_eq!(
+    assert!(
         sqlx::query("SELECT slug FROM plans WHERE slug = $1")
             .bind(SELF_HOSTED_PLAN)
             .fetch_optional(&pool)
             .await
             .expect("looking for the default plan")
             .is_some(),
-        true
+        "reapplying the migrations did not restore the default plan"
     );
 }
 
