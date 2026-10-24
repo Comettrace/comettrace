@@ -283,6 +283,7 @@ mod tests {
         BadWindow, Explore, ExploreError, ReadError, ServiceSummary, SpanReader, TraceFilter,
         TraceOrder, TraceSummary, Window,
     };
+    use crate::catalogue::ProjectId;
     use crate::clock::UnixSeconds;
     use crate::credential::Email;
     use crate::identity::AccountId;
