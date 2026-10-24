@@ -206,18 +206,26 @@ async fn resolving_slides_the_expiry_but_not_past_the_hard_life() {
     };
     let account = an_account(&pool, "person@example.com", Some("secret")).await;
     let early = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
-    let midway = PostgresSessions::new(pool.clone(), FixedClock::at(NOW + 50), lifetime());
-    let nearly_over = PostgresSessions::new(pool.clone(), FixedClock::at(NOW + 950), lifetime());
     let token = early.issue(account, None).await.expect("a session");
 
-    let slid = midway.resolve(&token).await.expect("it resolves");
-    let capped = nearly_over
-        .resolve(&token)
-        .await
-        .expect("it still resolves");
+    let mut expiry = 0;
+    for step in (50..=950).step_by(90) {
+        let store = PostgresSessions::new(pool.clone(), FixedClock::at(NOW + step), lifetime());
+        let session = store
+            .resolve(&token)
+            .await
+            .expect("a session kept in use stays alive");
+        expiry = session.expires_at.get();
+        if step == 50 {
+            assert_eq!(expiry, NOW + 150, "the first sighting slides one window");
+        }
+    }
 
-    assert_eq!(slid.expires_at.get(), NOW + 150);
-    assert_eq!(capped.expires_at.get(), NOW + 1000);
+    assert_eq!(
+        expiry,
+        NOW + 1000,
+        "the hard life caps the window however often it is used"
+    );
 }
 
 #[tokio::test]
