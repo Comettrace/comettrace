@@ -1,12 +1,16 @@
 mod config;
 
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Context;
 use comettrace_api::{router, trace_server};
 use comettrace_core::{Ingest, TenantId};
-use comettrace_storage::{MemoryMeter, MemorySink, StaticDirectory, StaticQuota};
+use comettrace_storage::{
+    Allowance, MemoryMeter, MemorySink, StaticDirectory, StaticQuota, load_allowances,
+};
+use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
 use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
@@ -23,7 +27,8 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = config::load().context("reading the configuration")?;
-    let gateway = Arc::new(gateway_of(&config));
+    let allowances = allowances_of(&config).await?;
+    let gateway = Arc::new(gateway_of(&config, allowances));
 
     tracing::info!(
         grpc = %config.grpc_address,
@@ -41,7 +46,33 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn gateway_of(config: &Config) -> Gateway {
+async fn allowances_of(config: &Config) -> anyhow::Result<BTreeMap<TenantId, Allowance>> {
+    let Some(url) = config.database_url.as_deref() else {
+        return Ok(config
+            .tenants
+            .iter()
+            .map(|tenant| (TenantId::new(tenant.id), tenant.allowance.into()))
+            .collect());
+    };
+
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(url)
+        .await
+        .context("connecting to the control plane")?;
+    let loaded = load_allowances(&pool)
+        .await
+        .context("reading the tenant allowances");
+    pool.close().await;
+    let loaded = loaded?;
+    tracing::info!(
+        tenants = loaded.len(),
+        "allowances read from the control plane"
+    );
+    Ok(loaded)
+}
+
+fn gateway_of(config: &Config, allowances: BTreeMap<TenantId, Allowance>) -> Gateway {
     let directory = StaticDirectory::from_plaintext(
         config
             .tenants
@@ -49,13 +80,7 @@ fn gateway_of(config: &Config) -> Gateway {
             .map(|tenant| (tenant.key.clone(), TenantId::new(tenant.id))),
     );
     let meter = Arc::new(MemoryMeter::default());
-    let quota = StaticQuota::new(
-        Arc::clone(&meter),
-        config
-            .tenants
-            .iter()
-            .map(|tenant| (TenantId::new(tenant.id), tenant.allowance.into())),
-    );
+    let quota = StaticQuota::new(Arc::clone(&meter), allowances);
     Ingest::new(directory, quota, Arc::new(MemorySink::default()), meter)
 }
 

@@ -11,7 +11,7 @@ pub use clickhouse::{
 };
 pub use clock::{FixedClock, SystemClock};
 pub use directory::StaticDirectory;
-pub use postgres::{CONTROL_PLANE, SELF_HOSTED_PLAN};
+pub use postgres::{CONTROL_PLANE, OVERAGE_FEATURE, SELF_HOSTED_PLAN, load_allowances};
 pub use quota::{Allowance, StaticQuota};
 pub use sink::MemorySink;
 pub use usage::MemoryMeter;
