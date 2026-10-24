@@ -11,13 +11,14 @@ use axum::Router;
 use clap::{Parser, Subcommand, ValueEnum};
 use comettrace_api::{
     SessionCookie, SignInMethods, auth_router, catalogue_router, explore_router, health_router,
-    me_router, methods_router, oidc_router, reset_router, router, trace_server, web_router,
+    me_router, methods_router, oidc_router, password_router, reset_router, router, trace_server,
+    web_router,
 };
 use comettrace_core::{
-    AccountId, AuthSources, Catalogue, Clock, DecompressedBytes, Email, Explore, FederatedSignIn,
-    Ingest, IngestKey, Mailer, NoProvider, OrgRole, ProjectId, ProvisionPolicy, ResetError,
-    ResetPassword, ResetStore, ResetToken, Scope, SessionLifetime, SignIn, SinkError, Span,
-    SpanSink, TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
+    AccountId, AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
+    FederatedSignIn, Ingest, IngestKey, Mailer, NoProvider, OrgRole, ProjectId, ProvisionPolicy,
+    ResetError, ResetPassword, ResetStore, ResetToken, Scope, SessionLifetime, SignIn, SinkError,
+    Span, SpanSink, TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink,
@@ -650,6 +651,8 @@ type LocalSource = LocalPasswordProvider<Argon2Hasher>;
 type Sessions = PostgresSessions<SystemClock>;
 type PasswordSignIn = SignIn<LocalSource, NoProvider, PostgresAccounts, Arc<Sessions>>;
 type Resets = ResetPassword<PostgresResets<SystemClock>, Argon2Hasher, Relay>;
+type Changes =
+    ChangePassword<Arc<Sessions>, LocalSource, PostgresResets<SystemClock>, Argon2Hasher>;
 type Me = Whoami<Arc<Sessions>, PostgresMemberships>;
 type Federated =
     FederatedSignIn<OidcProvider, PostgresFlows<SystemClock>, PostgresAccounts, Arc<Sessions>>;
@@ -707,7 +710,7 @@ async fn identity_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Resu
             provider,
             PostgresFlows::new(pool.clone(), SystemClock),
             accounts,
-            sessions,
+            Arc::clone(&sessions),
             ProvisionPolicy::default(),
         ));
         routes = routes.merge(oidc_router(federated, cookie, config.after_sign_in.clone()));
@@ -722,10 +725,18 @@ async fn identity_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Resu
         let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
         let reset: Arc<Resets> = Arc::new(ResetPassword::new(
             PostgresResets::new(pool.clone(), SystemClock),
-            hasher,
+            hasher.clone(),
             relay_of(config)?,
         ));
-        routes = routes.merge(reset_router(reset));
+        let change: Arc<Changes> = Arc::new(ChangePassword::new(
+            Arc::clone(&sessions),
+            LocalPasswordProvider::new(pool.clone(), hasher.clone()),
+            PostgresResets::new(pool.clone(), SystemClock),
+            hasher,
+        ));
+        routes = routes
+            .merge(reset_router(reset))
+            .merge(password_router(change));
     }
 
     Ok(routes)

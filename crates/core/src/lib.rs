@@ -8,6 +8,7 @@ mod ingest;
 mod key;
 mod membership;
 mod oidc;
+mod password;
 mod quota;
 mod reset;
 mod secret;
