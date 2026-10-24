@@ -16,7 +16,9 @@ const SUMMARIES: &str = "SELECT \
      count() AS spans, \
      countIf(status = 'error') AS errors \
    FROM spans \
-   WHERE tenant_id = ? AND start_time >= ? AND start_time < ? \
+   WHERE tenant_id = ? \
+     AND start_time >= fromUnixTimestamp64Nano(?) \
+     AND start_time < fromUnixTimestamp64Nano(?) \
    GROUP BY trace_id \
    HAVING (? = '' OR countIf(service_name = ?) > 0) \
      AND (? = 0 OR errors > 0) \
