@@ -409,6 +409,7 @@ async fn flush_spans(sink: Arc<Sink>) {
     loop {
         let wait = spans
             .time_left()
+            .await
             .unwrap_or(FLUSH_FALLBACK)
             .max(MIN_FLUSH_WAIT);
         tokio::time::sleep(wait).await;
