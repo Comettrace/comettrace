@@ -1,10 +1,13 @@
 use comettrace_core::{
-    AccountId, AuthError, AuthProvider, Email, Password, PasswordCheck, PasswordHasher,
-    SessionError, SessionLifetime, SessionStore, SignInProof,
+    AccountId, AuthError, AuthProvider, CodeVerifier, Email, FlowError, OidcFlows, Password,
+    PasswordCheck, PasswordHasher, PendingFlow, SessionError, SessionLifetime, SessionStore,
+    SignInProof,
 };
 use comettrace_storage::{
-    Argon2Hasher, CONTROL_PLANE, FixedClock, LocalPasswordProvider, PostgresSessions,
+    Argon2Hasher, CONTROL_PLANE, FixedClock, LocalPasswordProvider, PostgresFlows, PostgresSessions,
 };
+use std::time::Duration;
+
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 use uuid::Uuid;
@@ -286,4 +289,99 @@ async fn a_wrong_password_an_unknown_address_and_no_password_all_refuse() {
     ] {
         assert_eq!(provider.sign_in(proof).await, Err(AuthError::Rejected));
     }
+}
+
+fn a_flow(state: &str) -> PendingFlow {
+    PendingFlow {
+        state: state.to_owned(),
+        nonce: "the-nonce".to_owned(),
+        verifier: CodeVerifier::from_plaintext("the-verifier"),
+        redirect_uri: "https://app.example.com/callback".to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn an_attempt_comes_back_once_and_only_once() {
+    let Some(pool) = control_plane("flows_once").await else {
+        return;
+    };
+    let flows = PostgresFlows::new(pool.clone(), FixedClock::at(NOW));
+    flows.begin(&a_flow("state-1")).await.expect("it is kept");
+
+    let first = flows.take("state-1").await.expect("it comes back");
+    let second = flows.take("state-1").await;
+
+    assert_eq!(first.nonce, "the-nonce");
+    assert_eq!(first.verifier.exposed(), "the-verifier");
+    assert_eq!(first.redirect_uri, "https://app.example.com/callback");
+    assert_eq!(
+        second,
+        Err(FlowError::Unknown),
+        "a replay must find nothing"
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_state_carries_no_attempt() {
+    let Some(pool) = control_plane("flows_unknown").await else {
+        return;
+    };
+    let flows = PostgresFlows::new(pool.clone(), FixedClock::at(NOW));
+
+    assert_eq!(flows.take("never-issued").await, Err(FlowError::Unknown));
+}
+
+#[tokio::test]
+async fn an_attempt_past_its_window_is_gone() {
+    let Some(pool) = control_plane("flows_expired").await else {
+        return;
+    };
+    let early =
+        PostgresFlows::new(pool.clone(), FixedClock::at(NOW)).with_window(Duration::from_secs(60));
+    let late = PostgresFlows::new(pool.clone(), FixedClock::at(NOW + 61))
+        .with_window(Duration::from_secs(60));
+    early.begin(&a_flow("state-1")).await.expect("it is kept");
+
+    assert_eq!(late.take("state-1").await, Err(FlowError::Unknown));
+}
+
+#[tokio::test]
+async fn two_attempts_do_not_shadow_each_other() {
+    let Some(pool) = control_plane("flows_two").await else {
+        return;
+    };
+    let flows = PostgresFlows::new(pool.clone(), FixedClock::at(NOW));
+    flows.begin(&a_flow("state-1")).await.expect("the first");
+    let mut second = a_flow("state-2");
+    second.nonce = "another-nonce".to_owned();
+    flows.begin(&second).await.expect("the second");
+
+    let taken = flows.take("state-2").await.expect("the second comes back");
+
+    assert_eq!(taken.nonce, "another-nonce");
+    assert!(
+        flows.take("state-1").await.is_ok(),
+        "the first is untouched"
+    );
+}
+
+#[tokio::test]
+async fn pruning_removes_only_attempts_past_their_window() {
+    let Some(pool) = control_plane("flows_prune").await else {
+        return;
+    };
+    let early =
+        PostgresFlows::new(pool.clone(), FixedClock::at(NOW)).with_window(Duration::from_secs(60));
+    early.begin(&a_flow("state-1")).await.expect("the first");
+    let later = PostgresFlows::new(pool.clone(), FixedClock::at(NOW + 500))
+        .with_window(Duration::from_secs(60));
+    later.begin(&a_flow("state-2")).await.expect("the second");
+
+    let removed = PostgresFlows::new(pool.clone(), FixedClock::at(NOW + 61))
+        .prune()
+        .await
+        .expect("a prune");
+
+    assert_eq!(removed, 1);
+    assert!(later.take("state-2").await.is_ok(), "the live one stayed");
 }

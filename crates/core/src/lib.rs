@@ -3,6 +3,7 @@ mod credential;
 mod identity;
 mod ingest;
 mod key;
+mod oidc;
 mod quota;
 mod secret;
 mod session;
@@ -20,6 +21,7 @@ pub use identity::{
 };
 pub use ingest::{Ingest, IngestError, Payload};
 pub use key::IngestKey;
+pub use oidc::{CodeVerifier, FlowError, OidcFlows, PendingFlow};
 pub use quota::{Admission, QuotaPolicy, Unmetered};
 pub use secret::{SESSION_PREFIX, SecretHash, SessionToken};
 pub use session::{

@@ -3,6 +3,7 @@ mod clickhouse;
 mod clock;
 mod counter;
 mod directory;
+mod flows;
 mod hasher;
 mod local;
 mod month;
@@ -19,6 +20,7 @@ pub use clickhouse::{
 pub use clock::{FixedClock, SystemClock};
 pub use counter::{CounterError, RedisMeter};
 pub use directory::StaticDirectory;
+pub use flows::PostgresFlows;
 pub use hasher::Argon2Hasher;
 pub use local::LocalPasswordProvider;
 pub use month::{BillingHour, BillingMonth};
