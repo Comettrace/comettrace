@@ -62,6 +62,35 @@ impl fmt::Debug for SessionToken {
     }
 }
 
+pub const RESET_PREFIX: &str = "ct_pr_";
+
+#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+pub struct ResetToken(String);
+
+impl ResetToken {
+    pub fn from_plaintext(plaintext: &str) -> Self {
+        Self(plaintext.to_owned())
+    }
+
+    pub fn exposed(&self) -> &str {
+        &self.0
+    }
+
+    pub fn hash(&self) -> SecretHash {
+        SecretHash::of(&self.0)
+    }
+
+    pub fn looks_like_one(&self) -> bool {
+        self.0.starts_with(RESET_PREFIX) && self.0.len() > RESET_PREFIX.len()
+    }
+}
+
+impl fmt::Debug for ResetToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ResetToken(redacted)")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{SESSION_PREFIX, SecretHash, SessionToken};
