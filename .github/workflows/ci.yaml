@@ -183,7 +183,9 @@ jobs:
           applied=$(docker compose exec -T clickhouse clickhouse-client \
             --user=comettrace --password=comettrace --database=comettrace \
             --query="SELECT max(version) FROM schema_migrations FINAL")
-          test "$applied" = "1" || { echo "the span schema is at $applied"; exit 1; }
+          shipped=$(ls ../crates/storage/migrations/clickhouse/*.up.sql | wc -l | tr -d " ")
+          test "$applied" = "$shipped" ||
+            { echo "the span schema is at $applied of $shipped"; exit 1; }
       - name: the server migrated its control plane
         working-directory: deploy
         run: |
