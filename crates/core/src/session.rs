@@ -102,6 +102,8 @@ pub trait PasswordHasher {
         password: &Password,
         against: &PasswordHash,
     ) -> impl Future<Output = Result<PasswordCheck, HashError>> + Send;
+
+    fn decoy(&self) -> &PasswordHash;
 }
 
 #[cfg(test)]

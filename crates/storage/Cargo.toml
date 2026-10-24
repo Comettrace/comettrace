@@ -15,9 +15,12 @@ thiserror.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
 subtle.workspace = true
+argon2.workspace = true
+hex.workspace = true
+rand.workspace = true
 redis.workspace = true
 time.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "rt"] }
 tracing.workspace = true
 
 [dev-dependencies]
