@@ -56,6 +56,8 @@ async fn the_clickhouse_sink_honours_the_contract() {
     let Some(client) = prepared("comettrace_sink_contract").await else {
         return;
     };
+    let first = TenantId::new(Uuid::from_u128(1));
+    let second = TenantId::new(Uuid::from_u128(2));
     let sink = ClickhouseSink::new(
         &client,
         BatchLimits {
@@ -66,11 +68,34 @@ async fn the_clickhouse_sink_honours_the_contract() {
         FixedClock::at(NOW),
     );
 
-    accepts_batches_from_several_tenants(&sink).await;
-    accepts_an_empty_batch(&sink).await;
+    sink.accept(first, vec![a_span(1, "checkout"), a_span(2, "checkout")])
+        .await
+        .expect("the first batch is accepted");
+    assert_eq!(
+        (sink.pending_rows().await, stored_rows(&client).await),
+        (0, 2),
+        "two rows written under a one row threshold must have been sent"
+    );
+
+    sink.accept(second, vec![a_span(3, "payments")])
+        .await
+        .expect("the second batch is accepted");
+    assert_eq!(
+        (sink.pending_rows().await, stored_rows(&client).await),
+        (0, 3),
+        "the row of the second tenant must have been sent too"
+    );
+
+    sink.accept(second, Vec::new())
+        .await
+        .expect("an empty batch is accepted");
     sink.flush().await.expect("the sink flushes");
 
-    assert_eq!(stored_rows(&client).await, 3);
+    assert_eq!(
+        stored_rows(&client).await,
+        3,
+        "an empty batch must add nothing"
+    );
 }
 
 pub fn endpoint() -> Option<String> {
