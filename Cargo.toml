@@ -31,11 +31,13 @@ comettrace-ee = { path = "crates/ee" }
 anyhow = "1.0.104"
 argon2 = "0.6.0"
 axum = "0.8.9"
+base64 = "0.23.1"
 bytes = "1.12.1"
 clickhouse = { version = "0.15.3", features = ["uuid", "inserter"] }
 figment = { version = "0.10.19", features = ["env", "toml"] }
 flate2 = "1.1.6"
 hex = "0.4.3"
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["use_pem", "rust_crypto"] }
 openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls", "timing-resistant-secret-traits"] }
 opentelemetry-proto = { version = "0.33.1", default-features = false, features = ["gen-tonic", "trace"] }
 prost = "0.14.4"
