@@ -117,6 +117,8 @@ enum Command {
         #[arg(long)]
         prefix: String,
     },
+    /// Ask the server on this host whether it is serving, for a healthcheck
+    Health,
     /// Give a fresh deployment one account, one organisation, and the way in
     Bootstrap {
         #[arg(long)]
@@ -194,12 +196,33 @@ fn print_the_way_in(token: &ResetToken) {
     println!("{}", token.exposed());
 }
 
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
+
+async fn health(config: &Config) -> anyhow::Result<()> {
+    let url = format!("http://127.0.0.1:{}/health", config.http_address.port());
+    let answer = reqwest::Client::builder()
+        .timeout(HEALTH_TIMEOUT)
+        .build()
+        .context("preparing the request")?
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("asking {url}"))?;
+    anyhow::ensure!(
+        answer.status().is_success(),
+        "{url} answered {}",
+        answer.status()
+    );
+    Ok(())
+}
+
 async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
     let pool = control_plane_pool(config)
         .await?
         .context("this command needs a control plane, so set database_url")?;
 
     match command {
+        Command::Health => health(config).await,
         Command::IssueKey { org, project } => issue_key(pool, org, project).await,
         Command::RevokeKey { prefix } => revoke_key(pool, &prefix).await,
         Command::Bootstrap { email, org } => {
@@ -351,8 +374,10 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = config::load().context("reading the configuration")?;
-    if let Some(command) = Cli::parse().command {
-        return run_command(command, &config).await;
+    match Cli::parse().command {
+        Some(Command::Health) => return health(&config).await,
+        Some(command) => return run_command(command, &config).await,
+        None => {}
     }
     let pool = control_plane_pool(&config).await?;
     let allowances = allowances_of(&config, pool.as_ref()).await?;
