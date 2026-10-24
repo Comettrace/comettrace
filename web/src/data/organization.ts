@@ -1,12 +1,9 @@
-import { ALERT_RULES, INGEST_KEYS, ME, MEMBERS, PROJECTS, QUERY_KEYS, TEAMS, WORKSPACE } from '@/mocks/mock'
+import { ALERT_RULES, INGEST_KEYS, ME, MEMBERS, PROJECTS, QUERY_KEYS, TEAMS } from '@/mocks/mock'
 import { useMock } from './seam'
 
-/* The server knows organisations and memberships (see src/auth), but nothing here: no project,
-   member, team or key endpoint exists yet, and /auth/me carries no display name or email. */
-
-export function useWorkspace() {
-  return useMock(['organization', 'workspace'], () => WORKSPACE)
-}
+/* What is left of the sample data. The organisation itself is real (see src/data/orgs), and so
+   are memberships and projects (src/auth, src/data/projects); no member, team or key endpoint
+   exists yet, and no table holds a team at all. */
 
 export function useProjects() {
   return useMock(['organization', 'projects'], () => PROJECTS)

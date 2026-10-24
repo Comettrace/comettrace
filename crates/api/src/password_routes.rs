@@ -11,7 +11,7 @@ use comettrace_core::{
 };
 use serde::Deserialize;
 
-use crate::explore_routes::{LookRefused, carried};
+use crate::explore_routes::{NotCarried, carried};
 
 #[derive(Debug, Deserialize)]
 pub struct Chosen {
@@ -57,7 +57,7 @@ where
 #[derive(Debug, thiserror::Error)]
 pub enum ChangeRefused {
     #[error(transparent)]
-    Reaching(LookRefused),
+    Reaching(NotCarried),
     #[error(transparent)]
     Refused(ChangeError),
 }
