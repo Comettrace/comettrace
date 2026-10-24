@@ -2,8 +2,8 @@ import { queryOptions } from '@tanstack/react-query'
 import { get, json, post } from './client'
 
 export type Role = 'owner' | 'admin' | 'member'
-export type Membership = { org: string; role: Role }
-export type Account = { account: string; active_org: string | null; memberships: Membership[] }
+export type Membership = { org: string; name: string; role: Role }
+export type Account = { account: string; email: string; active_org: string | null; memberships: Membership[] }
 export type Methods = { local_password: boolean; oidc: boolean }
 
 export const accountQuery = queryOptions({
