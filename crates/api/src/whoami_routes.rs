@@ -18,6 +18,7 @@ const REQUESTED_WITH: HeaderName = HeaderName::from_static("x-requested-with");
 #[derive(Debug, Serialize)]
 pub struct Standing {
     account: Uuid,
+    email: String,
     active_org: Option<Uuid>,
     memberships: Vec<Belonging>,
 }
@@ -25,6 +26,7 @@ pub struct Standing {
 #[derive(Debug, Serialize)]
 struct Belonging {
     org: Uuid,
+    name: String,
     role: &'static str,
 }
 
@@ -32,12 +34,14 @@ impl From<Who> for Standing {
     fn from(who: Who) -> Self {
         Self {
             account: who.account.as_uuid(),
+            email: who.email.as_str().to_owned(),
             active_org: who.active_org.map(TenantId::as_uuid),
             memberships: who
                 .memberships
                 .into_iter()
                 .map(|membership| Belonging {
                     org: membership.org.as_uuid(),
+                    name: membership.name.into_string(),
                     role: membership.role.as_str(),
                 })
                 .collect(),

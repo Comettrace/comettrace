@@ -79,6 +79,7 @@ impl SessionStore for MemorySessions {
         if self.holds(token.exposed()) {
             Ok(Session {
                 account: AccountId::new(Uuid::nil()),
+                email: an_email(),
                 org: None,
                 expires_at: UnixSeconds::new(0),
             })
@@ -227,4 +228,8 @@ async fn signing_out_without_a_cookie_still_clears_it() {
 
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(response.headers().get(SET_COOKIE).is_some());
+}
+
+fn an_email() -> comettrace_core::Email {
+    comettrace_core::Email::try_from("person@example.com").expect("an address")
 }

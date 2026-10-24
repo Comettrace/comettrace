@@ -7,3 +7,6 @@ deploy
 Dockerfile
 .dockerignore
 comettrace.toml
+web/node_modules
+web/dist
+web/.vite

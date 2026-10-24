@@ -9,6 +9,7 @@ mod oidc_routes;
 mod reset_routes;
 mod session_cookie;
 mod sign_in;
+mod web_routes;
 mod whoami_routes;
 
 pub use error::ApiError;
@@ -21,4 +22,5 @@ pub use oidc_routes::{FederatedRefused, oidc_router};
 pub use reset_routes::{ResetRefused, reset_router};
 pub use session_cookie::SessionCookie;
 pub use sign_in::{SignInRefused, auth_router};
+pub use web_routes::web_router;
 pub use whoami_routes::{StandingRefused, me_router};

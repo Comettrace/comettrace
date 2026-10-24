@@ -234,6 +234,16 @@ jobs:
             -d '{"token":"ct_pr_whatever","password":"short"}')
           test "$code" = "422" || { echo "a weak password answered $code"; exit 1; }
           grep -q "at least 12 characters" body.txt || { cat body.txt; exit 1; }
+      - name: the app is served and every deep link reaches it
+        working-directory: deploy
+        run: |
+          set -eu
+          curl --fail --silent --show-error http://localhost:4318/ > root.html
+          grep -qi "<!doctype html" root.html || { head -c 200 root.html; exit 1; }
+          for deep in /traces /traces/abc123 /reset?token=ct_pr_abc; do
+            code=$(curl --silent --output /dev/null --write-out "%{http_code}" "http://localhost:4318$deep")
+            test "$code" = "200" || { echo "$deep answered $code"; exit 1; }
+          done
       - name: the session carries the organisation it owns
         working-directory: deploy
         run: |
@@ -241,7 +251,9 @@ jobs:
           curl --fail --silent --show-error http://localhost:4318/auth/me \
             -H 'x-requested-with: ci' --cookie jar.txt > me.json
           cat me.json
-          grep -q '"role":"owner"' me.json || { echo "the owner lost its role"; exit 1; }
+          grep -q "\"role\":\"owner\"" me.json || { echo "the owner lost its role"; exit 1; }
+          grep -q "operator@example.com" me.json || { echo "no address to show"; exit 1; }
+          grep -q "\"name\":\"Default\"" me.json || { echo "no org name to show"; exit 1; }
       - name: an issued key authenticates a payload and an unissued one does not
         working-directory: deploy
         run: |

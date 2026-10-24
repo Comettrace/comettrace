@@ -234,6 +234,7 @@ mod tests {
         TraceSummary, Window,
     };
     use crate::clock::UnixSeconds;
+    use crate::credential::Email;
     use crate::identity::AccountId;
     use crate::membership::{Membership, Memberships, OrgRole, Whoami, WhoamiError};
     use crate::secret::SessionToken;
@@ -244,6 +245,10 @@ mod tests {
     const TOKEN: &str = "ct_ss_live";
     const MINE: u128 = 1;
     const THEIRS: u128 = 2;
+
+    fn an_email() -> Email {
+        Email::try_from("person@example.com").expect("an address")
+    }
 
     fn an_org(seed: u128) -> TenantId {
         TenantId::new(Uuid::from_u128(seed))
@@ -268,6 +273,7 @@ mod tests {
             if token.exposed() == TOKEN {
                 Ok(Session {
                     account: AccountId::new(Uuid::from_u128(9)),
+                    email: an_email(),
                     org: None,
                     expires_at: UnixSeconds::new(0),
                 })
@@ -287,6 +293,7 @@ mod tests {
         async fn of(&self, _account: AccountId) -> Result<Vec<Membership>, WhoamiError> {
             Ok(vec![Membership {
                 org: an_org(MINE),
+                name: "Acme".into(),
                 role: OrgRole::Member,
             }])
         }

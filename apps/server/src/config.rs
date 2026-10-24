@@ -21,6 +21,8 @@ pub struct Config {
     #[serde(default)]
     pub spans: Option<SpansConfig>,
     #[serde(default)]
+    pub web_root: Option<String>,
+    #[serde(default)]
     pub tenants: Vec<TenantKey>,
     #[serde(default)]
     pub oidc: Option<OidcConfig>,
@@ -122,6 +124,7 @@ impl Default for Config {
             database_url: None,
             redis_url: None,
             spans: None,
+            web_root: None,
             tenants: Vec::new(),
             oidc: None,
             mail: None,

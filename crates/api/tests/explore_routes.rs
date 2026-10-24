@@ -33,6 +33,7 @@ impl SessionStore for OneSession {
         if token.exposed() == TOKEN {
             Ok(Session {
                 account: AccountId::new(Uuid::from_u128(9)),
+                email: an_email(),
                 org: None,
                 expires_at: UnixSeconds::new(0),
             })
@@ -52,6 +53,7 @@ impl Memberships for MemberOfMine {
     async fn of(&self, _account: AccountId) -> Result<Vec<Membership>, WhoamiError> {
         Ok(vec![Membership {
             org: TenantId::new(Uuid::from_u128(MINE)),
+            name: "Acme".into(),
             role: OrgRole::Member,
         }])
     }
@@ -287,4 +289,8 @@ async fn an_empty_list_is_an_answer_rather_than_an_error() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, r#"{"traces":[]}"#);
+}
+
+fn an_email() -> comettrace_core::Email {
+    comettrace_core::Email::try_from("person@example.com").expect("an address")
 }

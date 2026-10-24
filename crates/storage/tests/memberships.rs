@@ -87,6 +87,7 @@ async fn founding_an_organisation_makes_its_first_account_the_owner() {
         memberships.of(account).await.expect("the memberships"),
         vec![Membership {
             org,
+            name: "Acme".into(),
             role: OrgRole::Owner,
         }]
     );

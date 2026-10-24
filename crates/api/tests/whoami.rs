@@ -34,6 +34,7 @@ impl SessionStore for OneSession {
         if token.exposed() == TOKEN {
             Ok(Session {
                 account: AccountId::new(Uuid::from_u128(ACCOUNT)),
+                email: an_email(),
                 org: self.org,
                 expires_at: UnixSeconds::new(0),
             })
@@ -57,10 +58,12 @@ impl Memberships for TwoOrgs {
         Ok(vec![
             Membership {
                 org: TenantId::new(Uuid::from_u128(ACTIVE)),
+                name: "Acme".into(),
                 role: OrgRole::Owner,
             },
             Membership {
                 org: TenantId::new(Uuid::from_u128(OTHER)),
+                name: "Globex".into(),
                 role: OrgRole::Member,
             },
         ])
@@ -164,4 +167,8 @@ async fn an_unreachable_control_plane_is_not_reported_as_a_missing_session() {
     .await;
 
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+}
+
+fn an_email() -> comettrace_core::Email {
+    comettrace_core::Email::try_from("person@example.com").expect("an address")
 }
