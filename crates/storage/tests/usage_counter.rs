@@ -19,11 +19,16 @@ fn redis_url() -> Option<String> {
 }
 
 async fn meter_at(seconds: u64) -> Option<RedisMeter<FixedClock>> {
+    namespaced_meter_at(seconds, "shared").await
+}
+
+async fn namespaced_meter_at(seconds: u64, namespace: &str) -> Option<RedisMeter<FixedClock>> {
     let url = redis_url()?;
     Some(
         RedisMeter::connect(&url, FixedClock::at(seconds))
             .await
-            .expect("connecting to the usage counter store"),
+            .expect("connecting to the usage counter store")
+            .with_prefix(format!("test:{namespace}")),
     )
 }
 
@@ -134,7 +139,7 @@ async fn rehydration_seeds_the_counter_from_the_billed_hours() {
     let Some(pool) = control_plane("counter_rehydrate").await else {
         return;
     };
-    let Some(meter) = meter_at(NOVEMBER).await else {
+    let Some(meter) = namespaced_meter_at(NOVEMBER, "rehydrate").await else {
         return;
     };
     let tenant = seeded_org(&pool).await;
@@ -152,7 +157,7 @@ async fn rehydration_leaves_a_live_counter_alone() {
     let Some(pool) = control_plane("counter_live").await else {
         return;
     };
-    let Some(meter) = meter_at(NOVEMBER).await else {
+    let Some(meter) = namespaced_meter_at(NOVEMBER, "live").await else {
         return;
     };
     let tenant = seeded_org(&pool).await;
@@ -172,7 +177,7 @@ async fn hours_before_the_month_are_not_rehydrated() {
     let Some(pool) = control_plane("counter_earlier").await else {
         return;
     };
-    let Some(meter) = meter_at(NOVEMBER).await else {
+    let Some(meter) = namespaced_meter_at(NOVEMBER, "earlier").await else {
         return;
     };
     let tenant = seeded_org(&pool).await;
@@ -231,10 +236,12 @@ async fn a_finished_hour_moves_into_the_billing_table() {
     let Some(pool) = control_plane("counter_rollup").await else {
         return;
     };
-    let Some(earlier) = meter_at(NOVEMBER).await else {
+    let Some(earlier) = namespaced_meter_at(NOVEMBER, "rollup").await else {
         return;
     };
-    let later = meter_at(NOVEMBER + 3600).await.expect("the same store");
+    let later = namespaced_meter_at(NOVEMBER + 3600, "rollup")
+        .await
+        .expect("the same store");
     let tenant = seeded_org(&pool).await;
 
     earlier
@@ -254,10 +261,12 @@ async fn rolling_the_same_hour_twice_does_not_double_the_bill() {
     let Some(pool) = control_plane("counter_twice").await else {
         return;
     };
-    let Some(earlier) = meter_at(NOVEMBER).await else {
+    let Some(earlier) = namespaced_meter_at(NOVEMBER, "twice").await else {
         return;
     };
-    let later = meter_at(NOVEMBER + 3600).await.expect("the same store");
+    let later = namespaced_meter_at(NOVEMBER + 3600, "twice")
+        .await
+        .expect("the same store");
     let tenant = seeded_org(&pool).await;
 
     earlier
@@ -277,7 +286,7 @@ async fn the_hour_in_progress_is_left_to_finish() {
     let Some(pool) = control_plane("counter_current").await else {
         return;
     };
-    let Some(meter) = meter_at(NOVEMBER).await else {
+    let Some(meter) = namespaced_meter_at(NOVEMBER, "current").await else {
         return;
     };
     let tenant = seeded_org(&pool).await;
@@ -296,10 +305,12 @@ async fn a_rollup_leaves_the_monthly_counter_standing() {
     let Some(pool) = control_plane("counter_month_kept").await else {
         return;
     };
-    let Some(earlier) = meter_at(NOVEMBER).await else {
+    let Some(earlier) = namespaced_meter_at(NOVEMBER, "month_kept").await else {
         return;
     };
-    let later = meter_at(NOVEMBER + 3600).await.expect("the same store");
+    let later = namespaced_meter_at(NOVEMBER + 3600, "month_kept")
+        .await
+        .expect("the same store");
     let tenant = seeded_org(&pool).await;
 
     earlier

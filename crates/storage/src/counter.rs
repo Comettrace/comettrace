@@ -21,6 +21,7 @@ pub enum CounterError {
 }
 
 pub struct RedisMeter<C> {
+    prefix: String,
     connection: ConnectionManager,
     clock: C,
 }
@@ -35,22 +36,32 @@ impl<C: Clock> RedisMeter<C> {
     pub async fn connect(url: &str, clock: C) -> Result<Self, CounterError> {
         let client = redis::Client::open(url)?;
         let connection = ConnectionManager::new(client).await?;
-        Ok(Self { connection, clock })
+        Ok(Self {
+            prefix: KEY_PREFIX.to_owned(),
+            connection,
+            clock,
+        })
+    }
+
+    #[must_use]
+    pub fn with_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.prefix = prefix.into();
+        self
     }
 
     fn key(&self, tenant: TenantId) -> String {
         let month = BillingMonth::containing(self.clock.now()).key();
-        format!("{KEY_PREFIX}:{tenant}:{month}")
+        format!("{}:{tenant}:{month}", self.prefix)
     }
 
     fn hour_key(&self, tenant: TenantId) -> String {
         let hour = BillingHour::containing(self.clock.now()).key();
-        format!("{KEY_PREFIX}:{tenant}:{hour}")
+        format!("{}:{tenant}:{hour}", self.prefix)
     }
 
     pub async fn roll_up(&self, pool: &PgPool) -> Result<usize, CounterError> {
         let hour = BillingHour::containing(self.clock.now()).previous();
-        let pattern = format!("{KEY_PREFIX}:*:{}", hour.key());
+        let pattern = format!("{}:*:{}", self.prefix, hour.key());
         let mut connection = self.connection.clone();
         let mut cursor: u64 = 0;
         let mut rolled = 0;
@@ -74,7 +85,8 @@ impl<C: Clock> RedisMeter<C> {
                 };
                 let written = sqlx::query(
                     "INSERT INTO usage_hourly (org_id, hour_start, ingested_bytes) \
-                     VALUES ($1, $2, $3) ON CONFLICT (org_id, hour_start) DO NOTHING",
+                     SELECT $1, $2, $3 WHERE EXISTS (SELECT 1 FROM orgs WHERE id = $1) \
+                     ON CONFLICT (org_id, hour_start) DO NOTHING",
                 )
                 .bind(tenant.as_uuid())
                 .bind(hour.start_nanos())
