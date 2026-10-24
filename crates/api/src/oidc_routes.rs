@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use comettrace_core::{
     AccountDirectory, AuthError, AuthProvider, Authorizer, FederatedError, FederatedSignIn,
-    FlowError, OidcFlows, SessionError, SessionStore,
+    FlowError, OidcFlows, SessionStore,
 };
 use serde::Deserialize;
 
