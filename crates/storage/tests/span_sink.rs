@@ -753,13 +753,14 @@ async fn the_services_table_measures_only_the_spans_a_service_was_called_on() {
     let mut slow = a_span(3, "checkout");
     slow.end_unix_nanos = slow.start_unix_nanos + 4_000_000_000;
     slow.status = SpanStatus::Error;
-    let outgoing = a_child(
+    let mut outgoing = a_child(
         4,
         "checkout",
         &root,
         root.start_unix_nanos,
         root.end_unix_nanos,
     );
+    outgoing.kind = SpanKind::Client;
     store
         .accept(tenant, vec![root.clone(), slow, outgoing])
         .await
