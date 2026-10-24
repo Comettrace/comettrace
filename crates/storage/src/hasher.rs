@@ -25,9 +25,12 @@ impl Argon2Hasher {
         let params = Params::new(memory_kib, passes, lanes, Some(DIGEST_BYTES))
             .map_err(|_| HashError::Unhashable)?;
         let context = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-        let unreachable: [u8; DECOY_BYTES] = rand::random();
-        let decoy = encode(&context, &unreachable)?;
+        let decoy = unreachable(&context)?;
         Ok(Self { context, decoy })
+    }
+
+    pub fn locked(&self) -> Result<PasswordHash, HashError> {
+        unreachable(&self.context)
     }
 }
 
@@ -56,6 +59,11 @@ impl PasswordHasher for Argon2Hasher {
     fn decoy(&self) -> &PasswordHash {
         &self.decoy
     }
+}
+
+fn unreachable(context: &Argon2<'static>) -> Result<PasswordHash, HashError> {
+    let bytes: [u8; DECOY_BYTES] = rand::random();
+    encode(context, &bytes)
 }
 
 fn encode(context: &Argon2<'static>, plaintext: &[u8]) -> Result<PasswordHash, HashError> {
