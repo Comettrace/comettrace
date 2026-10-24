@@ -72,7 +72,9 @@ impl Orgs for Kept {
     }
 
     async fn rename(&self, _org: TenantId, name: &OrgName) -> Result<(), ReadError> {
-        *self.0.lock().expect("the lock") = name.as_str().to_owned();
+        let mut held = self.0.lock().expect("the lock");
+        held.clear();
+        held.push_str(name.as_str());
         Ok(())
     }
 }
