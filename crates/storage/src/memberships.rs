@@ -24,6 +24,13 @@ impl PostgresMemberships {
         Self { pool }
     }
 
+    pub async fn founded(&self) -> Result<Option<TenantId>, MembershipError> {
+        let found = sqlx::query("SELECT id AS id FROM orgs ORDER BY created_at LIMIT 1")
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(found.map(|row| TenantId::new(row.get("id"))))
+    }
+
     pub async fn found(&self, name: &str, owner: &str) -> Result<TenantId, MembershipError> {
         let mut transaction = self.pool.begin().await?;
 

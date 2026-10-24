@@ -9,7 +9,8 @@ use anyhow::Context;
 use axum::Router;
 use clap::{Parser, Subcommand, ValueEnum};
 use comettrace_api::{
-    SessionCookie, auth_router, me_router, oidc_router, reset_router, router, trace_server,
+    SessionCookie, auth_router, health_router, me_router, oidc_router, reset_router, router,
+    trace_server,
 };
 use comettrace_core::{
     AccountId, AuthSources, Clock, DecompressedBytes, Email, FederatedSignIn, Ingest, IngestKey,
@@ -97,6 +98,13 @@ enum Command {
     RevokeKey {
         #[arg(long)]
         prefix: String,
+    },
+    /// Give a fresh deployment one account, one organisation, and the way in
+    Bootstrap {
+        #[arg(long)]
+        email: String,
+        #[arg(long, default_value = "Default")]
+        org: String,
     },
     /// Create an account with no password and print the link that sets one
     CreateAccount {
@@ -192,6 +200,48 @@ async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
             } else {
                 eprintln!("{prefix} matched no live key.");
             }
+        }
+        Command::Bootstrap { email, org } => {
+            let memberships = PostgresMemberships::new(pool.clone());
+            if let Some(existing) = memberships
+                .founded()
+                .await
+                .context("looking for an organisation")?
+            {
+                eprintln!(
+                    "This deployment already holds an organisation ({existing}), \
+                     so nothing was changed."
+                );
+                return Ok(());
+            }
+
+            let email = Email::try_from(email.as_str()).context("reading the address")?;
+            let resets = PostgresResets::new(pool.clone(), SystemClock);
+            let account = match resets
+                .account_for(&email)
+                .await
+                .context("looking the account up")?
+            {
+                Some(account) => account,
+                None => {
+                    let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
+                    let locked = hasher.locked().context("locking the new account")?;
+                    PostgresAccounts::new(pool.clone())
+                        .create(&email, &locked)
+                        .await
+                        .context("creating the account")?
+                }
+            };
+            let tenant = memberships
+                .found(&org, email.as_str())
+                .await
+                .context("creating the organisation")?;
+            let token = invite(&pool, account).await?;
+
+            eprintln!("{} owns {org} ({tenant}).", email.as_str());
+            eprintln!("Draw its first ingest key with:");
+            eprintln!("  comettrace issue-key --org {tenant}");
+            print_the_way_in(&token);
         }
         Command::CreateAccount { email } => {
             let email = Email::try_from(email.as_str()).context("reading the address")?;
@@ -529,7 +579,8 @@ async fn serve_http(
     let listener = TcpListener::bind(address)
         .await
         .with_context(|| format!("binding the OTLP HTTP listener on {address}"))?;
-    axum::serve(listener, router(gateway).merge(identity))
+    let served = router(gateway).merge(identity).merge(health_router());
+    axum::serve(listener, served)
         .with_graceful_shutdown(shutdown())
         .await
         .context("serving OTLP over HTTP")
