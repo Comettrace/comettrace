@@ -5,19 +5,20 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ServiceDot, svcBg } from '@/components/cmt/bits'
-import { useSpans, useTraces } from '@/data/traces'
+import { useTrace } from '@/data/traces'
 import { cn } from '@/lib/utils'
 import { NotFound } from './NotFound'
 
 export function TraceDetail() {
   const { id } = useParams()
-  const traces = useTraces()
-  const t = traces.find((x) => x.id === id) ?? traces[0]
-  const spans = useSpans(t)
-  const [sel, setSel] = useState(spans.findIndex((s) => s.err) >= 0 ? spans.findIndex((s) => s.err) : 0)
+  const { row: t, spans, pending } = useTrace(id)
+  const [picked, setPicked] = useState<string | null>(null)
   const [panel, setPanel] = useState(true)
+  if (pending) return null
   if (!t) return <NotFound />
-  const s = spans[sel]
+  /* The spans arrive after the first render, so the opened span is chosen by id rather than by
+     index: an error span if the trace has one, because that is what the reader came for. */
+  const s = spans.find((x) => x.id === picked) ?? spans.find((x) => x.err) ?? spans[0]
   const services = [...new Set(spans.map((x) => x.svc))]
   return (
     <>
@@ -41,15 +42,15 @@ export function TraceDetail() {
             <span className="px-3 py-2 text-right">Duration</span>
           </div>
           <div role="tree" aria-label="Spans" className="min-w-[720px]">
-            {spans.map((x, i) => (
+            {spans.map((x) => (
               <button
                 key={x.id}
                 type="button"
                 role="treeitem"
                 aria-level={x.depth + 1}
-                aria-selected={i === sel}
-                onClick={() => { setSel(i); setPanel(true) }}
-                className={cn('grid h-[30px] w-full cursor-pointer grid-cols-[minmax(240px,340px)_minmax(0,1fr)_84px] items-center border-b border-border-subtle text-left text-control hover:bg-row-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring', i === sel && 'bg-accent-subtle')}
+                aria-selected={x.id === s?.id}
+                onClick={() => { setPicked(x.id); setPanel(true) }}
+                className={cn('grid h-[30px] w-full cursor-pointer grid-cols-[minmax(240px,340px)_minmax(0,1fr)_84px] items-center border-b border-border-subtle text-left text-control hover:bg-row-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring', x.id === s?.id && 'bg-accent-subtle')}
               >
                 <span className={cn('flex min-w-0 items-center gap-1.5 pr-2', x.err && 'text-destructive-text')} style={{ paddingLeft: 12 + x.depth * 16 }}>
                   <ServiceDot name={x.svc} />{x.err ? <CircleX className="size-3 shrink-0" aria-label="Error" /> : null}<span className="truncate">{x.name}</span>
