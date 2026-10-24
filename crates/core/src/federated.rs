@@ -1,5 +1,3 @@
-use core::future::Future;
-
 use crate::identity::{AuthError, AuthProvider, ProvisionPolicy, SignInProof};
 use crate::oidc::{FlowError, OidcFlows, PendingFlow};
 use crate::secret::SessionToken;
