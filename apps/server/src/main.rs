@@ -41,7 +41,7 @@ type Gateway = Ingest<Directory, StaticQuota<Arc<Meter>>, Arc<Sink>, Arc<Meter>>
 #[derive(Debug)]
 enum Sink {
     Memory(MemorySink),
-    Spans(ClickhouseSink<SystemClock>),
+    Spans(Box<ClickhouseSink<SystemClock>>),
 }
 
 impl SpanSink for Sink {
@@ -399,7 +399,7 @@ async fn sink_of(config: &Config) -> anyhow::Result<Sink> {
         retention_days = settings.retention_days,
         "spans are written to the span store"
     );
-    Ok(Sink::Spans(sink))
+    Ok(Sink::Spans(Box::new(sink)))
 }
 
 async fn flush_spans(sink: Arc<Sink>) {
