@@ -32,10 +32,11 @@ async fn migrated(schema: &str) -> Option<PgPool> {
         .expect("creating the test schema");
     pool.close().await;
 
+    let owned = schema.to_owned();
     let scoped = PgPoolOptions::new()
         .max_connections(2)
         .after_connect(move |connection, _| {
-            let schema = schema.to_owned();
+            let schema = owned.clone();
             Box::pin(async move {
                 sqlx::query(AssertSqlSafe(format!("SET search_path TO {schema}")))
                     .execute(connection)
