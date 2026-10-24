@@ -1,11 +1,13 @@
 use comettrace_core::{
-    AccountId, AuthError, AuthProvider, CodeVerifier, Email, FlowError, OidcFlows, Password,
-    PasswordCheck, PasswordHasher, PendingFlow, SessionError, SessionLifetime, SessionStore,
-    SignInProof,
+    AccountId, AuthError, AuthProvider, CodeVerifier, Email, FlowError, Mailer, OidcFlows,
+    Password, PasswordCheck, PasswordHasher, PendingFlow, ResetError, ResetPassword, ResetToken,
+    SessionError, SessionLifetime, SessionStore, SignInProof,
 };
 use comettrace_storage::{
-    Argon2Hasher, CONTROL_PLANE, FixedClock, LocalPasswordProvider, PostgresFlows, PostgresSessions,
+    Argon2Hasher, CONTROL_PLANE, FixedClock, LocalPasswordProvider, PostgresFlows, PostgresResets,
+    PostgresSessions,
 };
+use std::sync::Mutex;
 use std::time::Duration;
 
 use sqlx::postgres::PgPoolOptions;
@@ -384,4 +386,178 @@ async fn pruning_removes_only_attempts_past_their_window() {
 
     assert_eq!(removed, 1);
     assert!(later.take("state-2").await.is_ok(), "the live one stayed");
+}
+
+#[derive(Default)]
+struct Outbox {
+    sent: Mutex<Vec<String>>,
+}
+
+impl Outbox {
+    fn last(&self) -> Option<String> {
+        self.sent.lock().expect("the outbox lock").last().cloned()
+    }
+
+    fn count(&self) -> usize {
+        self.sent.lock().expect("the outbox lock").len()
+    }
+}
+
+impl Mailer for &Outbox {
+    async fn send_password_reset(&self, _to: &Email, token: &ResetToken) -> Result<(), ResetError> {
+        self.sent
+            .lock()
+            .expect("the outbox lock")
+            .push(token.exposed().to_owned());
+        Ok(())
+    }
+}
+
+fn a_reset_token(seed: &str) -> ResetToken {
+    ResetToken::from_plaintext(&format!("ct_pr_{seed}"))
+}
+
+#[tokio::test]
+async fn a_reset_is_offered_only_to_an_address_we_know() {
+    let Some(pool) = control_plane("reset_known").await else {
+        return;
+    };
+    an_account(&pool, "person@example.com", Some("old secret")).await;
+    let outbox = Outbox::default();
+    let reset = ResetPassword::new(
+        PostgresResets::new(pool.clone(), FixedClock::at(NOW)),
+        cheap(),
+        &outbox,
+    );
+
+    let known = reset
+        .request(
+            &Email::try_from("person@example.com").expect("an address"),
+            a_reset_token("one"),
+        )
+        .await
+        .expect("the request runs");
+    let unknown = reset
+        .request(
+            &Email::try_from("stranger@example.com").expect("an address"),
+            a_reset_token("two"),
+        )
+        .await
+        .expect("the request runs");
+
+    assert!(known);
+    assert!(!unknown);
+    assert_eq!(
+        outbox.count(),
+        1,
+        "no message leaves for an unknown address"
+    );
+}
+
+#[tokio::test]
+async fn a_confirmed_reset_changes_the_password_and_ends_every_session() {
+    let Some(pool) = control_plane("reset_confirm").await else {
+        return;
+    };
+    let account = an_account(&pool, "person@example.com", Some("old secret")).await;
+    let sessions = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
+    let token = sessions.issue(account, None).await.expect("a session");
+    let outbox = Outbox::default();
+    let reset = ResetPassword::new(
+        PostgresResets::new(pool.clone(), FixedClock::at(NOW)),
+        cheap(),
+        &outbox,
+    );
+    let address = Email::try_from("person@example.com").expect("an address");
+    reset
+        .request(&address, a_reset_token("one"))
+        .await
+        .expect("the request");
+    let sent = ResetToken::from_plaintext(&outbox.last().expect("a message"));
+
+    let ended = reset
+        .confirm(&sent, &Password::new("a new secret"))
+        .await
+        .expect("the confirmation");
+
+    assert_eq!(ended, 1, "the session it was signed in with is gone");
+    assert_eq!(sessions.resolve(&token).await, Err(SessionError::Unknown));
+
+    let provider = LocalPasswordProvider::new(pool.clone(), cheap());
+    assert!(
+        provider
+            .sign_in(a_proof("person@example.com", "a new secret"))
+            .await
+            .is_ok(),
+        "the new password works"
+    );
+    assert_eq!(
+        provider
+            .sign_in(a_proof("person@example.com", "old secret"))
+            .await,
+        Err(AuthError::Rejected),
+        "the old one does not"
+    );
+}
+
+#[tokio::test]
+async fn a_reset_token_is_spent_by_its_first_use() {
+    let Some(pool) = control_plane("reset_once").await else {
+        return;
+    };
+    an_account(&pool, "person@example.com", Some("old secret")).await;
+    let outbox = Outbox::default();
+    let reset = ResetPassword::new(
+        PostgresResets::new(pool.clone(), FixedClock::at(NOW)),
+        cheap(),
+        &outbox,
+    );
+    let token = a_reset_token("one");
+    reset
+        .request(
+            &Email::try_from("person@example.com").expect("an address"),
+            token.clone(),
+        )
+        .await
+        .expect("the request");
+
+    reset
+        .confirm(&token, &Password::new("a new secret"))
+        .await
+        .expect("the first use");
+    let replay = reset.confirm(&token, &Password::new("another")).await;
+
+    assert_eq!(replay, Err(ResetError::Unknown));
+}
+
+#[tokio::test]
+async fn a_reset_past_its_window_is_gone() {
+    let Some(pool) = control_plane("reset_expired").await else {
+        return;
+    };
+    an_account(&pool, "person@example.com", Some("old secret")).await;
+    let outbox = Outbox::default();
+    let token = a_reset_token("one");
+    ResetPassword::new(
+        PostgresResets::new(pool.clone(), FixedClock::at(NOW)).with_window(Duration::from_secs(60)),
+        cheap(),
+        &outbox,
+    )
+    .request(
+        &Email::try_from("person@example.com").expect("an address"),
+        token.clone(),
+    )
+    .await
+    .expect("the request");
+
+    let late = ResetPassword::new(
+        PostgresResets::new(pool.clone(), FixedClock::at(NOW + 61))
+            .with_window(Duration::from_secs(60)),
+        cheap(),
+        &outbox,
+    )
+    .confirm(&token, &Password::new("a new secret"))
+    .await;
+
+    assert_eq!(late, Err(ResetError::Unknown));
 }

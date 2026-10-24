@@ -6,6 +6,7 @@ mod ingest;
 mod key;
 mod oidc;
 mod quota;
+mod reset;
 mod secret;
 mod session;
 mod signin;
@@ -25,7 +26,8 @@ pub use ingest::{Ingest, IngestError, Payload};
 pub use key::IngestKey;
 pub use oidc::{CodeVerifier, FlowError, OidcFlows, PendingFlow};
 pub use quota::{Admission, QuotaPolicy, Unmetered};
-pub use secret::{SESSION_PREFIX, SecretHash, SessionToken};
+pub use reset::{Mailer, ResetError, ResetPassword, ResetStore};
+pub use secret::{RESET_PREFIX, ResetToken, SESSION_PREFIX, SecretHash, SessionToken};
 pub use session::{
     HashError, PasswordCheck, PasswordHash, PasswordHasher, Session, SessionError, SessionLifetime,
     SessionStore,
