@@ -81,7 +81,6 @@ async fn the_self_hosted_plan_leaves_every_limit_open() {
 }
 
 #[tokio::test]
-#[tokio::test]
 async fn an_account_may_hold_only_a_password() {
     let Some(pool) = migrated("control_password_only").await else {
         return;
@@ -118,7 +117,6 @@ async fn an_account_may_now_exist_before_any_way_in_is_linked() {
     assert_eq!(linked, 0, "and it can authenticate through nothing");
 }
 
-#[tokio::test]
 #[tokio::test]
 async fn an_api_key_prefix_is_claimed_once() {
     let Some(pool) = migrated("control_prefix").await else {
