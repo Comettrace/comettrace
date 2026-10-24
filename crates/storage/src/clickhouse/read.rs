@@ -170,10 +170,15 @@ fn read_service(row: ServiceRow) -> ServiceSummary {
     }
 }
 
-/* quantiles() answers an array in the order it was asked for them; a service with no spans in the
-window never reaches here, so a short array would mean the query and this list disagree. */
+/* quantiles() answers Float64 nanoseconds, in the order they were asked for. A latency is never
+negative and never longer than the window, so the clamp only has to answer for a store that
+contradicts itself rather than for arithmetic we expect. */
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn quantile(latency: &[f64], at: usize) -> u64 {
-    latency.get(at).map_or(0, |value| *value as u64)
+    let Some(value) = latency.get(at).copied().filter(|value| value.is_finite()) else {
+        return 0;
+    };
+    value.clamp(0.0, u64::MAX as f64) as u64
 }
 
 fn ordering(order: TraceOrder) -> &'static str {
