@@ -1,13 +1,14 @@
 use comettrace_core::{
-    AccountId, AuthError, AuthProvider, CodeVerifier, Email, FlowError, Mailer, OidcFlows,
-    Password, PasswordCheck, PasswordHasher, PendingFlow, ResetError, ResetPassword, ResetStore,
-    ResetToken, SessionError, SessionLifetime, SessionStore, SignInProof,
+    AccountId, AuthError, AuthProvider, AuthSources, CodeVerifier, Email, FlowError, Issuer,
+    Mailer, NoProvider, OidcFlows, Password, PasswordCheck, PasswordHasher, PendingFlow,
+    ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken, ResolvedIdentity,
+    SessionError, SessionLifetime, SessionStore, SignIn, SignInProof, Subject,
 };
 use comettrace_storage::{
     AccountError, Argon2Hasher, CONTROL_PLANE, FixedClock, LocalPasswordProvider, PostgresAccounts,
     PostgresFlows, PostgresResets, PostgresSessions,
 };
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use sqlx::postgres::PgPoolOptions;
@@ -635,4 +636,99 @@ async fn two_locked_accounts_do_not_share_a_hash() {
     let other = hasher.locked().expect("another locked hash");
 
     assert_ne!(one.encoded(), other.encoded());
+}
+
+async fn accounts_held(pool: &PgPool) -> i64 {
+    sqlx::query("SELECT count(*) AS value FROM accounts")
+        .fetch_one(pool)
+        .await
+        .expect("counting the accounts")
+        .get("value")
+}
+
+#[tokio::test]
+async fn a_local_password_opens_a_session_without_provisioning_anything() {
+    let Some(pool) = control_plane("auth_local_end_to_end").await else {
+        return;
+    };
+    let account = an_account(&pool, "person@example.com", Some("correct horse")).await;
+    let sessions = Arc::new(PostgresSessions::new(
+        pool.clone(),
+        FixedClock::at(NOW),
+        lifetime(),
+    ));
+    let sign_in = SignIn::new(
+        AuthSources::new(
+            Some(LocalPasswordProvider::new(pool.clone(), cheap())),
+            None::<NoProvider>,
+        ),
+        PostgresAccounts::new(pool.clone()),
+        Arc::clone(&sessions),
+        ProvisionPolicy::default(),
+    );
+
+    let token = sign_in
+        .begin(a_proof("person@example.com", "correct horse"))
+        .await
+        .expect("the password opens a session");
+
+    let session = sessions.resolve(&token).await.expect("the session is live");
+    assert_eq!(session.account, account);
+    assert_eq!(
+        accounts_held(&pool).await,
+        1,
+        "signing in must not provision a second account for an address we hold"
+    );
+}
+
+#[tokio::test]
+async fn a_wrong_local_password_opens_nothing_and_provisions_nothing() {
+    let Some(pool) = control_plane("auth_local_refused_end_to_end").await else {
+        return;
+    };
+    an_account(&pool, "person@example.com", Some("correct horse")).await;
+    let sign_in = SignIn::new(
+        AuthSources::new(
+            Some(LocalPasswordProvider::new(pool.clone(), cheap())),
+            None::<NoProvider>,
+        ),
+        PostgresAccounts::new(pool.clone()),
+        Arc::new(PostgresSessions::new(
+            pool.clone(),
+            FixedClock::at(NOW),
+            lifetime(),
+        )),
+        ProvisionPolicy::default(),
+    );
+
+    let refused = sign_in
+        .begin(a_proof("person@example.com", "wrong horse battery"))
+        .await;
+
+    assert!(refused.is_err());
+    assert_eq!(accounts_held(&pool).await, 1);
+}
+
+#[tokio::test]
+async fn a_local_identity_naming_no_account_is_not_provisioned() {
+    let Some(pool) = control_plane("auth_local_stranger").await else {
+        return;
+    };
+    let identity = ResolvedIdentity {
+        issuer: Issuer::Local,
+        subject: Subject::try_from(Uuid::new_v4().to_string().as_str()).expect("a subject"),
+        email: Email::try_from("ghost@example.com").expect("an address"),
+        email_verified: true,
+    };
+
+    let refused = PostgresAccounts::new(pool.clone())
+        .provision(&identity, ProvisionPolicy::default())
+        .await;
+
+    assert!(matches!(refused, Err(AccountError::NotProvisioned)));
+    assert_eq!(
+        accounts_held(&pool).await,
+        0,
+        "a local identity is never a reason to create an account"
+    );
 }

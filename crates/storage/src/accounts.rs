@@ -60,11 +60,29 @@ impl PostgresAccounts {
         Ok(found.map(|row| AccountId::new(row.get("account_id"))))
     }
 
+    pub async fn established(
+        &self,
+        identity: &ResolvedIdentity,
+    ) -> Result<AccountId, AccountError> {
+        let id =
+            Uuid::parse_str(identity.subject.as_str()).map_err(|_| AccountError::NotProvisioned)?;
+        let found = sqlx::query("SELECT id AS id FROM accounts WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        found
+            .map(|row| AccountId::new(row.get("id")))
+            .ok_or(AccountError::NotProvisioned)
+    }
+
     pub async fn provision(
         &self,
         identity: &ResolvedIdentity,
         policy: ProvisionPolicy,
     ) -> Result<AccountId, AccountError> {
+        if identity.issuer.is_local() {
+            return self.established(identity).await;
+        }
         if let Some(account) = self.linked(identity).await? {
             return Ok(account);
         }
