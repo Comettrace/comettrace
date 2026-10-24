@@ -4,6 +4,7 @@ import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@ta
 import { RouterProvider } from '@tanstack/react-router'
 import { Toaster } from 'sonner'
 import { isUnauthorized } from '@/auth/client'
+import { ScopeProvider } from '@/lib/scope'
 import { ThemeProvider, useTheme } from '@/lib/theme'
 import { createAppRouter } from './routes'
 import './styles/globals.css'
@@ -33,10 +34,12 @@ function ThemedToaster() {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-        <ThemedToaster />
-      </QueryClientProvider>
+      <ScopeProvider>
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+          <ThemedToaster />
+        </QueryClientProvider>
+      </ScopeProvider>
     </ThemeProvider>
   </StrictMode>,
 )

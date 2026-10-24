@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { get, json } from '@/auth/client'
 import { useOrganizations } from '@/auth/session'
+import { useScope } from '@/lib/scope'
 import { dur } from '@/lib/format'
 
 export type TraceRow = { id: string; root: string; svc: string; start: string; dur: string; spans: number; errors: number }
@@ -85,14 +86,18 @@ export function laidOut(trace: Waterfall): Span[] {
 
 export function useTraces(): TraceRow[] {
   const { active } = useOrganizations()
+  const { project } = useScope()
   const { data } = useQuery({
-    queryKey: ['traces', active?.org],
+    queryKey: ['traces', active?.org, project],
     enabled: Boolean(active),
     staleTime: FRESH_MS,
     queryFn: async () => {
       const to = Date.now()
       const from = to - WINDOW_MS
-      const found = await json<{ traces: Listed[] }>(await get(`/api/orgs/${active?.org}/traces?from=${from}&to=${to}`))
+      const within = project ? `&project=${project}` : ''
+      const found = await json<{ traces: Listed[] }>(
+        await get(`/api/orgs/${active?.org}/traces?from=${from}&to=${to}${within}`),
+      )
       return found.traces.map(listed)
     },
   })

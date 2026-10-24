@@ -13,11 +13,12 @@ import { NotificationsPanel } from './Notifications'
 import { useNotifications } from '@/data/notifications'
 import { useIssues } from '@/data/issues'
 import { useAlertRules } from '@/data/alerts'
-import { useProjects } from '@/data/organization'
+import { useProjects } from '@/data/projects'
 import { healthQuery } from '@/auth/api'
 import { useAccount, useOrganizations, useSignOut } from '@/auth/session'
 import { useTheme, type ThemePref } from '@/lib/theme'
 import { Link, NavLink, Outlet, isActivePath, useLocation, useNavigate } from '@/lib/router'
+import { useScope } from '@/lib/scope'
 import { cn } from '@/lib/utils'
 import { Logo } from '@/components/cmt/Logo'
 import { MockData } from '@/components/cmt/MockData'
@@ -184,7 +185,8 @@ function OrganizationSwitcher() {
 
 function Topbar({ onPalette, mock }: { onPalette: () => void; mock: boolean }) {
   const projects = useProjects()
-  const [project, setProject] = useState('All projects')
+  const { project, chooseProject } = useScope()
+  const named = projects.find((p) => p.id === project)?.name ?? 'All projects'
   const [range, setRange] = useState<string>('Last 1 h')
   return (
     <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4">
@@ -194,15 +196,14 @@ function Topbar({ onPalette, mock }: { onPalette: () => void; mock: boolean }) {
       <span className="hidden text-faint-foreground sm:inline" aria-hidden>/</span>
       <Popover>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="sm" aria-haspopup="listbox"><Folder />{project}<ChevronDown className="text-muted-foreground" /></Button>
+          <Button variant="ghost" size="sm" aria-haspopup="listbox"><Folder />{named}<ChevronDown className="text-muted-foreground" /></Button>
         </PopoverTrigger>
         <PopoverContent align="start" className="w-[260px] p-1">
-          {['All projects', ...projects.map((p) => p.name)].map((p) => (
-            <button key={p} type="button" onClick={() => setProject(p)} className="flex h-[30px] w-full cursor-pointer items-center rounded-sm px-2 text-left text-control hover:bg-muted">
-              {p}{p === project ? <span className="ml-auto text-accent-text">✓</span> : null}
+          {[{ id: undefined, name: 'All projects' }, ...projects].map((p) => (
+            <button key={p.id ?? 'all'} type="button" onClick={() => chooseProject(p.id)} className="flex h-[30px] w-full cursor-pointer items-center rounded-sm px-2 text-left text-control hover:bg-muted">
+              {p.name}{p.id === project ? <span className="ml-auto text-accent-text">✓</span> : null}
             </button>
           ))}
-          <p className="m-0 flex items-center gap-2 px-2 py-2 text-caption text-muted-foreground"><MockData />no project route exists yet</p>
         </PopoverContent>
       </Popover>
       {mock ? <MockData className="max-sm:hidden" /> : null}

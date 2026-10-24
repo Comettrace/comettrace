@@ -1,5 +1,6 @@
 use core::future::Future;
 
+use crate::catalogue::ProjectId;
 use crate::membership::{Memberships, OrgRole, Whoami, WhoamiError};
 use crate::secret::SessionToken;
 use crate::session::SessionStore;
@@ -58,6 +59,7 @@ pub enum TraceOrder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceFilter {
     pub window: Window,
+    pub project: Option<ProjectId>,
     pub service: Option<Box<str>>,
     pub only_errors: bool,
     pub at_least_nanos: Option<u64>,
@@ -69,6 +71,7 @@ impl TraceFilter {
     pub fn over(window: Window) -> Self {
         Self {
             window,
+            project: None,
             service: None,
             only_errors: false,
             at_least_nanos: None,
@@ -115,6 +118,7 @@ pub trait SpanReader {
         &self,
         tenant: TenantId,
         window: Window,
+        project: Option<ProjectId>,
     ) -> impl Future<Output = Result<Vec<ServiceSummary>, ReadError>> + Send;
 
     fn traces(
@@ -135,8 +139,9 @@ impl<T: SpanReader + Sync> SpanReader for &T {
         &self,
         tenant: TenantId,
         window: Window,
+        project: Option<ProjectId>,
     ) -> impl Future<Output = Result<Vec<ServiceSummary>, ReadError>> + Send {
-        (*self).services(tenant, window)
+        (*self).services(tenant, window, project)
     }
 
     fn traces(
@@ -161,8 +166,9 @@ impl<T: SpanReader + Send + Sync> SpanReader for std::sync::Arc<T> {
         &self,
         tenant: TenantId,
         window: Window,
+        project: Option<ProjectId>,
     ) -> impl Future<Output = Result<Vec<ServiceSummary>, ReadError>> + Send {
-        self.as_ref().services(tenant, window)
+        self.as_ref().services(tenant, window, project)
     }
 
     fn traces(
@@ -239,9 +245,10 @@ where
         token: &SessionToken,
         org: TenantId,
         window: Window,
+        project: Option<ProjectId>,
     ) -> Result<Vec<ServiceSummary>, ExploreError> {
         self.allowed(token, org).await?;
-        Ok(self.reader.services(org, window).await?)
+        Ok(self.reader.services(org, window, project).await?)
     }
 
     pub async fn traces(
@@ -352,6 +359,7 @@ mod tests {
             &self,
             tenant: TenantId,
             _window: Window,
+            _project: Option<ProjectId>,
         ) -> Result<Vec<ServiceSummary>, ReadError> {
             self.tenants.lock().expect("the lock").push(tenant);
             Ok(Vec::new())
@@ -398,6 +406,7 @@ mod tests {
             &self,
             _tenant: TenantId,
             _window: Window,
+            _project: Option<ProjectId>,
         ) -> Result<Vec<ServiceSummary>, ReadError> {
             Err(ReadError::StoreUnreachable)
         }
@@ -521,7 +530,12 @@ mod tests {
         let window = Window::new(0, 1000).expect("a window");
 
         let refused = explore
-            .services(&SessionToken::from_plaintext(TOKEN), an_org(THEIRS), window)
+            .services(
+                &SessionToken::from_plaintext(TOKEN),
+                an_org(THEIRS),
+                window,
+                None,
+            )
             .await;
 
         assert_eq!(refused, Err(ExploreError::NotYours));
@@ -535,7 +549,12 @@ mod tests {
         let window = Window::new(0, 1000).expect("a window");
 
         explore
-            .services(&SessionToken::from_plaintext(TOKEN), an_org(MINE), window)
+            .services(
+                &SessionToken::from_plaintext(TOKEN),
+                an_org(MINE),
+                window,
+                None,
+            )
             .await
             .expect("a member may read");
 

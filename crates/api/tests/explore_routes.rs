@@ -6,9 +6,10 @@ use axum::http::header::COOKIE;
 use axum::http::{Request, StatusCode};
 use comettrace_api::explore_router;
 use comettrace_core::{
-    AccountId, Explore, Membership, Memberships, OrgRole, ReadError, ServiceSummary, Session,
-    SessionError, SessionStore, SessionToken, Span, SpanId, SpanKind, SpanReader, SpanStatus,
-    TenantId, TraceFilter, TraceId, TraceSummary, UnixSeconds, Whoami, WhoamiError, Window,
+    AccountId, Explore, Membership, Memberships, OrgRole, ProjectId, ReadError, ServiceSummary,
+    Session, SessionError, SessionStore, SessionToken, Span, SpanId, SpanKind, SpanReader,
+    SpanStatus, TenantId, TraceFilter, TraceId, TraceSummary, UnixSeconds, Whoami, WhoamiError,
+    Window,
 };
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -85,6 +86,7 @@ impl SpanReader for TwoSpans {
         &self,
         _tenant: TenantId,
         _window: Window,
+        _project: Option<ProjectId>,
     ) -> Result<Vec<ServiceSummary>, ReadError> {
         Ok(vec![ServiceSummary {
             name: "checkout".into(),
@@ -138,6 +140,7 @@ impl SpanReader for NoSpans {
         &self,
         _tenant: TenantId,
         _window: Window,
+        _project: Option<ProjectId>,
     ) -> Result<Vec<ServiceSummary>, ReadError> {
         Ok(Vec::new())
     }
