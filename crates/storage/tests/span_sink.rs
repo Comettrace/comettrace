@@ -405,9 +405,10 @@ async fn opening_a_span_store_twice_leaves_what_the_first_one_wrote() {
     );
 }
 
-fn a_child(seed: u8, service: &str, parent: u8, start: u64, end: u64) -> Span {
+fn a_child(seed: u8, service: &str, root: &Span, start: u64, end: u64) -> Span {
     Span {
-        parent: Some(SpanId::try_from([parent; 8].as_slice()).expect("eight bytes")),
+        trace_id: root.trace_id,
+        parent: Some(root.span_id),
         service_name: service.into(),
         start_unix_nanos: start,
         end_unix_nanos: end,
@@ -437,7 +438,7 @@ async fn a_written_trace_is_read_back_whole_and_in_order() {
     let child = a_child(
         2,
         "payments",
-        1,
+        &root,
         root.start_unix_nanos + 1_000,
         root.end_unix_nanos,
     );
@@ -534,7 +535,7 @@ async fn the_trace_list_summarises_each_trace_once() {
     let child = a_child(
         2,
         "payments",
-        1,
+        &root,
         root.start_unix_nanos + 1_000,
         root.end_unix_nanos,
     );
@@ -625,7 +626,7 @@ async fn the_trace_list_can_be_narrowed_to_a_service_that_appears_anywhere_in_it
     let child = a_child(
         2,
         "payments",
-        1,
+        &root,
         root.start_unix_nanos + 1_000,
         root.end_unix_nanos,
     );
@@ -733,5 +734,7 @@ async fn the_trace_list_never_crosses_tenants() {
 }
 
 fn a_wide_filter() -> TraceFilter {
-    TraceFilter::over(Window::new(1, u64::MAX / 2).expect("a window"))
+    TraceFilter::over(
+        Window::new(1_600_000_000_000_000_000, 1_800_000_000_000_000_000).expect("a window"),
+    )
 }
