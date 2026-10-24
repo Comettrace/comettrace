@@ -1,3 +1,4 @@
+mod accounts;
 mod clickhouse;
 mod clock;
 mod counter;
@@ -8,6 +9,7 @@ mod quota;
 mod sink;
 mod usage;
 
+pub use accounts::{AccountError, PostgresAccounts};
 pub use clickhouse::{
     BatchLimits, ClickhouseMigrator, ClickhouseSink, MIGRATIONS, MigrateError, Migration,
 };

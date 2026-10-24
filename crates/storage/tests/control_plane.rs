@@ -1,5 +1,9 @@
-use comettrace_core::DecompressedBytes;
-use comettrace_storage::{Allowance, CONTROL_PLANE, OVERAGE_FEATURE, SELF_HOSTED_PLAN};
+use comettrace_core::{
+    DecompressedBytes, Email, Issuer, ProvisionPolicy, ResolvedIdentity, Subject,
+};
+use comettrace_storage::{
+    AccountError, Allowance, CONTROL_PLANE, OVERAGE_FEATURE, PostgresAccounts, SELF_HOSTED_PLAN,
+};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 
@@ -77,47 +81,44 @@ async fn the_self_hosted_plan_leaves_every_limit_open() {
 }
 
 #[tokio::test]
-async fn an_account_without_any_way_in_is_refused() {
-    let Some(pool) = migrated("control_account").await else {
+#[tokio::test]
+async fn an_account_may_hold_only_a_password() {
+    let Some(pool) = migrated("control_password_only").await else {
         return;
     };
 
-    let refused = sqlx::query(
-        "INSERT INTO accounts (id, email, password_hash, oidc_subject) \
-         VALUES (gen_random_uuid(), 'nobody@example.com', NULL, NULL)",
+    sqlx::query(
+        "INSERT INTO accounts (id, email, password_hash) \
+         VALUES (gen_random_uuid(), 'local@example.com', '$argon2id$hash')",
     )
     .execute(&pool)
-    .await;
-
-    assert!(
-        refused.is_err(),
-        "the check constraint let a credential-less account through"
-    );
+    .await
+    .expect("a password is a way in on its own");
 }
 
 #[tokio::test]
-async fn an_account_needs_only_one_way_in() {
-    let Some(pool) = migrated("control_one_way").await else {
+async fn an_account_may_now_exist_before_any_way_in_is_linked() {
+    let Some(pool) = migrated("control_no_way_in").await else {
         return;
     };
 
-    for (email, password, subject) in [
-        ("local@example.com", Some("argon2-hash"), None),
-        ("federated@example.com", None, Some("sub-123")),
-    ] {
-        sqlx::query(
-            "INSERT INTO accounts (id, email, password_hash, oidc_subject) \
-             VALUES (gen_random_uuid(), $1, $2, $3)",
-        )
-        .bind(email)
-        .bind(password)
-        .bind(subject)
-        .execute(&pool)
+    sqlx::query(
+        "INSERT INTO accounts (id, email, password_hash) \
+         VALUES (gen_random_uuid(), 'nobody@example.com', NULL)",
+    )
+    .execute(&pool)
+    .await
+    .expect("the cross table constraint is gone, so this row is accepted");
+
+    let linked: i64 = sqlx::query("SELECT count(*) AS n FROM identity_links")
+        .fetch_one(&pool)
         .await
-        .expect("one credential is enough");
-    }
+        .expect("counting links")
+        .get("n");
+    assert_eq!(linked, 0, "and it can authenticate through nothing");
 }
 
+#[tokio::test]
 #[tokio::test]
 async fn an_api_key_prefix_is_claimed_once() {
     let Some(pool) = migrated("control_prefix").await else {
@@ -357,4 +358,145 @@ async fn an_org_on_the_default_plan_is_unlimited() {
         .expect("the allowances load");
 
     assert_eq!(allowances.get(&tenant), Some(&Allowance::Unlimited));
+}
+
+fn an_identity(issuer: Issuer, subject: &str, email: &str) -> ResolvedIdentity {
+    ResolvedIdentity {
+        issuer,
+        subject: Subject::try_from(subject).expect("a subject"),
+        email: Email::try_from(email).expect("an address"),
+        email_verified: true,
+    }
+}
+
+async fn account_count(pool: &PgPool) -> i64 {
+    sqlx::query("SELECT count(*) AS n FROM accounts")
+        .fetch_one(pool)
+        .await
+        .expect("counting accounts")
+        .get("n")
+}
+
+#[tokio::test]
+async fn provisioning_creates_an_account_and_its_link_together() {
+    let Some(pool) = migrated("identity_provision").await else {
+        return;
+    };
+    let accounts = PostgresAccounts::new(pool.clone());
+    let identity = an_identity(Issuer::Local, "sub-1", "person@example.com");
+
+    let account = accounts
+        .provision(&identity, ProvisionPolicy::default())
+        .await
+        .expect("the identity is provisioned");
+
+    assert_eq!(account_count(&pool).await, 1);
+    assert_eq!(
+        accounts.linked(&identity).await.expect("a lookup"),
+        Some(account)
+    );
+}
+
+#[tokio::test]
+async fn provisioning_the_same_identity_twice_returns_the_same_account() {
+    let Some(pool) = migrated("identity_twice").await else {
+        return;
+    };
+    let accounts = PostgresAccounts::new(pool.clone());
+    let identity = an_identity(Issuer::Local, "sub-1", "person@example.com");
+
+    let first = accounts
+        .provision(&identity, ProvisionPolicy::default())
+        .await
+        .expect("the first provision");
+    let second = accounts
+        .provision(&identity, ProvisionPolicy::default())
+        .await
+        .expect("the second provision");
+
+    assert_eq!(first, second);
+    assert_eq!(account_count(&pool).await, 1);
+}
+
+#[tokio::test]
+async fn two_providers_may_carry_the_same_subject() {
+    let Some(pool) = migrated("identity_two_providers").await else {
+        return;
+    };
+    let accounts = PostgresAccounts::new(pool.clone());
+    let local = an_identity(Issuer::Local, "shared", "local@example.com");
+    let federated = an_identity(
+        Issuer::federated("https://id.example").expect("a url"),
+        "shared",
+        "federated@example.com",
+    );
+
+    let first = accounts
+        .provision(&local, ProvisionPolicy::default())
+        .await
+        .expect("the local identity");
+    let second = accounts
+        .provision(&federated, ProvisionPolicy::default())
+        .await
+        .expect("the federated identity");
+
+    assert_ne!(
+        first, second,
+        "one subject under two issuers is two identities"
+    );
+    assert_eq!(account_count(&pool).await, 2);
+}
+
+#[tokio::test]
+async fn linking_by_email_joins_an_existing_account() {
+    let Some(pool) = migrated("identity_by_email").await else {
+        return;
+    };
+    let accounts = PostgresAccounts::new(pool.clone());
+    let local = an_identity(Issuer::Local, "sub-1", "person@example.com");
+    let federated = an_identity(
+        Issuer::federated("https://id.example").expect("a url"),
+        "sub-2",
+        "person@example.com",
+    );
+
+    let first = accounts
+        .provision(&local, ProvisionPolicy::default())
+        .await
+        .expect("the local identity");
+    let second = accounts
+        .provision(
+            &federated,
+            ProvisionPolicy {
+                auto_provision: false,
+                link_by_email: true,
+            },
+        )
+        .await
+        .expect("the federated identity joins by email");
+
+    assert_eq!(first, second);
+    assert_eq!(account_count(&pool).await, 1);
+}
+
+#[tokio::test]
+async fn an_unknown_identity_is_refused_when_provisioning_is_off() {
+    let Some(pool) = migrated("identity_closed").await else {
+        return;
+    };
+    let accounts = PostgresAccounts::new(pool.clone());
+    let identity = an_identity(Issuer::Local, "sub-1", "stranger@example.com");
+
+    let refused = accounts
+        .provision(
+            &identity,
+            ProvisionPolicy {
+                auto_provision: false,
+                link_by_email: false,
+            },
+        )
+        .await;
+
+    assert!(matches!(refused, Err(AccountError::NotProvisioned)));
+    assert_eq!(account_count(&pool).await, 0, "nothing was left behind");
 }
