@@ -43,7 +43,7 @@ impl SmtpMailer {
     }
 
     pub fn reset_link(&self, token: &ResetToken) -> String {
-        format!("{}/auth/reset?token={}", self.base_url, token.exposed())
+        format!("{}/reset?token={}", self.base_url, token.exposed())
     }
 
     fn compose(&self, to: &Email, token: &ResetToken) -> Result<Message, MailError> {
@@ -98,7 +98,7 @@ mod tests {
 
         assert_eq!(
             mailer().reset_link(&token),
-            "https://app.example.com/auth/reset?token=ct_pr_abc",
+            "https://app.example.com/reset?token=ct_pr_abc",
             "the trailing slash of the base url is not doubled"
         );
     }

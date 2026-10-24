@@ -1,3 +1,12 @@
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
+
+WORKDIR /web
+RUN corepack enable && corepack prepare pnpm@10 --activate
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY web/ ./
+RUN pnpm build
+
 FROM --platform=$BUILDPLATFORM rust:1-slim-bookworm AS build
 
 ARG TARGETARCH
@@ -33,9 +42,11 @@ RUN set -eu; \
 FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
 COPY --from=build /comettrace /usr/local/bin/comettrace
+COPY --from=web /web/dist /usr/local/share/comettrace/web
 
 ENV PATH=/usr/local/bin:/usr/bin:/bin
 ENV RUST_LOG=info
+ENV COMETTRACE_WEB_ROOT=/usr/local/share/comettrace/web
 EXPOSE 4317 4318
 
 ENTRYPOINT ["/usr/local/bin/comettrace"]

@@ -1,7 +1,7 @@
 use core::future::Future;
 
 use crate::clock::UnixSeconds;
-use crate::credential::Password;
+use crate::credential::{Email, Password};
 use crate::identity::AccountId;
 use crate::secret::SessionToken;
 use crate::tenant::TenantId;
@@ -40,9 +40,10 @@ impl SessionLifetime {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
     pub account: AccountId,
+    pub email: Email,
     pub org: Option<TenantId>,
     pub expires_at: UnixSeconds,
 }

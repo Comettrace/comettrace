@@ -2,6 +2,7 @@ mod config;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,7 +11,7 @@ use axum::Router;
 use clap::{Parser, Subcommand, ValueEnum};
 use comettrace_api::{
     SessionCookie, SignInMethods, auth_router, explore_router, health_router, me_router,
-    methods_router, oidc_router, reset_router, router, trace_server,
+    methods_router, oidc_router, reset_router, router, trace_server, web_router,
 };
 use comettrace_core::{
     AccountId, AuthSources, Clock, DecompressedBytes, Email, Explore, FederatedSignIn, Ingest,
@@ -410,6 +411,7 @@ async fn main() -> anyhow::Result<()> {
         config.http_address,
         Arc::clone(&gateway),
         identity,
+        web_routes(&config),
     ));
     let grpc = tokio::spawn(serve_grpc(config.grpc_address, gateway));
 
@@ -693,15 +695,34 @@ async fn serve_http(
     address: SocketAddr,
     gateway: Arc<Gateway>,
     identity: Router,
+    web: Router,
 ) -> anyhow::Result<()> {
     let listener = TcpListener::bind(address)
         .await
         .with_context(|| format!("binding the OTLP HTTP listener on {address}"))?;
-    let served = router(gateway).merge(identity).merge(health_router());
+    let served = router(gateway)
+        .merge(identity)
+        .merge(health_router())
+        .merge(web);
     axum::serve(listener, served)
         .with_graceful_shutdown(shutdown())
         .await
         .context("serving OTLP over HTTP")
+}
+
+fn web_routes(config: &Config) -> Router {
+    let Some(root) = config.web_root.as_deref().map(Path::new) else {
+        return Router::new();
+    };
+    if !root.join("index.html").is_file() {
+        tracing::warn!(
+            root = %root.display(),
+            "web_root carries no index.html, so nothing is served at the root"
+        );
+        return Router::new();
+    }
+    tracing::info!(root = %root.display(), "the web application is served");
+    web_router(root)
 }
 
 async fn serve_grpc(address: SocketAddr, gateway: Arc<Gateway>) -> anyhow::Result<()> {

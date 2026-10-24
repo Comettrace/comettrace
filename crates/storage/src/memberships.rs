@@ -84,8 +84,9 @@ impl PostgresMemberships {
 impl Memberships for PostgresMemberships {
     async fn of(&self, account: AccountId) -> Result<Vec<Membership>, WhoamiError> {
         let rows = sqlx::query(
-            "SELECT org_id AS org_id, role::text AS role FROM org_members \
-             WHERE account_id = $1 ORDER BY org_id",
+            "SELECT m.org_id AS org_id, o.name AS name, m.role::text AS role \
+             FROM org_members m JOIN orgs o ON o.id = m.org_id \
+             WHERE m.account_id = $1 ORDER BY o.name, m.org_id",
         )
         .bind(account.as_uuid())
         .fetch_all(&self.pool)
@@ -101,6 +102,7 @@ impl Memberships for PostgresMemberships {
                 read_role(&spelling)
                     .map(|role| Membership {
                         org: TenantId::new(row.get("org_id")),
+                        name: row.get::<String, _>("name").into(),
                         role,
                     })
                     .ok_or_else(|| {

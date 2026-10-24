@@ -1,6 +1,7 @@
 use core::fmt;
 use core::future::Future;
 
+use crate::credential::Email;
 use crate::identity::AccountId;
 use crate::secret::SessionToken;
 use crate::session::{SessionError, SessionStore};
@@ -33,9 +34,10 @@ impl fmt::Display for OrgRole {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Membership {
     pub org: TenantId,
+    pub name: Box<str>,
     pub role: OrgRole,
 }
 
@@ -84,6 +86,7 @@ impl<T: Memberships + Send + Sync> Memberships for std::sync::Arc<T> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Who {
     pub account: AccountId,
+    pub email: Email,
     pub active_org: Option<TenantId>,
     pub memberships: Vec<Membership>,
 }
@@ -124,6 +127,7 @@ where
         let memberships = self.memberships.of(session.account).await?;
         Ok(Who {
             account: session.account,
+            email: session.email,
             active_org: session.org,
             memberships,
         })
@@ -135,6 +139,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::{Membership, OrgRole, Who};
+    use crate::credential::Email;
     use crate::identity::AccountId;
     use crate::tenant::TenantId;
 
@@ -142,9 +147,18 @@ mod tests {
         TenantId::new(Uuid::from_u128(seed))
     }
 
+    fn a_membership(org: TenantId, role: OrgRole) -> Membership {
+        Membership {
+            org,
+            name: "Acme".into(),
+            role,
+        }
+    }
+
     fn who(memberships: Vec<Membership>) -> Who {
         Who {
             account: AccountId::new(Uuid::from_u128(1)),
+            email: Email::try_from("person@example.com").expect("an address"),
             active_org: None,
             memberships,
         }
@@ -169,14 +183,8 @@ mod tests {
     #[test]
     fn a_role_is_read_from_the_organisation_it_belongs_to() {
         let person = who(vec![
-            Membership {
-                org: an_org(1),
-                role: OrgRole::Owner,
-            },
-            Membership {
-                org: an_org(2),
-                role: OrgRole::Member,
-            },
+            a_membership(an_org(1), OrgRole::Owner),
+            a_membership(an_org(2), OrgRole::Member),
         ]);
 
         assert_eq!(person.role_in(an_org(1)), Some(OrgRole::Owner));
@@ -186,10 +194,7 @@ mod tests {
 
     #[test]
     fn acting_needs_a_membership_in_that_very_organisation() {
-        let person = who(vec![Membership {
-            org: an_org(1),
-            role: OrgRole::Owner,
-        }]);
+        let person = who(vec![a_membership(an_org(1), OrgRole::Owner)]);
 
         assert!(person.may_act_in(an_org(1), OrgRole::Owner));
         assert!(
@@ -200,10 +205,7 @@ mod tests {
 
     #[test]
     fn a_member_cannot_act_where_an_admin_is_required() {
-        let person = who(vec![Membership {
-            org: an_org(1),
-            role: OrgRole::Member,
-        }]);
+        let person = who(vec![a_membership(an_org(1), OrgRole::Member)]);
 
         assert!(person.may_act_in(an_org(1), OrgRole::Member));
         assert!(!person.may_act_in(an_org(1), OrgRole::Admin));

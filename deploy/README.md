@@ -10,7 +10,8 @@ docker compose up --build --detach
 
 The server waits for all three stores to report healthy, applies the
 Postgres and ClickHouse migrations itself, and then listens on 4317 for
-OTLP over gRPC and 4318 for OTLP over HTTP.
+OTLP over gRPC and 4318 for everything else: OTLP over HTTP, the API, and
+the web application at <http://localhost:4318>.
 
 ## Make it usable
 
@@ -97,6 +98,7 @@ its field. `COMETTRACE_SPANS__RETENTION_DAYS` is `spans.retention_days`.
 | `OTLP_GRPC_PORT` | `4317` | Host port for OTLP over gRPC |
 | `OTLP_HTTP_PORT` | `4318` | Host port for OTLP over HTTP |
 | `RUST_LOG` | `info` | Log filter |
+| `COMETTRACE_WEB_ROOT` | set in the image | Where the built web application lives |
 | `COMETTRACE_IMAGE` | built locally | A published image to run instead |
 
 ## Signing in with an identity provider instead

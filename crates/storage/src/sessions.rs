@@ -1,5 +1,5 @@
 use comettrace_core::{
-    AccountId, Clock, SESSION_PREFIX, Session, SessionError, SessionLifetime, SessionStore,
+    AccountId, Clock, Email, SESSION_PREFIX, Session, SessionError, SessionLifetime, SessionStore,
     SessionToken, TenantId, UnixSeconds,
 };
 use sqlx::{PgPool, Row};
@@ -64,9 +64,10 @@ impl<C: Clock + Send + Sync> SessionStore for PostgresSessions<C> {
     async fn resolve(&self, token: &SessionToken) -> Result<Session, SessionError> {
         let now = self.clock.now();
         let row = sqlx::query(
-            "SELECT account_id AS account_id, org_id AS org_id, created_at AS created_at \
-             FROM sessions \
-             WHERE hash = $1 AND revoked_at IS NULL AND expires_at > $2",
+            "SELECT s.account_id AS account_id, a.email AS email, \
+                    s.org_id AS org_id, s.created_at AS created_at \
+             FROM sessions s JOIN accounts a ON a.id = s.account_id \
+             WHERE s.hash = $1 AND s.revoked_at IS NULL AND s.expires_at > $2",
         )
         .bind(token.hash().as_bytes().as_slice())
         .bind(seconds_to_nanos(now))
@@ -86,8 +87,11 @@ impl<C: Clock + Send + Sync> SessionStore for PostgresSessions<C> {
             .await
             .map_err(|_| SessionError::StoreUnreachable)?;
 
+        let email = Email::try_from(row.get::<String, _>("email").as_str())
+            .map_err(|_| SessionError::StoreUnreachable)?;
         Ok(Session {
             account: AccountId::new(row.get("account_id")),
+            email,
             org: row
                 .get::<Option<uuid::Uuid>, _>("org_id")
                 .map(TenantId::new),
