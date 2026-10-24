@@ -9,8 +9,8 @@ use anyhow::Context;
 use axum::Router;
 use clap::{Parser, Subcommand, ValueEnum};
 use comettrace_api::{
-    SessionCookie, auth_router, health_router, me_router, oidc_router, reset_router, router,
-    trace_server,
+    SessionCookie, SignInMethods, auth_router, health_router, me_router, methods_router,
+    oidc_router, reset_router, router, trace_server,
 };
 use comettrace_core::{
     AccountId, AuthSources, Clock, DecompressedBytes, Email, FederatedSignIn, Ingest, IngestKey,
@@ -566,11 +566,15 @@ type Federated =
     FederatedSignIn<OidcProvider, PostgresFlows<SystemClock>, PostgresAccounts, Arc<Sessions>>;
 
 async fn identity_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Result<Router> {
+    let offered = methods_router(SignInMethods {
+        local_password: config.local_password && pool.is_some(),
+        oidc: config.oidc.is_some() && pool.is_some(),
+    });
     let Some(pool) = pool else {
         if config.local_password || config.oidc.is_some() {
             tracing::warn!("no control plane is configured, so nobody can sign in");
         }
-        return Ok(Router::new());
+        return Ok(offered);
     };
 
     let cookie = SessionCookie {
@@ -587,7 +591,7 @@ async fn identity_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Resu
         Arc::clone(&sessions),
         PostgresMemberships::new(pool.clone()),
     ));
-    let mut routes = me_router(whoami);
+    let mut routes = offered.merge(me_router(whoami));
 
     if config.local_password {
         let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
