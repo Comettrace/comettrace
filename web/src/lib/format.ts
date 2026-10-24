@@ -8,3 +8,4 @@ export function dur(ms: number) {
   return `${m} m ${Math.round((ms % 60000) / 1000)} s`
 }
 export const shortId = (id: string) => `${id.slice(0, 8)}…${id.slice(-4)}`
+export const stamp = (ms: number) => `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`
