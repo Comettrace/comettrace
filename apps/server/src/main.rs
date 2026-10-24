@@ -7,18 +7,20 @@ use std::time::Duration;
 
 use anyhow::Context;
 use axum::Router;
-use clap::{Parser, Subcommand};
-use comettrace_api::{SessionCookie, auth_router, oidc_router, reset_router, router, trace_server};
+use clap::{Parser, Subcommand, ValueEnum};
+use comettrace_api::{
+    SessionCookie, auth_router, me_router, oidc_router, reset_router, router, trace_server,
+};
 use comettrace_core::{
-    AuthSources, Clock, DecompressedBytes, FederatedSignIn, Ingest, IngestKey, NoProvider,
+    AuthSources, Clock, DecompressedBytes, FederatedSignIn, Ingest, IngestKey, NoProvider, OrgRole,
     ProvisionPolicy, ResetPassword, SessionLifetime, SignIn, TenantDirectory, TenantId, UnknownKey,
-    UsageMeter, UsageReader,
+    UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink,
-    OidcProvider, OidcSettings, PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresResets,
-    PostgresSessions, RedisMeter, SmtpMailer, StaticDirectory, StaticQuota, SystemClock,
-    load_allowances,
+    OidcProvider, OidcSettings, PostgresAccounts, PostgresDirectory, PostgresFlows,
+    PostgresMemberships, PostgresResets, PostgresSessions, RedisMeter, SmtpMailer, StaticDirectory,
+    StaticQuota, SystemClock, load_allowances,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -78,17 +80,49 @@ enum Command {
         #[arg(long)]
         prefix: String,
     },
+    /// Create an organisation and make an existing account its owner
+    CreateOrg {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        owner: String,
+    },
+    /// Give an existing account a role in an organisation
+    GrantRole {
+        #[arg(long)]
+        org: Uuid,
+        #[arg(long)]
+        member: String,
+        #[arg(long)]
+        role: Role,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Role {
+    Owner,
+    Admin,
+    Member,
+}
+
+impl From<Role> for OrgRole {
+    fn from(role: Role) -> Self {
+        match role {
+            Role::Owner => Self::Owner,
+            Role::Admin => Self::Admin,
+            Role::Member => Self::Member,
+        }
+    }
 }
 
 async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
     let pool = control_plane_pool(config)
         .await?
         .context("this command needs a control plane, so set database_url")?;
-    let directory = PostgresDirectory::new(pool, SystemClock);
 
     match command {
         Command::IssueKey { org, project } => {
-            let key = directory
+            let key = PostgresDirectory::new(pool, SystemClock)
                 .issue(TenantId::new(org), project)
                 .await
                 .context("issuing the key")?;
@@ -96,7 +130,7 @@ async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
             println!("{}", key.exposed());
         }
         Command::RevokeKey { prefix } => {
-            let stopped = directory
+            let stopped = PostgresDirectory::new(pool, SystemClock)
                 .revoke(&prefix)
                 .await
                 .context("revoking the key")?;
@@ -105,6 +139,23 @@ async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
             } else {
                 eprintln!("{prefix} matched no live key.");
             }
+        }
+        Command::CreateOrg { name, owner } => {
+            let org = PostgresMemberships::new(pool)
+                .found(&name, &owner)
+                .await
+                .context("creating the organisation")?;
+            eprintln!("{owner} now owns {name}. Issue its first key with:");
+            eprintln!("  comettrace issue-key --org {org}");
+            println!("{org}");
+        }
+        Command::GrantRole { org, member, role } => {
+            let role = OrgRole::from(role);
+            PostgresMemberships::new(pool)
+                .grant(TenantId::new(org), &member, role)
+                .await
+                .context("granting the role")?;
+            eprintln!("{member} is now {role} of {org}.");
         }
     }
     Ok(())
@@ -239,6 +290,7 @@ type LocalSource = LocalPasswordProvider<Argon2Hasher>;
 type Sessions = PostgresSessions<SystemClock>;
 type PasswordSignIn = SignIn<LocalSource, NoProvider, PostgresAccounts, Arc<Sessions>>;
 type Resets = ResetPassword<PostgresResets<SystemClock>, Argon2Hasher, SmtpMailer>;
+type Me = Whoami<Arc<Sessions>, PostgresMemberships>;
 type Federated =
     FederatedSignIn<OidcProvider, PostgresFlows<SystemClock>, PostgresAccounts, Arc<Sessions>>;
 
@@ -260,7 +312,11 @@ async fn identity_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Resu
         SystemClock,
         SessionLifetime::default(),
     ));
-    let mut routes = Router::new();
+    let whoami: Arc<Me> = Arc::new(Whoami::new(
+        Arc::clone(&sessions),
+        PostgresMemberships::new(pool.clone()),
+    ));
+    let mut routes = me_router(whoami);
 
     if config.local_password {
         let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
