@@ -185,8 +185,10 @@ async fn expire_if_new(
 }
 
 fn tenant_of(key: &str) -> Option<TenantId> {
-    key.split(':')
-        .nth(1)?
+    let mut segments = key.rsplit(':');
+    segments.next()?;
+    segments
+        .next()?
         .parse::<uuid::Uuid>()
         .ok()
         .map(TenantId::new)
@@ -206,5 +208,25 @@ impl<C: Clock + Send + Sync> UsageReader for RedisMeter<C> {
                 DecompressedBytes::default()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tenant_of;
+
+    #[test]
+    fn a_key_names_its_tenant_whatever_the_prefix() {
+        let plain = "usage:2f1e8a4c-0000-4000-8000-000000000001:202311";
+        let nested = "test:rollup:2f1e8a4c-0000-4000-8000-000000000001:2023111422";
+
+        assert_eq!(tenant_of(plain), tenant_of(nested));
+        assert!(tenant_of(plain).is_some());
+    }
+
+    #[test]
+    fn a_key_without_a_tenant_names_nobody() {
+        assert_eq!(tenant_of("usage:202311"), None);
+        assert_eq!(tenant_of("usage"), None);
     }
 }
