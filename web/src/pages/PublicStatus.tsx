@@ -1,0 +1,15 @@
+import { StatusPageView } from '@/components/cmt/StatusPageView'
+import { MockData } from '@/components/cmt/MockData'
+import { useStatusConfig } from '@/data/status-page'
+
+export function PublicStatus() {
+  const config = useStatusConfig()
+  return (
+    <>
+      <div className="flex justify-center bg-background px-4 py-2">
+        <MockData />
+      </div>
+      <StatusPageView c={config} />
+    </>
+  )
+}

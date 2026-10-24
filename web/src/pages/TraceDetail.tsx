@@ -1,0 +1,90 @@
+import { CircleX, Copy, ScrollText, X } from 'lucide-react'
+import { useState } from 'react'
+import { Link, useParams } from '@/lib/router'
+import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { ServiceDot, svcBg } from '@/components/cmt/bits'
+import { useSpans, useTraces } from '@/data/traces'
+import { cn } from '@/lib/utils'
+import { NotFound } from './NotFound'
+
+export function TraceDetail() {
+  const { id } = useParams()
+  const traces = useTraces()
+  const t = traces.find((x) => x.id === id) ?? traces[0]
+  const spans = useSpans(t)
+  const [sel, setSel] = useState(spans.findIndex((s) => s.err) >= 0 ? spans.findIndex((s) => s.err) : 0)
+  const [panel, setPanel] = useState(true)
+  if (!t) return <NotFound />
+  const s = spans[sel]
+  const services = [...new Set(spans.map((x) => x.svc))]
+  return (
+    <>
+      <nav aria-label="Breadcrumb" className="text-control"><Link to="/traces">Traces</Link><span className="text-faint-foreground"> / </span><span className="font-mono">{t.id.slice(0, 8)}…</span></nav>
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-title">{t.root}</h1>
+        {t.errors ? <Badge variant="destructive"><CircleX />{t.errors} errors</Badge> : <Badge variant="success">OK</Badge>}
+        <span className="flex-1" />
+        <Button size="sm" onClick={() => { void navigator.clipboard?.writeText(t.id); toast.success('Trace id copied') }}><Copy />Copy id</Button>
+        <Button asChild size="sm"><Link to="/logs"><ScrollText />Logs for this trace</Link></Button>
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-control text-muted-foreground">
+        <span>Duration <span className="font-mono font-semibold text-foreground">{t.dur}</span></span><span>Spans <span className="font-mono text-foreground">{t.spans}</span></span><span>Services <span className="font-mono text-foreground">{services.length}</span></span><span>Started <span className="font-mono text-foreground">2026-10-20 {t.start}</span></span><span className="font-mono">{t.id}</span>
+      </div>
+      <div className="flex flex-wrap gap-3 text-caption text-muted-foreground">{services.map((x) => <span key={x} className="inline-flex items-center gap-1.5"><ServiceDot name={x} />{x}</span>)}</div>
+      <div className="flex min-h-[480px] overflow-hidden rounded-lg border">
+        <div className="min-w-0 flex-1 overflow-x-auto">
+          <div className="grid min-w-[720px] grid-cols-[minmax(240px,340px)_minmax(0,1fr)_84px] border-b bg-background text-caption font-semibold text-muted-foreground">
+            <span className="px-3 py-2">Span</span>
+            <span className="grid grid-cols-4 border-l border-border-subtle px-0 py-2 font-mono font-normal">{['0', '25 %', '50 %', '75 %'].map((x) => <span key={x} className="pl-1.5">{x}</span>)}</span>
+            <span className="px-3 py-2 text-right">Duration</span>
+          </div>
+          <div role="tree" aria-label="Spans" className="min-w-[720px]">
+            {spans.map((x, i) => (
+              <button
+                key={x.id}
+                type="button"
+                role="treeitem"
+                aria-level={x.depth + 1}
+                aria-selected={i === sel}
+                onClick={() => { setSel(i); setPanel(true) }}
+                className={cn('grid h-[30px] w-full cursor-pointer grid-cols-[minmax(240px,340px)_minmax(0,1fr)_84px] items-center border-b border-border-subtle text-left text-control hover:bg-row-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring', i === sel && 'bg-accent-subtle')}
+              >
+                <span className={cn('flex min-w-0 items-center gap-1.5 pr-2', x.err && 'text-destructive-text')} style={{ paddingLeft: 12 + x.depth * 16 }}>
+                  <ServiceDot name={x.svc} />{x.err ? <CircleX className="size-3 shrink-0" aria-label="Error" /> : null}<span className="truncate">{x.name}</span>
+                </span>
+                <span className="relative h-[30px] border-l border-border-subtle bg-[linear-gradient(to_right,var(--border-subtle)_1px,transparent_1px)] bg-[length:25%_100%]">
+                  <span className={cn('absolute top-[9px] h-3 min-w-[2px] rounded-[2px]', svcBg(x.svc), x.err && 'ring-1 ring-destructive ring-offset-2 ring-offset-background')} style={{ left: `${x.offset}%`, width: `${x.width}%` }} />
+                </span>
+                <span className="pr-3 text-right font-mono">{x.dur}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        {panel ? (
+          <aside className="flex w-[400px] shrink-0 flex-col border-l bg-card max-lg:hidden" aria-label="Span details">
+            <div className="flex items-center gap-2 border-b px-4 py-3">
+              <ServiceDot name={s.svc} /><span className="flex-1 truncate font-semibold">{s.name}</span>
+              <Button variant="ghost" size="icon-sm" aria-label="Close details" onClick={() => setPanel(false)}><X /></Button>
+            </div>
+            <div className="flex flex-col gap-3 overflow-y-auto p-4">
+              <div className="flex flex-wrap gap-2"><Badge variant="outline" mono>{s.kind}</Badge>{s.err ? <Badge variant="destructive">ERROR</Badge> : <Badge variant="success">OK</Badge>}<Badge variant="outline" mono>{s.dur}</Badge></div>
+              {s.err ? <div className="rounded-md border border-destructive-border bg-destructive-subtle px-3 py-2 font-mono text-caption text-destructive-text">PspTimeoutError: deadline exceeded after 960ms<br />  at charge (psp/client.ts:88)<br />  at Payments.capture (payments/service.ts:142)</div> : null}
+              <h3 className="m-0 text-caption font-semibold uppercase tracking-[.05em] text-muted-foreground">Attributes</h3>
+              <dl className="m-0 grid grid-cols-[minmax(120px,42%)_1fr] gap-x-3 text-caption">
+                {s.attrs.map(([k, v]) => (
+                  <div key={k} className="contents">
+                    <dt className="truncate border-b border-border-subtle py-1.5 font-mono text-muted-foreground">{k}</dt>
+                    <dd className="m-0 break-all border-b border-border-subtle py-1.5 font-mono">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+              <span className="font-mono text-[11px] text-faint-foreground">span_id {s.id}</span>
+            </div>
+          </aside>
+        ) : null}
+      </div>
+    </>
+  )
+}
