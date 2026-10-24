@@ -1,6 +1,6 @@
 # 0003. API keys are found by a unique clear prefix and verified with argon2
 
-Status: accepted
+Status: superseded by 0007
 Date: 2026-10-24
 
 ## Context

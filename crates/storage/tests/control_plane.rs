@@ -1,8 +1,10 @@
 use comettrace_core::{
-    DecompressedBytes, Email, Issuer, ProvisionPolicy, ResolvedIdentity, Subject,
+    DecompressedBytes, Email, IngestKey, Issuer, ProvisionPolicy, ResolvedIdentity, SecretHash,
+    Subject, TenantDirectory, TenantId, UnknownKey,
 };
 use comettrace_storage::{
-    AccountError, Allowance, CONTROL_PLANE, OVERAGE_FEATURE, PostgresAccounts, SELF_HOSTED_PLAN,
+    AccountError, Allowance, CONTROL_PLANE, FixedClock, OVERAGE_FEATURE, PostgresAccounts,
+    PostgresDirectory, SELF_HOSTED_PLAN,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
@@ -497,4 +499,143 @@ async fn an_unknown_identity_is_refused_when_provisioning_is_off() {
 
     assert!(matches!(refused, Err(AccountError::NotProvisioned)));
     assert_eq!(account_count(&pool).await, 0, "nothing was left behind");
+}
+
+async fn a_key(pool: &PgPool, org: uuid::Uuid, prefix: &str, secret: Option<&str>) -> uuid::Uuid {
+    let id = uuid::Uuid::new_v4();
+    let digest = secret.map(|plain| SecretHash::of(plain).as_bytes().to_vec());
+    sqlx::query(
+        "INSERT INTO api_keys (id, org_id, prefix, hash, secret_digest) \
+         VALUES ($1, $2, $3, 'superseded', $4)",
+    )
+    .bind(id)
+    .bind(org)
+    .bind(prefix)
+    .bind(digest)
+    .execute(pool)
+    .await
+    .expect("a key");
+    id
+}
+
+async fn last_seen(pool: &PgPool, key: uuid::Uuid) -> Option<i64> {
+    sqlx::query("SELECT last_used_at AS last_used_at FROM api_keys WHERE id = $1")
+        .bind(key)
+        .fetch_one(pool)
+        .await
+        .expect("reading the sighting")
+        .get("last_used_at")
+}
+
+#[tokio::test]
+async fn a_live_key_resolves_to_its_organisation() {
+    let Some(pool) = migrated("keys_live").await else {
+        return;
+    };
+    let org = seeded_org(&pool).await;
+    a_key(&pool, org, "ct_live_abc", Some("the-secret")).await;
+    let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));
+
+    let resolved = directory
+        .resolve(&IngestKey::from_plaintext("ct_live_abc.the-secret"))
+        .await;
+
+    assert_eq!(resolved, Ok(TenantId::new(org)));
+}
+
+#[tokio::test]
+async fn a_wrong_secret_an_unknown_prefix_and_a_malformed_key_all_refuse() {
+    let Some(pool) = migrated("keys_refused").await else {
+        return;
+    };
+    let org = seeded_org(&pool).await;
+    a_key(&pool, org, "ct_live_abc", Some("the-secret")).await;
+    let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));
+
+    for candidate in [
+        "ct_live_abc.wrong-secret",
+        "ct_live_zzz.the-secret",
+        "ct_live_abc",
+    ] {
+        assert_eq!(
+            directory
+                .resolve(&IngestKey::from_plaintext(candidate))
+                .await,
+            Err(UnknownKey),
+            "{candidate} should be refused"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_revoked_key_no_longer_resolves() {
+    let Some(pool) = migrated("keys_revoked").await else {
+        return;
+    };
+    let org = seeded_org(&pool).await;
+    let key = a_key(&pool, org, "ct_live_abc", Some("the-secret")).await;
+    sqlx::query("UPDATE api_keys SET revoked_at = 1 WHERE id = $1")
+        .bind(key)
+        .execute(&pool)
+        .await
+        .expect("the revocation");
+    let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));
+
+    assert_eq!(
+        directory
+            .resolve(&IngestKey::from_plaintext("ct_live_abc.the-secret"))
+            .await,
+        Err(UnknownKey)
+    );
+}
+
+#[tokio::test]
+async fn a_key_left_without_a_digest_cannot_authenticate() {
+    let Some(pool) = migrated("keys_no_digest").await else {
+        return;
+    };
+    let org = seeded_org(&pool).await;
+    a_key(&pool, org, "ct_live_abc", None).await;
+    let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));
+
+    assert_eq!(
+        directory
+            .resolve(&IngestKey::from_plaintext("ct_live_abc.the-secret"))
+            .await,
+        Err(UnknownKey)
+    );
+}
+
+#[tokio::test]
+async fn a_sighting_is_recorded_once_then_left_alone_for_a_while() {
+    let Some(pool) = migrated("keys_sighting").await else {
+        return;
+    };
+    let org = seeded_org(&pool).await;
+    let key = a_key(&pool, org, "ct_live_abc", Some("the-secret")).await;
+    let ingest = IngestKey::from_plaintext("ct_live_abc.the-secret");
+    let now = 1_700_000_000;
+
+    assert_eq!(last_seen(&pool, key).await, None);
+    PostgresDirectory::new(pool.clone(), FixedClock::at(now))
+        .resolve(&ingest)
+        .await
+        .expect("the first use");
+    let first = last_seen(&pool, key).await;
+
+    PostgresDirectory::new(pool.clone(), FixedClock::at(now + 60))
+        .resolve(&ingest)
+        .await
+        .expect("a use inside the gap");
+    let unchanged = last_seen(&pool, key).await;
+
+    PostgresDirectory::new(pool.clone(), FixedClock::at(now + 400))
+        .resolve(&ingest)
+        .await
+        .expect("a use past the gap");
+    let moved = last_seen(&pool, key).await;
+
+    assert!(first.is_some());
+    assert_eq!(unchanged, first, "a sighting inside the gap costs no write");
+    assert_ne!(moved, first, "a sighting past the gap is recorded");
 }
