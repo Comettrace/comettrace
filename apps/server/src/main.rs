@@ -182,115 +182,135 @@ async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
         .context("this command needs a control plane, so set database_url")?;
 
     match command {
-        Command::IssueKey { org, project } => {
-            let key = PostgresDirectory::new(pool, SystemClock)
-                .issue(TenantId::new(org), project)
-                .await
-                .context("issuing the key")?;
-            eprintln!("This key is shown once. Store it now; it cannot be read back.");
-            println!("{}", key.exposed());
-        }
-        Command::RevokeKey { prefix } => {
-            let stopped = PostgresDirectory::new(pool, SystemClock)
-                .revoke(&prefix)
-                .await
-                .context("revoking the key")?;
-            if stopped {
-                eprintln!("{prefix} will not authenticate the next payload.");
-            } else {
-                eprintln!("{prefix} matched no live key.");
-            }
-        }
-        Command::Bootstrap { email, org } => {
-            let memberships = PostgresMemberships::new(pool.clone());
-            if let Some(existing) = memberships
-                .founded()
-                .await
-                .context("looking for an organisation")?
-            {
-                eprintln!(
-                    "This deployment already holds an organisation ({existing}), \
-                     so nothing was changed."
-                );
-                return Ok(());
-            }
-
-            let email = Email::try_from(email.as_str()).context("reading the address")?;
-            let resets = PostgresResets::new(pool.clone(), SystemClock);
-            let account = match resets
-                .account_for(&email)
-                .await
-                .context("looking the account up")?
-            {
-                Some(account) => account,
-                None => {
-                    let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
-                    let locked = hasher.locked().context("locking the new account")?;
-                    PostgresAccounts::new(pool.clone())
-                        .create(&email, &locked)
-                        .await
-                        .context("creating the account")?
-                }
-            };
-            let tenant = memberships
-                .found(&org, email.as_str())
-                .await
-                .context("creating the organisation")?;
-            let token = invite(&pool, account).await?;
-
-            eprintln!("{} owns {org} ({tenant}).", email.as_str());
-            eprintln!("Draw its first ingest key with:");
-            eprintln!("  comettrace issue-key --org {tenant}");
-            print_the_way_in(&token);
-        }
-        Command::CreateAccount { email } => {
-            let email = Email::try_from(email.as_str()).context("reading the address")?;
-            let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
-            let locked = hasher.locked().context("locking the new account")?;
-            let account = PostgresAccounts::new(pool.clone())
-                .create(&email, &locked)
-                .await
-                .context("creating the account")?;
-            let token = invite(&pool, account).await?;
-            eprintln!(
-                "{} cannot sign in until it carries a password.",
-                email.as_str()
-            );
-            print_the_way_in(&token);
-        }
-        Command::ResetPassword { email } => {
-            let email = Email::try_from(email.as_str()).context("reading the address")?;
-            let resets = PostgresResets::new(pool.clone(), SystemClock);
-            let account = resets
-                .account_for(&email)
-                .await
-                .context("looking the account up")?
-                .with_context(|| format!("no account carries {}", email.as_str()))?;
-            let token = invite(&pool, account).await?;
-            eprintln!(
-                "Every session of {} ends once the password changes.",
-                email.as_str()
-            );
-            print_the_way_in(&token);
-        }
-        Command::CreateOrg { name, owner } => {
-            let org = PostgresMemberships::new(pool)
-                .found(&name, &owner)
-                .await
-                .context("creating the organisation")?;
-            eprintln!("{owner} now owns {name}. Issue its first key with:");
-            eprintln!("  comettrace issue-key --org {org}");
-            println!("{org}");
-        }
+        Command::IssueKey { org, project } => issue_key(pool, org, project).await,
+        Command::RevokeKey { prefix } => revoke_key(pool, &prefix).await,
+        Command::Bootstrap { email, org } => bootstrap(pool, &email, &org).await,
+        Command::CreateAccount { email } => create_account(pool, &email).await,
+        Command::ResetPassword { email } => reset_password(pool, &email).await,
+        Command::CreateOrg { name, owner } => create_org(pool, &name, &owner).await,
         Command::GrantRole { org, member, role } => {
-            let role = OrgRole::from(role);
-            PostgresMemberships::new(pool)
-                .grant(TenantId::new(org), &member, role)
-                .await
-                .context("granting the role")?;
-            eprintln!("{member} is now {role} of {org}.");
+            grant_role(pool, org, &member, role.into()).await
         }
     }
+}
+
+async fn issue_key(pool: PgPool, org: Uuid, project: Option<Uuid>) -> anyhow::Result<()> {
+    let key = PostgresDirectory::new(pool, SystemClock)
+        .issue(TenantId::new(org), project)
+        .await
+        .context("issuing the key")?;
+    eprintln!("This key is shown once. Store it now; it cannot be read back.");
+    println!("{}", key.exposed());
+    Ok(())
+}
+
+async fn revoke_key(pool: PgPool, prefix: &str) -> anyhow::Result<()> {
+    let stopped = PostgresDirectory::new(pool, SystemClock)
+        .revoke(prefix)
+        .await
+        .context("revoking the key")?;
+    if stopped {
+        eprintln!("{prefix} will not authenticate the next payload.");
+    } else {
+        eprintln!("{prefix} matched no live key.");
+    }
+    Ok(())
+}
+
+async fn bootstrap(pool: PgPool, email: &str, org: &str) -> anyhow::Result<()> {
+    let memberships = PostgresMemberships::new(pool.clone());
+    if let Some(existing) = memberships
+        .founded()
+        .await
+        .context("looking for an organisation")?
+    {
+        eprintln!(
+            "This deployment already holds an organisation ({existing}), \
+             so nothing was changed."
+        );
+        return Ok(());
+    }
+
+    let email = Email::try_from(email).context("reading the address")?;
+    let account = account_for_or_create(&pool, &email).await?;
+    let tenant = memberships
+        .found(org, email.as_str())
+        .await
+        .context("creating the organisation")?;
+    let token = invite(&pool, account).await?;
+
+    eprintln!("{} owns {org} ({tenant}).", email.as_str());
+    eprintln!("Draw its first ingest key with:");
+    eprintln!("  comettrace issue-key --org {tenant}");
+    print_the_way_in(&token);
+    Ok(())
+}
+
+async fn account_for_or_create(pool: &PgPool, email: &Email) -> anyhow::Result<AccountId> {
+    let found = PostgresResets::new(pool.clone(), SystemClock)
+        .account_for(email)
+        .await
+        .context("looking the account up")?;
+    if let Some(account) = found {
+        return Ok(account);
+    }
+    create_locked_account(pool, email).await
+}
+
+async fn create_locked_account(pool: &PgPool, email: &Email) -> anyhow::Result<AccountId> {
+    let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
+    let locked = hasher.locked().context("locking the new account")?;
+    PostgresAccounts::new(pool.clone())
+        .create(email, &locked)
+        .await
+        .context("creating the account")
+}
+
+async fn create_account(pool: PgPool, email: &str) -> anyhow::Result<()> {
+    let email = Email::try_from(email).context("reading the address")?;
+    let account = create_locked_account(&pool, &email).await?;
+    let token = invite(&pool, account).await?;
+    eprintln!(
+        "{} cannot sign in until it carries a password.",
+        email.as_str()
+    );
+    print_the_way_in(&token);
+    Ok(())
+}
+
+async fn reset_password(pool: PgPool, email: &str) -> anyhow::Result<()> {
+    let email = Email::try_from(email).context("reading the address")?;
+    let account = PostgresResets::new(pool.clone(), SystemClock)
+        .account_for(&email)
+        .await
+        .context("looking the account up")?
+        .with_context(|| format!("no account carries {}", email.as_str()))?;
+    let token = invite(&pool, account).await?;
+    eprintln!(
+        "Every session of {} ends once the password changes.",
+        email.as_str()
+    );
+    print_the_way_in(&token);
+    Ok(())
+}
+
+async fn create_org(pool: PgPool, name: &str, owner: &str) -> anyhow::Result<()> {
+    let org = PostgresMemberships::new(pool)
+        .found(name, owner)
+        .await
+        .context("creating the organisation")?;
+    eprintln!("{owner} now owns {name}. Issue its first key with:");
+    eprintln!("  comettrace issue-key --org {org}");
+    println!("{org}");
+    Ok(())
+}
+
+async fn grant_role(pool: PgPool, org: Uuid, member: &str, role: OrgRole) -> anyhow::Result<()> {
+    PostgresMemberships::new(pool)
+        .grant(TenantId::new(org), member, role)
+        .await
+        .context("granting the role")?;
+    eprintln!("{member} is now {role} of {org}.");
     Ok(())
 }
 
