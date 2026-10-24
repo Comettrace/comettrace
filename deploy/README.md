@@ -146,3 +146,25 @@ docker compose exec clickhouse clickhouse-client \
   --user=comettrace --password=comettrace --database=comettrace
 docker compose exec redis redis-cli
 ```
+
+## Changing the front end without rebuilding anything
+
+The container serves the built application, so a change to `web/` would
+mean a new image. It does not have to: the dev server proxies every server
+path to the container, so run it beside the stack instead.
+
+```sh
+docker compose up --detach          # the server, on 4318
+cd ../web && pnpm install && pnpm dev
+```
+
+Then open <http://localhost:5173>. Every change appears without a reload,
+and `/auth`, `/api`, `/health` and `/v1` go to the real server on 4318. A
+session cookie is set for `localhost` and ignores the port, so signing in
+on either one signs you in on both.
+
+`COMETTRACE_SERVER` points the proxy somewhere other than
+`http://localhost:4318`.
+
+Rebuild the image when you change Rust, or to check what the single
+container actually serves.

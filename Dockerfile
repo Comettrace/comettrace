@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 
 WORKDIR /web
@@ -13,9 +15,18 @@ ARG TARGETARCH
 ARG FEATURES=""
 
 WORKDIR /src
-COPY . .
 
-RUN set -eu; \
+# Only what cargo reads, so a change under web/ leaves this layer and its cache alone.
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates crates
+COPY apps apps
+
+# The registry and the target directory are cache mounts, so a second build compiles what changed
+# rather than the whole dependency tree. The binary is copied out inside the same step: a cache
+# mount is gone by the time the next one runs.
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry,sharing=locked \
+    --mount=type=cache,target=/src/target,id=cargo-target-$TARGETARCH,sharing=locked \
+    set -eu; \
     case "$TARGETARCH" in \
       amd64) \
         target=x86_64-unknown-linux-gnu; \
