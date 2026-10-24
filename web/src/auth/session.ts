@@ -8,7 +8,9 @@ export function useAccount() {
 
 export function useOrganizations(): { list: Membership[]; active: Membership | undefined } {
   const account = useAccount()
-  const list = [...(account?.memberships ?? [])].sort((a, b) => roleRank[a.role] - roleRank[b.role] || a.org.localeCompare(b.org))
+  const list = [...(account?.memberships ?? [])].sort(
+    (a, b) => roleRank[a.role] - roleRank[b.role] || a.name.localeCompare(b.name),
+  )
   const active = list.find((m) => m.org === account?.active_org) ?? list[0]
   return { list, active }
 }

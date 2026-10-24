@@ -23,7 +23,9 @@ import { cn } from '@/lib/utils'
 import { Logo } from '@/components/cmt/Logo'
 import { MockData } from '@/components/cmt/MockData'
 
-const orgLabel = (org: string | undefined) => (org ? `org-${org.slice(0, 8)}` : 'no organisation')
+/* An organisation is named by whoever created it, so the switcher says that name. It used to
+   build org-<first eight of the uuid> because /auth/me carried no name to say. */
+const orgLabel = (name: string | undefined) => name ?? 'no organisation'
 
 function Sidebar({ onOpenShortcuts }: { onOpenShortcuts: () => void }) {
   const { pathname } = useLocation()
@@ -38,7 +40,7 @@ function Sidebar({ onOpenShortcuts }: { onOpenShortcuts: () => void }) {
   const firing = rules.filter((r) => r.firing && r.on).length
   const { pref, setPref } = useTheme()
   const navigate = useNavigate()
-  const initials = (account?.account ?? '??').slice(0, 2).toUpperCase()
+  const initials = (account?.email ?? '??').slice(0, 2).toUpperCase()
   return (
     <aside className="sticky top-0 hidden h-screen w-[224px] shrink-0 flex-col border-r bg-sidebar md:flex" aria-label="Primary">
       <Link to="/" className="flex h-12 shrink-0 items-center gap-2 border-b px-4 text-[15px] font-bold text-foreground no-underline">
@@ -118,7 +120,7 @@ function Sidebar({ onOpenShortcuts }: { onOpenShortcuts: () => void }) {
               <Avatar initials={initials} />
               <span className="flex min-w-0 flex-1 flex-col leading-4">
                 <span className="truncate text-control font-semibold">Signed in</span>
-                <span className="truncate font-mono text-caption text-muted-foreground">{account?.account.slice(0, 13) ?? '—'}</span>
+                <span className="truncate text-caption text-muted-foreground">{account?.email ?? '—'}</span>
               </span>
               <ChevronsUpDown className="size-3.5 text-muted-foreground" aria-hidden />
             </button>
@@ -128,7 +130,7 @@ function Sidebar({ onOpenShortcuts }: { onOpenShortcuts: () => void }) {
               <Avatar initials={initials} />
               <div className="flex min-w-0 flex-1 flex-col leading-[17px]">
                 <span className="truncate text-control font-semibold">Signed in</span>
-                <span className="truncate font-mono text-caption text-muted-foreground">{account?.account.slice(0, 13) ?? '—'}</span>
+                <span className="truncate text-caption text-muted-foreground">{account?.email ?? '—'}</span>
               </div>
               {active ? <Badge variant="accent">{active.role}</Badge> : null}
             </div>
@@ -163,16 +165,16 @@ function OrganizationSwitcher() {
   const { list, active } = useOrganizations()
   const [chosen, setChosen] = useState<string | null>(null)
   const current = list.find((m) => m.org === chosen) ?? active
-  if (list.length < 2) return <span className="hidden whitespace-nowrap font-mono font-semibold sm:inline">{orgLabel(active?.org)}</span>
+  if (list.length < 2) return <span className="hidden whitespace-nowrap font-semibold sm:inline">{orgLabel(active?.name)}</span>
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" aria-haspopup="listbox"><Building2 /><span className="font-mono">{orgLabel(current?.org)}</span><ChevronDown className="text-muted-foreground" /></Button>
+        <Button variant="ghost" size="sm" aria-haspopup="listbox"><Building2 /><span>{orgLabel(current?.name)}</span><ChevronDown className="text-muted-foreground" /></Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[300px] p-1">
         {list.map((m) => (
           <button key={m.org} type="button" onClick={() => setChosen(m.org)} className="flex h-[30px] w-full cursor-pointer items-center gap-2 rounded-sm px-2 text-left text-control hover:bg-muted">
-            <span className="flex-1 truncate font-mono">{orgLabel(m.org)}</span>
+            <span className="flex-1 truncate">{orgLabel(m.name)}</span>
             <Badge variant="outline">{m.role}</Badge>
             {m.org === current?.org ? <span className="text-accent-text">✓</span> : null}
           </button>
