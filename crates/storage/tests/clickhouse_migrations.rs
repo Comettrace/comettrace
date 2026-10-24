@@ -1,5 +1,5 @@
 use clickhouse::{Client, Row};
-use comettrace_storage::{MIGRATIONS, Migrator};
+use comettrace_storage::{ClickhouseMigrator, MIGRATIONS};
 use serde::Deserialize;
 
 #[derive(Debug, Row, Deserialize)]
@@ -62,7 +62,7 @@ async fn migrations_apply_once_and_rerunning_changes_nothing() {
     let Some(client) = fresh_database("comettrace_migrate_once").await else {
         return;
     };
-    let migrator = Migrator::new(client);
+    let migrator = ClickhouseMigrator::new(client);
 
     let first = migrator.up().await.expect("the first run applies");
     let second = migrator.up().await.expect("the second run is a no-op");
@@ -83,7 +83,7 @@ async fn the_spans_table_carries_the_intended_key_partition_and_ttl() {
     let Some(client) = fresh_database("comettrace_migrate_shape").await else {
         return;
     };
-    Migrator::new(client.clone())
+    ClickhouseMigrator::new(client.clone())
         .up()
         .await
         .expect("the migrations apply");
@@ -127,7 +127,7 @@ async fn the_promoted_columns_sit_beside_the_attribute_map() {
     let Some(client) = fresh_database("comettrace_migrate_columns").await else {
         return;
     };
-    Migrator::new(client.clone())
+    ClickhouseMigrator::new(client.clone())
         .up()
         .await
         .expect("the migrations apply");
@@ -161,7 +161,7 @@ async fn up_then_down_then_up_leaves_one_recorded_version() {
     let Some(client) = fresh_database("comettrace_migrate_cycle").await else {
         return;
     };
-    let migrator = Migrator::new(client.clone());
+    let migrator = ClickhouseMigrator::new(client.clone());
 
     migrator.up().await.expect("the first up");
     let reverted = migrator.down_to(0).await.expect("the down");

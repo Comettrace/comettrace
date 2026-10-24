@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use clickhouse::Client;
 use comettrace_core::{Span, SpanId, SpanKind, SpanSink, SpanStatus, TenantId, TraceId};
-use comettrace_storage::{BatchLimits, ClickhouseSink, FixedClock, MemorySink, Migrator};
+use comettrace_storage::{BatchLimits, ClickhouseMigrator, ClickhouseSink, FixedClock, MemorySink};
 use uuid::Uuid;
 
 const NOW: u64 = 4_000_000_000;
@@ -132,7 +132,7 @@ pub async fn prepared(name: &str) -> Option<Client> {
         .await
         .expect("creating the test database");
     let client = connected(&url).with_database(name);
-    Migrator::new(client.clone())
+    ClickhouseMigrator::new(client.clone())
         .up()
         .await
         .expect("the migrations apply");
