@@ -4,6 +4,8 @@ mod identity;
 mod ingest;
 mod key;
 mod quota;
+mod secret;
+mod session;
 mod sink;
 mod span;
 mod tenant;
@@ -18,6 +20,11 @@ pub use identity::{
 pub use ingest::{Ingest, IngestError, Payload};
 pub use key::IngestKey;
 pub use quota::{Admission, QuotaPolicy, Unmetered};
+pub use secret::{SESSION_PREFIX, SecretHash, SessionToken};
+pub use session::{
+    HashError, PasswordCheck, PasswordHash, PasswordHasher, Session, SessionError, SessionLifetime,
+    SessionStore,
+};
 pub use sink::{SinkError, SpanSink};
 pub use span::{InvalidId, Span, SpanId, SpanKind, SpanStatus, TraceId};
 pub use tenant::{TenantDirectory, TenantId, UnknownKey};
