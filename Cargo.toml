@@ -29,13 +29,16 @@ comettrace-api = { path = "crates/api" }
 comettrace-ee = { path = "crates/ee" }
 
 anyhow = "1.0.104"
+argon2 = "0.6.0"
 axum = "0.8.9"
 bytes = "1.12.1"
 clickhouse = { version = "0.15.3", features = ["uuid", "inserter"] }
 figment = { version = "0.10.19", features = ["env", "toml"] }
 flate2 = "1.1.6"
+hex = "0.4.3"
 opentelemetry-proto = { version = "0.33.1", default-features = false, features = ["gen-tonic", "trace"] }
 prost = "0.14.4"
+rand = "0.10.3"
 redis = { version = "1.8.0", default-features = false, features = ["tokio-comp", "connection-manager"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_repr = "0.1.20"
