@@ -93,7 +93,7 @@ impl SpanReader for ClickhouseReader {
             .bind(filter.limit())
             .fetch_all()
             .await
-            .map_err(refused)?;
+            .map_err(|error| refused(&error))?;
 
         rows.into_iter().map(read_summary).collect()
     }
@@ -106,7 +106,7 @@ impl SpanReader for ClickhouseReader {
             .bind(hex::encode(id.as_bytes()))
             .fetch_all()
             .await
-            .map_err(refused)?;
+            .map_err(|error| refused(&error))?;
 
         rows.into_iter().map(|row| read_span(id, row)).collect()
     }
@@ -199,7 +199,7 @@ fn unsigned(value: i64) -> u64 {
     u64::try_from(value).unwrap_or_default()
 }
 
-fn refused(error: clickhouse::error::Error) -> ReadError {
+fn refused(error: &clickhouse::error::Error) -> ReadError {
     tracing::error!(%error, "the span store refused a query");
     ReadError::StoreUnreachable
 }
