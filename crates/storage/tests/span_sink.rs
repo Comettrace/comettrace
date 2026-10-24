@@ -738,3 +738,92 @@ fn a_wide_filter() -> TraceFilter {
         Window::new(1_600_000_000_000_000_000, 1_800_000_000_000_000_000).expect("a window"),
     )
 }
+
+#[tokio::test]
+async fn the_services_table_measures_only_the_spans_a_service_was_called_on() {
+    let Some((url, reader)) = a_written_store("read_services").await else {
+        return;
+    };
+    let store = open_span_store(&settings_for(&url, "read_services"), FixedClock::at(NOW))
+        .await
+        .expect("a sink")
+        .sink;
+    let tenant = TenantId::new(Uuid::from_u128(1));
+    let root = a_span(1, "checkout");
+    let mut slow = a_span(3, "checkout");
+    slow.end_unix_nanos = slow.start_unix_nanos + 4_000_000_000;
+    slow.status = SpanStatus::Error;
+    let outgoing = a_child(
+        4,
+        "checkout",
+        &root,
+        root.start_unix_nanos,
+        root.end_unix_nanos,
+    );
+    store
+        .accept(tenant, vec![root.clone(), slow, outgoing])
+        .await
+        .expect("a batch is accepted");
+    store.flush().await.expect("the batch commits");
+
+    let found = reader
+        .services(tenant, a_wide_window())
+        .await
+        .expect("the services read");
+
+    assert_eq!(found.len(), 1);
+    let service = &found[0];
+    assert_eq!(&*service.name, "checkout");
+    assert_eq!(
+        service.requests, 2,
+        "the client span is work this service asked of another, not a request it served"
+    );
+    assert_eq!(service.errors, 1);
+    assert!(service.p50_nanos > 0);
+    assert!(
+        service.p99_nanos >= service.p50_nanos,
+        "p99 {} is below p50 {}",
+        service.p99_nanos,
+        service.p50_nanos
+    );
+    assert_eq!(service.last_seen_unix_nanos, root.start_unix_nanos);
+}
+
+#[tokio::test]
+async fn the_services_table_never_crosses_tenants() {
+    let Some((url, reader)) = a_written_store("read_services_tenants").await else {
+        return;
+    };
+    let store = open_span_store(
+        &settings_for(&url, "read_services_tenants"),
+        FixedClock::at(NOW),
+    )
+    .await
+    .expect("a sink")
+    .sink;
+    let mine = TenantId::new(Uuid::from_u128(1));
+    store
+        .accept(mine, vec![a_span(1, "checkout")])
+        .await
+        .expect("a batch is accepted");
+    store
+        .accept(
+            TenantId::new(Uuid::from_u128(2)),
+            vec![a_span(2, "billing")],
+        )
+        .await
+        .expect("a batch is accepted");
+    store.flush().await.expect("the batch commits");
+
+    let found = reader
+        .services(mine, a_wide_window())
+        .await
+        .expect("the services read");
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(&*found[0].name, "checkout");
+}
+
+fn a_wide_window() -> Window {
+    Window::new(1_600_000_000_000_000_000, 1_800_000_000_000_000_000).expect("a window")
+}
