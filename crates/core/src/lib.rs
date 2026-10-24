@@ -4,6 +4,7 @@ mod federated;
 mod identity;
 mod ingest;
 mod key;
+mod membership;
 mod oidc;
 mod quota;
 mod reset;
@@ -24,6 +25,7 @@ pub use identity::{
 };
 pub use ingest::{Ingest, IngestError, Payload};
 pub use key::IngestKey;
+pub use membership::{Membership, Memberships, OrgRole, Who, Whoami, WhoamiError};
 pub use oidc::{CodeVerifier, FlowError, OidcFlows, PendingFlow};
 pub use quota::{Admission, QuotaPolicy, Unmetered};
 pub use reset::{Mailer, ResetError, ResetPassword, ResetStore};
