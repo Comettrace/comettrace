@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use clickhouse::Client;
 use comettrace_core::{Span, SpanId, SpanKind, SpanSink, SpanStatus, TenantId, TraceId};
-use comettrace_storage::{BatchLimits, ClickhouseSink, Migrator, SystemClock};
+use comettrace_storage::{BatchLimits, ClickhouseMigrator, ClickhouseSink, SystemClock};
 use uuid::Uuid;
 
 const DATABASE: &str = "comettrace_benchmark";
@@ -89,7 +89,7 @@ async fn fresh(url: &str) -> Client {
         .await
         .expect("creating the benchmark database");
     let client = root.with_database(DATABASE);
-    Migrator::new(client.clone())
+    ClickhouseMigrator::new(client.clone())
         .up()
         .await
         .expect("the migrations apply");

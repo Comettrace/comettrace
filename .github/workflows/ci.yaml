@@ -77,6 +77,35 @@ jobs:
       - name: the ee crate builds behind its feature
         run: cargo build -p comettrace --features ee --locked
 
+  postgres:
+    runs-on: ubuntu-latest
+    needs: check
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: comettrace
+          POSTGRES_PASSWORD: comettrace
+          POSTGRES_DB: comettrace
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U comettrace"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://comettrace:comettrace@localhost:5432/comettrace
+      REQUIRE_DATABASE_URL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-postgres
+          cache-on-failure: true
+      - name: the control plane schema applies, reverses and reapplies
+        run: cargo test -p comettrace-storage --test control_plane --locked
+
   clickhouse:
     runs-on: ubuntu-latest
     needs: check

@@ -14,8 +14,8 @@ pub struct Migration {
 pub const MIGRATIONS: &[Migration] = &[Migration {
     version: 1,
     name: "spans",
-    up: include_str!("../../migrations/0001_spans.up.sql"),
-    down: include_str!("../../migrations/0001_spans.down.sql"),
+    up: include_str!("../../migrations/clickhouse/0001_spans.up.sql"),
+    down: include_str!("../../migrations/clickhouse/0001_spans.down.sql"),
 }];
 
 #[derive(Debug, thiserror::Error)]
@@ -30,11 +30,11 @@ struct VersionRow {
 }
 
 #[derive(Debug, Clone)]
-pub struct Migrator {
+pub struct ClickhouseMigrator {
     client: Client,
 }
 
-impl Migrator {
+impl ClickhouseMigrator {
     pub fn new(client: Client) -> Self {
         Self { client }
     }
