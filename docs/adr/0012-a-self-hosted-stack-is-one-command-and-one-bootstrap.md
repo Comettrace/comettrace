@@ -88,3 +88,14 @@ nothing about which addresses exist.
 
 This is the whole argument for the job: the mistake was invisible to every
 unit and integration test, because each half was correct on its own.
+
+## And it found a second one
+
+`tracing_subscriber::fmt()` writes to stdout. Every command that prints a
+secret on stdout — `issue-key` since it landed, and now `bootstrap` —
+could have a log line land in the middle of it. A sqlx migration notice
+did exactly that, and the token read back was two lines rather than one.
+
+The logger writes to stderr now. The convention that stdout carries at
+most one secret and nothing else is only true if nothing else ever writes
+there, and saying so was not enough to make it so.

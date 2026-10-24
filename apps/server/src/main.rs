@@ -56,7 +56,7 @@ impl SpanSink for Sink {
 
 #[derive(Debug)]
 enum Relay {
-    Smtp(SmtpMailer),
+    Smtp(Box<SmtpMailer>),
     Unreachable,
 }
 
@@ -347,6 +347,7 @@ async fn grant_role(pool: PgPool, org: Uuid, member: &str, role: OrgRole) -> any
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
         .init();
 
     let config = config::load().context("reading the configuration")?;
@@ -629,7 +630,7 @@ fn relay_of(config: &Config) -> anyhow::Result<Relay> {
     })
     .context("preparing the mail relay")?;
     tracing::info!(relay = %mail.relay, "password resets can be sent");
-    Ok(Relay::Smtp(mailer))
+    Ok(Relay::Smtp(Box::new(mailer)))
 }
 
 async fn serve_http(
