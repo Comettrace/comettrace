@@ -5,10 +5,12 @@ use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
 use sqlx::{PgPool, Row};
 
-use crate::month::BillingMonth;
+use crate::month::{BillingHour, BillingMonth};
 
 const KEY_PREFIX: &str = "usage";
 const KEY_TTL_SECONDS: i64 = 70 * 24 * 60 * 60;
+const HOUR_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
+const SCAN_BATCH: usize = 500;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CounterError {
@@ -39,6 +41,58 @@ impl<C: Clock> RedisMeter<C> {
     fn key(&self, tenant: TenantId) -> String {
         let month = BillingMonth::containing(self.clock.now()).key();
         format!("{KEY_PREFIX}:{tenant}:{month}")
+    }
+
+    fn hour_key(&self, tenant: TenantId) -> String {
+        let hour = BillingHour::containing(self.clock.now()).key();
+        format!("{KEY_PREFIX}:{tenant}:{hour}")
+    }
+
+    pub async fn roll_up(&self, pool: &PgPool) -> Result<usize, CounterError> {
+        let hour = BillingHour::containing(self.clock.now()).previous();
+        let pattern = format!("{KEY_PREFIX}:*:{}", hour.key());
+        let mut connection = self.connection.clone();
+        let mut cursor: u64 = 0;
+        let mut rolled = 0;
+
+        loop {
+            let (next, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(SCAN_BATCH)
+                .query_async(&mut connection)
+                .await?;
+
+            for key in keys {
+                let Some(tenant) = tenant_of(&key) else {
+                    continue;
+                };
+                let Some(total) = connection.get::<_, Option<u64>>(&key).await? else {
+                    continue;
+                };
+                let written = sqlx::query(
+                    "INSERT INTO usage_hourly (org_id, hour_start, ingested_bytes) \
+                     VALUES ($1, $2, $3) ON CONFLICT (org_id, hour_start) DO NOTHING",
+                )
+                .bind(tenant.as_uuid())
+                .bind(hour.start_nanos())
+                .bind(i64::try_from(total).unwrap_or(i64::MAX))
+                .execute(pool)
+                .await?;
+                let _: u64 = connection.del(&key).await?;
+                if written.rows_affected() > 0 {
+                    rolled += 1;
+                }
+            }
+
+            cursor = next;
+            if cursor == 0 {
+                break;
+            }
+        }
+        Ok(rolled)
     }
 
     pub async fn seed(
@@ -80,19 +134,50 @@ impl<C: Clock> RedisMeter<C> {
 impl<C: Clock + Send + Sync> UsageMeter for RedisMeter<C> {
     async fn record_ingest(&self, tenant: TenantId, decompressed: DecompressedBytes) {
         let mut connection = self.connection.clone();
-        let key = self.key(tenant);
-        match connection.incr::<_, _, u64>(&key, decompressed.get()).await {
-            Ok(total) if total == decompressed.get() => {
-                if let Err(error) = connection.expire::<_, bool>(&key, KEY_TTL_SECONDS).await {
-                    tracing::error!(%error, %tenant, "the usage counter was left without an expiry");
-                }
+        let bytes = decompressed.get();
+        let month = self.key(tenant);
+        let hour = self.hour_key(tenant);
+
+        let replies: Result<(u64, u64), _> = redis::pipe()
+            .atomic()
+            .incr(&month, bytes)
+            .incr(&hour, bytes)
+            .query_async(&mut connection)
+            .await;
+
+        match replies {
+            Ok((month_total, hour_total)) => {
+                expire_if_new(&mut connection, &month, month_total, bytes, KEY_TTL_SECONDS).await;
+                expire_if_new(&mut connection, &hour, hour_total, bytes, HOUR_TTL_SECONDS).await;
             }
-            Ok(_) => {}
             Err(error) => {
-                tracing::error!(%error, %tenant, "the usage counter was not incremented");
+                tracing::error!(%error, %tenant, "the usage counters were not incremented");
             }
         }
     }
+}
+
+async fn expire_if_new(
+    connection: &mut ConnectionManager,
+    key: &str,
+    total: u64,
+    increment: u64,
+    ttl: i64,
+) {
+    if total != increment {
+        return;
+    }
+    if let Err(error) = connection.expire::<_, bool>(key, ttl).await {
+        tracing::error!(%error, key, "the usage counter was left without an expiry");
+    }
+}
+
+fn tenant_of(key: &str) -> Option<TenantId> {
+    key.split(':')
+        .nth(1)?
+        .parse::<uuid::Uuid>()
+        .ok()
+        .map(TenantId::new)
 }
 
 impl<C: Clock + Send + Sync> UsageReader for RedisMeter<C> {

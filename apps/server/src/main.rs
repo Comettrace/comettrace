@@ -3,10 +3,11 @@ mod config;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use comettrace_api::{router, trace_server};
-use comettrace_core::{DecompressedBytes, Ingest, TenantId, UsageMeter, UsageReader};
+use comettrace_core::{Clock, DecompressedBytes, Ingest, TenantId, UsageMeter, UsageReader};
 use comettrace_storage::{
     Allowance, MemoryMeter, MemorySink, RedisMeter, StaticDirectory, StaticQuota, SystemClock,
     load_allowances,
@@ -18,6 +19,8 @@ use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
+
+const SECONDS_PER_HOUR: u64 = 3600;
 
 type Gateway = Ingest<StaticDirectory, StaticQuota<Arc<Meter>>, Arc<MemorySink>, Arc<Meter>>;
 
@@ -55,8 +58,12 @@ async fn main() -> anyhow::Result<()> {
     let pool = control_plane_pool(&config).await?;
     let allowances = allowances_of(&config, pool.as_ref()).await?;
     let meter = Arc::new(meter_of(&config, pool.as_ref()).await?);
-    if let Some(pool) = pool {
-        pool.close().await;
+    match (pool, meter.as_ref()) {
+        (Some(pool), Meter::Redis(_)) => {
+            tokio::spawn(roll_up_hourly(Arc::clone(&meter), pool));
+        }
+        (Some(pool), Meter::Memory(_)) => pool.close().await,
+        (None, _) => {}
     }
     let gateway = Arc::new(gateway_of(&config, allowances, meter));
 
@@ -164,4 +171,22 @@ async fn shutdown() {
     if let Err(error) = tokio::signal::ctrl_c().await {
         tracing::error!(%error, "the shutdown signal handler failed");
     }
+}
+
+async fn roll_up_hourly(meter: Arc<Meter>, pool: PgPool) {
+    let Meter::Redis(redis) = meter.as_ref() else {
+        return;
+    };
+    loop {
+        tokio::time::sleep(until_the_next_hour(&SystemClock)).await;
+        match redis.roll_up(&pool).await {
+            Ok(tenants) => tracing::info!(tenants, "the finished hour was rolled up"),
+            Err(error) => tracing::error!(%error, "the usage rollup failed"),
+        }
+    }
+}
+
+fn until_the_next_hour(clock: &SystemClock) -> Duration {
+    let elapsed = clock.now().get() % SECONDS_PER_HOUR;
+    Duration::from_secs(SECONDS_PER_HOUR - elapsed)
 }

@@ -211,3 +211,101 @@ async fn seeded_org(pool: &PgPool) -> TenantId {
         .expect("an org");
     TenantId::new(org)
 }
+
+async fn billed_hours(pool: &PgPool, tenant: TenantId) -> Vec<(i64, i64)> {
+    sqlx::query(
+        "SELECT hour_start AS hour_start, ingested_bytes AS ingested_bytes \
+         FROM usage_hourly WHERE org_id = $1 ORDER BY hour_start",
+    )
+    .bind(tenant.as_uuid())
+    .fetch_all(pool)
+    .await
+    .expect("reading the billed hours")
+    .into_iter()
+    .map(|row| (row.get("hour_start"), row.get("ingested_bytes")))
+    .collect()
+}
+
+#[tokio::test]
+async fn a_finished_hour_moves_into_the_billing_table() {
+    let Some(pool) = control_plane("counter_rollup").await else {
+        return;
+    };
+    let Some(earlier) = meter_at(NOVEMBER).await else {
+        return;
+    };
+    let later = meter_at(NOVEMBER + 3600).await.expect("the same store");
+    let tenant = seeded_org(&pool).await;
+
+    earlier
+        .record_ingest(tenant, DecompressedBytes::new(1500))
+        .await;
+    let rolled = later.roll_up(&pool).await.expect("the rollup runs");
+
+    assert_eq!(rolled, 1);
+    assert_eq!(
+        billed_hours(&pool, tenant).await,
+        vec![(1_699_999_200_000_000_000, 1500)]
+    );
+}
+
+#[tokio::test]
+async fn rolling_the_same_hour_twice_does_not_double_the_bill() {
+    let Some(pool) = control_plane("counter_twice").await else {
+        return;
+    };
+    let Some(earlier) = meter_at(NOVEMBER).await else {
+        return;
+    };
+    let later = meter_at(NOVEMBER + 3600).await.expect("the same store");
+    let tenant = seeded_org(&pool).await;
+
+    earlier
+        .record_ingest(tenant, DecompressedBytes::new(800))
+        .await;
+    let first = later.roll_up(&pool).await.expect("the first rollup");
+    let second = later.roll_up(&pool).await.expect("the second rollup");
+
+    assert_eq!((first, second), (1, 0));
+    let hours = billed_hours(&pool, tenant).await;
+    assert_eq!(hours.len(), 1);
+    assert_eq!(hours[0].1, 800);
+}
+
+#[tokio::test]
+async fn the_hour_in_progress_is_left_to_finish() {
+    let Some(pool) = control_plane("counter_current").await else {
+        return;
+    };
+    let Some(meter) = meter_at(NOVEMBER).await else {
+        return;
+    };
+    let tenant = seeded_org(&pool).await;
+
+    meter
+        .record_ingest(tenant, DecompressedBytes::new(400))
+        .await;
+    let rolled = meter.roll_up(&pool).await.expect("the rollup runs");
+
+    assert_eq!(rolled, 0);
+    assert!(billed_hours(&pool, tenant).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_rollup_leaves_the_monthly_counter_standing() {
+    let Some(pool) = control_plane("counter_month_kept").await else {
+        return;
+    };
+    let Some(earlier) = meter_at(NOVEMBER).await else {
+        return;
+    };
+    let later = meter_at(NOVEMBER + 3600).await.expect("the same store");
+    let tenant = seeded_org(&pool).await;
+
+    earlier
+        .record_ingest(tenant, DecompressedBytes::new(1200))
+        .await;
+    later.roll_up(&pool).await.expect("the rollup runs");
+
+    assert_eq!(earlier.used(tenant).await, DecompressedBytes::new(1200));
+}

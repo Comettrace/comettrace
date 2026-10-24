@@ -2,6 +2,7 @@ use comettrace_core::UnixSeconds;
 use time::{Date, Month, OffsetDateTime};
 
 const NANOS_PER_SECOND: i64 = 1_000_000_000;
+const SECONDS_PER_HOUR: i64 = 3600;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BillingMonth {
@@ -32,11 +33,47 @@ impl BillingMonth {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BillingHour {
+    start: i64,
+}
+
+impl BillingHour {
+    pub fn containing(instant: UnixSeconds) -> Self {
+        let seconds = i64::try_from(instant.get()).unwrap_or(i64::MAX);
+        Self {
+            start: seconds - seconds.rem_euclid(SECONDS_PER_HOUR),
+        }
+    }
+
+    pub fn previous(self) -> Self {
+        Self {
+            start: self.start.saturating_sub(SECONDS_PER_HOUR),
+        }
+    }
+
+    pub fn start_nanos(self) -> i64 {
+        self.start.saturating_mul(NANOS_PER_SECOND)
+    }
+
+    pub fn key(self) -> String {
+        let moment =
+            OffsetDateTime::from_unix_timestamp(self.start).unwrap_or(OffsetDateTime::UNIX_EPOCH);
+        format!(
+            "{:04}{:02}{:02}{:02}",
+            moment.year(),
+            u8::from(moment.month()),
+            moment.day(),
+            moment.hour()
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use comettrace_core::UnixSeconds;
 
-    use super::BillingMonth;
+    use super::{BillingHour, BillingMonth};
 
     #[test]
     fn a_known_instant_lands_in_its_calendar_month() {
@@ -84,5 +121,36 @@ mod tests {
         let start = u64::try_from(month.start_nanos() / 1_000_000_000).expect("after the epoch");
 
         assert_eq!(BillingMonth::containing(UnixSeconds::new(start)), month);
+    }
+
+    #[test]
+    fn an_hour_is_named_down_to_the_hour() {
+        let hour = BillingHour::containing(UnixSeconds::new(1_700_000_000));
+
+        assert_eq!(hour.key(), "2023111422");
+    }
+
+    #[test]
+    fn an_instant_inside_an_hour_names_that_hour() {
+        let early = BillingHour::containing(UnixSeconds::new(1_700_000_000));
+        let late = BillingHour::containing(UnixSeconds::new(1_700_000_000 + 3599));
+
+        assert_eq!(early, late);
+    }
+
+    #[test]
+    fn the_next_second_belongs_to_the_next_hour() {
+        let hour = BillingHour::containing(UnixSeconds::new(1_700_000_000));
+        let next = BillingHour::containing(UnixSeconds::new(1_700_000_000 + 3600));
+
+        assert_ne!(hour, next);
+        assert_eq!(next.previous(), hour);
+    }
+
+    #[test]
+    fn an_hour_starts_on_a_whole_hour() {
+        let hour = BillingHour::containing(UnixSeconds::new(1_700_000_000));
+
+        assert_eq!(hour.start_nanos() % (3600 * 1_000_000_000), 0);
     }
 }
