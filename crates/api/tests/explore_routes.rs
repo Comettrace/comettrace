@@ -6,9 +6,9 @@ use axum::http::header::COOKIE;
 use axum::http::{Request, StatusCode};
 use comettrace_api::explore_router;
 use comettrace_core::{
-    AccountId, Explore, Membership, Memberships, OrgRole, ReadError, Session, SessionError,
-    SessionStore, SessionToken, Span, SpanId, SpanKind, SpanReader, SpanStatus, TenantId,
-    TraceFilter, TraceId, TraceSummary, UnixSeconds, Whoami, WhoamiError,
+    AccountId, Explore, Membership, Memberships, OrgRole, ReadError, ServiceSummary, Session,
+    SessionError, SessionStore, SessionToken, Span, SpanId, SpanKind, SpanReader, SpanStatus,
+    TenantId, TraceFilter, TraceId, TraceSummary, UnixSeconds, Whoami, WhoamiError, Window,
 };
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -81,6 +81,22 @@ fn a_span(seed: u8, parent: Option<u8>, start: u64, end: u64) -> Span {
 }
 
 impl SpanReader for TwoSpans {
+    async fn services(
+        &self,
+        _tenant: TenantId,
+        _window: Window,
+    ) -> Result<Vec<ServiceSummary>, ReadError> {
+        Ok(vec![ServiceSummary {
+            name: "checkout".into(),
+            requests: 10,
+            errors: 1,
+            p50_nanos: 96_000_000,
+            p95_nanos: 1_280_000_000,
+            p99_nanos: 2_900_000_000,
+            last_seen_unix_nanos: 1_700_000_000_123_456_789,
+        }])
+    }
+
     async fn traces(
         &self,
         _tenant: TenantId,
@@ -118,6 +134,14 @@ impl SpanReader for TwoSpans {
 struct NoSpans;
 
 impl SpanReader for NoSpans {
+    async fn services(
+        &self,
+        _tenant: TenantId,
+        _window: Window,
+    ) -> Result<Vec<ServiceSummary>, ReadError> {
+        Ok(Vec::new())
+    }
+
     async fn traces(
         &self,
         _tenant: TenantId,
@@ -293,4 +317,46 @@ async fn an_empty_list_is_an_answer_rather_than_an_error() {
 
 fn an_email() -> comettrace_core::Email {
     comettrace_core::Email::try_from("person@example.com").expect("an address")
+}
+
+#[tokio::test]
+async fn the_services_table_is_read_for_the_same_organisation() {
+    let uri = format!(
+        "/api/orgs/{}/services?from=1700000000000&to=1700000060000",
+        org(MINE)
+    );
+
+    let (status, body) = served(TwoSpans, looking(&uri, Some(&session()), true)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    let found: serde_json::Value = serde_json::from_str(&body).expect("json");
+    let service = &found["services"][0];
+    assert_eq!(service["name"], "checkout");
+    assert_eq!(service["requests"], 10);
+    assert_eq!(service["errors"], 1);
+    assert_eq!(
+        service["per_second"], 0.16666666666666666,
+        "ten requests over a minute"
+    );
+    assert_eq!(service["p50_us"], 96_000);
+    assert_eq!(service["p99_us"], 2_900_000);
+    assert_eq!(service["last_seen_ms"], 1_700_000_000_123u64);
+}
+
+#[tokio::test]
+async fn the_services_of_an_organisation_this_session_does_not_hold_are_not_found() {
+    let uri = format!("/api/orgs/{}/services?from=1&to=2", org(THEIRS));
+
+    let (status, _) = served(TwoSpans, looking(&uri, Some(&session()), true)).await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_services_window_that_ends_before_it_starts_is_refused() {
+    let uri = format!("/api/orgs/{}/services?from=20&to=10", org(MINE));
+
+    let (status, _) = served(TwoSpans, looking(&uri, Some(&session()), true)).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }

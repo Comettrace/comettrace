@@ -2,10 +2,27 @@ use std::collections::BTreeMap;
 
 use clickhouse::{Client, Row};
 use comettrace_core::{
-    ReadError, Span, SpanId, SpanKind, SpanReader, SpanStatus, TenantId, TraceFilter, TraceId,
-    TraceOrder, TraceSummary,
+    ReadError, ServiceSummary, Span, SpanId, SpanKind, SpanReader, SpanStatus, TenantId,
+    TraceFilter, TraceId, TraceOrder, TraceSummary, Window,
 };
 use serde::Deserialize;
+
+const SERVICES: &str = "SELECT \
+     service_name AS name, \
+     count() AS requests, \
+     countIf(status = 'error') AS errors, \
+     quantiles(0.5, 0.95, 0.99)( \
+       toUnixTimestamp64Nano(end_time) - toUnixTimestamp64Nano(start_time) \
+     ) AS latency, \
+     toUnixTimestamp64Nano(max(start_time)) AS last_seen \
+   FROM spans \
+   WHERE tenant_id = ? \
+     AND start_time >= fromUnixTimestamp64Nano(?) \
+     AND start_time < fromUnixTimestamp64Nano(?) \
+     AND kind IN ('server', 'consumer') \
+   GROUP BY service_name \
+   ORDER BY requests DESC \
+   LIMIT 500";
 
 const SUMMARIES: &str = "SELECT \
      lower(hex(trace_id)) AS trace_id, \
@@ -46,6 +63,15 @@ pub struct ClickhouseReader {
 }
 
 #[derive(Debug, Row, Deserialize)]
+struct ServiceRow {
+    name: String,
+    requests: u64,
+    errors: u64,
+    latency: Vec<f64>,
+    last_seen: i64,
+}
+
+#[derive(Debug, Row, Deserialize)]
 struct SummaryRow {
     trace_id: String,
     root_service: String,
@@ -76,6 +102,24 @@ impl ClickhouseReader {
 }
 
 impl SpanReader for ClickhouseReader {
+    async fn services(
+        &self,
+        tenant: TenantId,
+        window: Window,
+    ) -> Result<Vec<ServiceSummary>, ReadError> {
+        let rows: Vec<ServiceRow> = self
+            .client
+            .query(SERVICES)
+            .bind(tenant.as_uuid())
+            .bind(nanos(window.from_unix_nanos()))
+            .bind(nanos(window.to_unix_nanos()))
+            .fetch_all()
+            .await
+            .map_err(|error| refused(&error))?;
+
+        Ok(rows.into_iter().map(read_service).collect())
+    }
+
     async fn traces(
         &self,
         tenant: TenantId,
@@ -112,6 +156,24 @@ impl SpanReader for ClickhouseReader {
 
         rows.into_iter().map(|row| read_span(id, row)).collect()
     }
+}
+
+fn read_service(row: ServiceRow) -> ServiceSummary {
+    ServiceSummary {
+        name: row.name.into(),
+        requests: row.requests,
+        errors: row.errors,
+        p50_nanos: quantile(&row.latency, 0),
+        p95_nanos: quantile(&row.latency, 1),
+        p99_nanos: quantile(&row.latency, 2),
+        last_seen_unix_nanos: unsigned(row.last_seen),
+    }
+}
+
+/* quantiles() answers an array in the order it was asked for them; a service with no spans in the
+window never reaches here, so a short array would mean the query and this list disagree. */
+fn quantile(latency: &[f64], at: usize) -> u64 {
+    latency.get(at).map_or(0, |value| *value as u64)
 }
 
 fn ordering(order: TraceOrder) -> &'static str {

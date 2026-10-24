@@ -99,7 +99,24 @@ pub struct TraceSummary {
     pub errors: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceSummary {
+    pub name: Box<str>,
+    pub requests: u64,
+    pub errors: u64,
+    pub p50_nanos: u64,
+    pub p95_nanos: u64,
+    pub p99_nanos: u64,
+    pub last_seen_unix_nanos: u64,
+}
+
 pub trait SpanReader {
+    fn services(
+        &self,
+        tenant: TenantId,
+        window: Window,
+    ) -> impl Future<Output = Result<Vec<ServiceSummary>, ReadError>> + Send;
+
     fn traces(
         &self,
         tenant: TenantId,
@@ -114,6 +131,14 @@ pub trait SpanReader {
 }
 
 impl<T: SpanReader + Sync> SpanReader for &T {
+    fn services(
+        &self,
+        tenant: TenantId,
+        window: Window,
+    ) -> impl Future<Output = Result<Vec<ServiceSummary>, ReadError>> + Send {
+        (*self).services(tenant, window)
+    }
+
     fn traces(
         &self,
         tenant: TenantId,
@@ -132,6 +157,14 @@ impl<T: SpanReader + Sync> SpanReader for &T {
 }
 
 impl<T: SpanReader + Send + Sync> SpanReader for std::sync::Arc<T> {
+    fn services(
+        &self,
+        tenant: TenantId,
+        window: Window,
+    ) -> impl Future<Output = Result<Vec<ServiceSummary>, ReadError>> + Send {
+        self.as_ref().services(tenant, window)
+    }
+
     fn traces(
         &self,
         tenant: TenantId,
@@ -201,6 +234,16 @@ where
         }
     }
 
+    pub async fn services(
+        &self,
+        token: &SessionToken,
+        org: TenantId,
+        window: Window,
+    ) -> Result<Vec<ServiceSummary>, ExploreError> {
+        self.allowed(token, org).await?;
+        Ok(self.reader.services(org, window).await?)
+    }
+
     pub async fn traces(
         &self,
         token: &SessionToken,
@@ -230,8 +273,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        BadWindow, Explore, ExploreError, ReadError, SpanReader, TraceFilter, TraceOrder,
-        TraceSummary, Window,
+        BadWindow, Explore, ExploreError, ReadError, ServiceSummary, SpanReader, TraceFilter,
+        TraceOrder, TraceSummary, Window,
     };
     use crate::clock::UnixSeconds;
     use crate::credential::Email;
@@ -305,6 +348,15 @@ mod tests {
     }
 
     impl SpanReader for &Asked {
+        async fn services(
+            &self,
+            tenant: TenantId,
+            _window: Window,
+        ) -> Result<Vec<ServiceSummary>, ReadError> {
+            self.tenants.lock().expect("the lock").push(tenant);
+            Ok(Vec::new())
+        }
+
         async fn traces(
             &self,
             tenant: TenantId,
@@ -342,6 +394,14 @@ mod tests {
     struct Unreachable;
 
     impl SpanReader for Unreachable {
+        async fn services(
+            &self,
+            _tenant: TenantId,
+            _window: Window,
+        ) -> Result<Vec<ServiceSummary>, ReadError> {
+            Err(ReadError::StoreUnreachable)
+        }
+
         async fn traces(
             &self,
             _tenant: TenantId,
@@ -452,6 +512,34 @@ mod tests {
             .await;
 
         assert_eq!(failed, Err(ExploreError::StoreUnreachable));
+    }
+
+    #[tokio::test]
+    async fn the_services_of_another_organisation_are_refused_before_the_store_is_asked() {
+        let asked = Asked::default();
+        let explore = exploring(&asked);
+        let window = Window::new(0, 1000).expect("a window");
+
+        let refused = explore
+            .services(&SessionToken::from_plaintext(TOKEN), an_org(THEIRS), window)
+            .await;
+
+        assert_eq!(refused, Err(ExploreError::NotYours));
+        assert!(asked.tenants.lock().expect("the lock").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_member_reads_the_services_of_its_own_organisation() {
+        let asked = Asked::default();
+        let explore = exploring(&asked);
+        let window = Window::new(0, 1000).expect("a window");
+
+        explore
+            .services(&SessionToken::from_plaintext(TOKEN), an_org(MINE), window)
+            .await
+            .expect("a member may read");
+
+        assert_eq!(*asked.tenants.lock().expect("the lock"), vec![an_org(MINE)]);
     }
 
     #[test]

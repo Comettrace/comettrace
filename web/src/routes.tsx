@@ -106,8 +106,8 @@ const routeTree = rootRoute.addChildren([
   shellRoute.addChildren([
     inShell('/', Overview),
     inShell('/onboarding', Onboarding, real),
-    inShell('/services', Services),
-    inShell('/services/$name', ServiceDetail),
+    inShell('/services', Services, {}),
+    inShell('/services/$name', ServiceDetail, {}),
     inShell('/issues', Issues),
     inShell('/issues/$id', IssueDetail),
     inShell('/releases', Releases),

@@ -9,8 +9,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use comettrace_core::{
-    Explore, ExploreError, Memberships, SessionStore, SessionToken, Span, SpanKind, SpanReader,
-    SpanStatus, TenantId, TraceFilter, TraceId, TraceOrder, TraceSummary, Window,
+    Explore, ExploreError, Memberships, ServiceSummary, SessionStore, SessionToken, Span, SpanKind,
+    SpanReader, SpanStatus, TenantId, TraceFilter, TraceId, TraceOrder, TraceSummary, Window,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -170,6 +170,7 @@ where
     R: SpanReader + Send + Sync + 'static,
 {
     Router::new()
+        .route("/api/orgs/{org}/services", get(services::<S, G, R>))
         .route("/api/orgs/{org}/traces", get(traces::<S, G, R>))
         .route("/api/orgs/{org}/traces/{trace}", get(one::<S, G, R>))
         .with_state(explore)
@@ -284,4 +285,74 @@ impl IntoResponse for LookRefused {
         }
         (status, self.to_string()).into_response()
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Running {
+    services: Vec<Serving>,
+}
+
+#[derive(Debug, Serialize)]
+struct Serving {
+    name: String,
+    requests: u64,
+    errors: u64,
+    per_second: f64,
+    p50_us: u64,
+    p95_us: u64,
+    p99_us: u64,
+    last_seen_ms: u64,
+}
+
+fn serving(summary: ServiceSummary, seconds: f64) -> Serving {
+    Serving {
+        name: summary.name.into_string(),
+        requests: summary.requests,
+        errors: summary.errors,
+        #[allow(clippy::cast_precision_loss)]
+        per_second: if seconds > 0.0 {
+            summary.requests as f64 / seconds
+        } else {
+            0.0
+        },
+        p50_us: summary.p50_nanos / NANOS_PER_MICRO,
+        p95_us: summary.p95_nanos / NANOS_PER_MICRO,
+        p99_us: summary.p99_nanos / NANOS_PER_MICRO,
+        last_seen_ms: summary.last_seen_unix_nanos / NANOS_PER_MILLI,
+    }
+}
+
+async fn services<S, G, R>(
+    State(explore): State<Arc<Explore<S, G, R>>>,
+    Path(org): Path<Uuid>,
+    Query(over): Query<Spanning>,
+    headers: HeaderMap,
+) -> Result<Json<Running>, LookRefused>
+where
+    S: SessionStore + Send + Sync + 'static,
+    G: Memberships + Send + Sync + 'static,
+    R: SpanReader + Send + Sync + 'static,
+{
+    let token = carried(&headers)?;
+    let window = Window::new(
+        over.from.saturating_mul(NANOS_PER_MILLI),
+        over.to.saturating_mul(NANOS_PER_MILLI),
+    )
+    .map_err(|_| LookRefused::Window)?;
+    #[allow(clippy::cast_precision_loss)]
+    let seconds = (over.to.saturating_sub(over.from) as f64) / 1000.0;
+
+    let found = explore
+        .services(&token, TenantId::new(org), window)
+        .await?
+        .into_iter()
+        .map(|summary| serving(summary, seconds))
+        .collect();
+    Ok(Json(Running { services: found }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Spanning {
+    from: u64,
+    to: u64,
 }
