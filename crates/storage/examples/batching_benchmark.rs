@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use clickhouse::Client;
-use comettrace_core::{Span, SpanId, SpanKind, SpanSink, SpanStatus, TenantId, TraceId};
+use comettrace_core::{Scope, Span, SpanId, SpanKind, SpanSink, SpanStatus, TenantId, TraceId};
 use comettrace_storage::{BatchLimits, ClickhouseMigrator, ClickhouseSink, SystemClock};
 use uuid::Uuid;
 
@@ -35,7 +35,9 @@ async fn main() {
         let started = Instant::now();
         for call in 0..(TOTAL_SPANS / SPANS_PER_CALL) {
             let tenant = TenantId::new(Uuid::from_u128((call as u128) % TENANTS));
-            sink.accept(tenant, batch(call)).await.expect("accepted");
+            sink.accept(Scope::of(tenant), batch(call))
+                .await
+                .expect("accepted");
         }
         sink.flush().await.expect("the final flush");
         let elapsed = started.elapsed();

@@ -121,7 +121,7 @@ async fn a_protobuf_export_with_a_known_key_is_accepted() {
         Some(PROTOBUF)
     );
     assert_eq!(harness.sink.accepted(), 1);
-    assert_eq!(harness.sink.recent()[0].0, harness.tenant);
+    assert_eq!(harness.sink.recent()[0].0.tenant, harness.tenant);
     assert_eq!(&*harness.sink.recent()[0].1.service_name, "checkout");
 }
 

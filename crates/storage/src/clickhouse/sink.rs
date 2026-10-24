@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use clickhouse::inserter::Inserter;
 use clickhouse::{Client, error::Error as ClickhouseError};
-use comettrace_core::{Clock, SinkError, Span, SpanSink, TenantId};
+use comettrace_core::{Clock, Scope, SinkError, Span, SpanSink};
 use tokio::sync::Mutex;
 
 use crate::clickhouse::rows::SpanRow;
@@ -77,14 +77,14 @@ impl<C: Clock> ClickhouseSink<C> {
 }
 
 impl<C: Clock + Send + Sync> SpanSink for ClickhouseSink<C> {
-    async fn accept(&self, tenant: TenantId, spans: Vec<Span>) -> Result<(), SinkError> {
+    async fn accept(&self, scope: Scope, spans: Vec<Span>) -> Result<(), SinkError> {
         let expire_at = self
             .clock
             .now()
             .saturating_add_secs(self.retention.as_secs());
         let mut inserter = self.inserter.lock().await;
         for span in &spans {
-            let row = SpanRow::of(tenant, span, expire_at)?;
+            let row = SpanRow::of(scope, span, expire_at)?;
             inserter
                 .write(&row)
                 .await

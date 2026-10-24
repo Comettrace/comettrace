@@ -115,7 +115,7 @@ async fn a_grpc_export_with_a_known_key_is_accepted() {
 
     assert!(response.into_inner().partial_success.is_none());
     assert_eq!(running.sink.accepted(), 2);
-    assert_eq!(running.sink.recent()[0].0, running.tenant);
+    assert_eq!(running.sink.recent()[0].0.tenant, running.tenant);
     assert_eq!(&*running.sink.recent()[0].1.service_name, "payments");
 }
 

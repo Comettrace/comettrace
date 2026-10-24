@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use clickhouse::Row;
-use comettrace_core::{SinkError, Span, SpanKind, SpanStatus, TenantId, UnixSeconds};
+use comettrace_core::{ProjectId, Scope, SinkError, Span, SpanKind, SpanStatus, UnixSeconds};
 use serde::Serialize;
 use serde_repr::Serialize_repr;
 use uuid::Uuid;
@@ -54,6 +54,8 @@ impl From<SpanStatus> for StatusRow {
 pub(crate) struct SpanRow<'a> {
     #[serde(with = "clickhouse::serde::uuid")]
     pub(crate) tenant_id: Uuid,
+    #[serde(with = "clickhouse::serde::uuid")]
+    pub(crate) project_id: Uuid,
     pub(crate) service_name: &'a str,
     pub(crate) start_time: i64,
     pub(crate) end_time: i64,
@@ -70,12 +72,13 @@ pub(crate) struct SpanRow<'a> {
 
 impl<'a> SpanRow<'a> {
     pub(crate) fn of(
-        tenant: TenantId,
+        scope: Scope,
         span: &'a Span,
         expire_at: UnixSeconds,
     ) -> Result<Self, SinkError> {
         Ok(Self {
-            tenant_id: tenant.as_uuid(),
+            tenant_id: scope.tenant.as_uuid(),
+            project_id: scope.project.map(ProjectId::as_uuid).unwrap_or_default(),
             service_name: &span.service_name,
             start_time: nanos(span.start_unix_nanos)?,
             end_time: nanos(span.end_unix_nanos)?,

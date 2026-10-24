@@ -15,9 +15,9 @@ use comettrace_api::{
 };
 use comettrace_core::{
     AccountId, AuthSources, Catalogue, Clock, DecompressedBytes, Email, Explore, FederatedSignIn,
-    Ingest, IngestKey, Mailer, NoProvider, OrgRole, ProvisionPolicy, ResetError, ResetPassword,
-    ResetStore, ResetToken, SessionLifetime, SignIn, SinkError, Span, SpanSink, TenantDirectory,
-    TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
+    Ingest, IngestKey, Mailer, NoProvider, OrgRole, ProjectId, ProvisionPolicy, ResetError,
+    ResetPassword, ResetStore, ResetToken, Scope, SessionLifetime, SignIn, SinkError, Span,
+    SpanSink, TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink,
@@ -48,10 +48,10 @@ enum Sink {
 }
 
 impl SpanSink for Sink {
-    async fn accept(&self, tenant: TenantId, spans: Vec<Span>) -> Result<(), SinkError> {
+    async fn accept(&self, scope: Scope, spans: Vec<Span>) -> Result<(), SinkError> {
         match self {
-            Self::Memory(sink) => sink.accept(tenant, spans).await,
-            Self::Spans(sink) => sink.accept(tenant, spans).await,
+            Self::Memory(sink) => sink.accept(scope, spans).await,
+            Self::Spans(sink) => sink.accept(scope, spans).await,
         }
     }
 }
@@ -247,9 +247,27 @@ async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
     }
 }
 
+/* A span carries the project of the key that brought it, so a key with no project writes spans no
+project filter can match. When the organisation holds exactly one there is nothing to choose
+between, so the key gets it; with several the operator has to say which. */
 async fn issue_key(pool: PgPool, org: Uuid, project: Option<Uuid>) -> anyhow::Result<()> {
+    let tenant = TenantId::new(org);
+    let project = match project {
+        Some(named) => Some(named),
+        None => PostgresProjects::new(pool.clone())
+            .only(tenant)
+            .await
+            .context("looking for the only project")?
+            .map(ProjectId::as_uuid),
+    };
+    if project.is_none() {
+        eprintln!(
+            "This organisation holds no single project, so this key names none \
+             and its spans will match no project. Name one with --project."
+        );
+    }
     let key = PostgresDirectory::new(pool, SystemClock)
-        .issue(TenantId::new(org), project)
+        .issue(tenant, project)
         .await
         .context("issuing the key")?;
     eprintln!("This key is shown once. Store it now; it cannot be read back.");
@@ -509,7 +527,7 @@ enum Directory {
 }
 
 impl TenantDirectory for Directory {
-    async fn resolve(&self, key: &IngestKey) -> Result<TenantId, UnknownKey> {
+    async fn resolve(&self, key: &IngestKey) -> Result<Scope, UnknownKey> {
         match self {
             Self::Nothing(directory) => directory.resolve(key).await,
             Self::ControlPlane(directory) => directory.resolve(key).await,

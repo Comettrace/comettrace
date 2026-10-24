@@ -24,6 +24,12 @@ pub const MIGRATIONS: &[Migration] = &[
         up: include_str!("../../migrations/clickhouse/0002_trace_lookup.up.sql"),
         down: include_str!("../../migrations/clickhouse/0002_trace_lookup.down.sql"),
     },
+    Migration {
+        version: 3,
+        name: "span_project",
+        up: include_str!("../../migrations/clickhouse/0003_span_project.up.sql"),
+        down: include_str!("../../migrations/clickhouse/0003_span_project.down.sql"),
+    },
 ];
 
 #[derive(Debug, thiserror::Error)]

@@ -2,14 +2,14 @@ use core::future::Future;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-use comettrace_core::{SinkError, Span, SpanSink, TenantId};
+use comettrace_core::{Scope, SinkError, Span, SpanSink};
 
 const DEFAULT_RETENTION: usize = 1024;
 
 #[derive(Debug, Default)]
 struct State {
     accepted: u64,
-    recent: VecDeque<(TenantId, Span)>,
+    recent: VecDeque<(Scope, Span)>,
 }
 
 #[derive(Debug)]
@@ -36,7 +36,7 @@ impl MemorySink {
         self.state.lock().expect("sink state").accepted
     }
 
-    pub fn recent(&self) -> Vec<(TenantId, Span)> {
+    pub fn recent(&self) -> Vec<(Scope, Span)> {
         self.state
             .lock()
             .expect("sink state")
@@ -46,7 +46,7 @@ impl MemorySink {
             .collect()
     }
 
-    fn push(&self, tenant: TenantId, spans: Vec<Span>) {
+    fn push(&self, scope: Scope, spans: Vec<Span>) {
         let mut state = self.state.lock().expect("sink state");
         state.accepted += spans.len() as u64;
         if self.retention == 0 {
@@ -56,7 +56,7 @@ impl MemorySink {
             while state.recent.len() >= self.retention {
                 state.recent.pop_front();
             }
-            state.recent.push_back((tenant, span));
+            state.recent.push_back((scope, span));
         }
     }
 }
@@ -64,10 +64,10 @@ impl MemorySink {
 impl SpanSink for MemorySink {
     fn accept(
         &self,
-        tenant: TenantId,
+        scope: Scope,
         spans: Vec<Span>,
     ) -> impl Future<Output = Result<(), SinkError>> + Send {
-        self.push(tenant, spans);
+        self.push(scope, spans);
         async { Ok(()) }
     }
 }
@@ -76,7 +76,7 @@ impl SpanSink for MemorySink {
 mod tests {
     use std::collections::BTreeMap;
 
-    use comettrace_core::{Span, SpanId, SpanKind, SpanSink, SpanStatus, TenantId, TraceId};
+    use comettrace_core::{Scope, Span, SpanId, SpanKind, SpanSink, SpanStatus, TenantId, TraceId};
     use uuid::Uuid;
 
     use super::MemorySink;
@@ -101,13 +101,13 @@ mod tests {
         let tenant = TenantId::new(Uuid::from_u128(5));
         let sink = MemorySink::default();
 
-        sink.accept(tenant, vec![a_span(1), a_span(2)])
+        sink.accept(Scope::of(tenant), vec![a_span(1), a_span(2)])
             .await
             .expect("the sink accepts");
 
         assert_eq!(sink.accepted(), 2);
         assert_eq!(sink.recent().len(), 2);
-        assert_eq!(sink.recent()[0].0, tenant);
+        assert_eq!(sink.recent()[0].0, Scope::of(tenant));
     }
 
     #[tokio::test]
@@ -115,7 +115,7 @@ mod tests {
         let tenant = TenantId::new(Uuid::from_u128(5));
         let sink = MemorySink::with_retention(1);
 
-        sink.accept(tenant, vec![a_span(1), a_span(2)])
+        sink.accept(Scope::of(tenant), vec![a_span(1), a_span(2)])
             .await
             .expect("the sink accepts");
 
@@ -129,7 +129,7 @@ mod tests {
         let tenant = TenantId::new(Uuid::from_u128(5));
         let sink = MemorySink::with_retention(0);
 
-        sink.accept(tenant, vec![a_span(1)])
+        sink.accept(Scope::of(tenant), vec![a_span(1)])
             .await
             .expect("the sink accepts");
 
