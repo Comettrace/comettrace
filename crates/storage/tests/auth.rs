@@ -525,7 +525,9 @@ async fn a_reset_token_is_spent_by_its_first_use() {
         .confirm(&token, &Password::new("a new secret"))
         .await
         .expect("the first use");
-    let replay = reset.confirm(&token, &Password::new("another")).await;
+    let replay = reset
+        .confirm(&token, &Password::new("another good one"))
+        .await;
 
     assert_eq!(replay, Err(ResetError::Unknown));
 }

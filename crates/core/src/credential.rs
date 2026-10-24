@@ -109,9 +109,55 @@ impl fmt::Debug for Password {
     }
 }
 
+const MIN_PASSWORD_CHARS: usize = 12;
+const MAX_PASSWORD_BYTES: usize = 128;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum WeakPassword {
+    #[error("a password needs at least {0} characters")]
+    TooShort(usize),
+    #[error("a password cannot be longer than {0} bytes")]
+    TooLong(usize),
+    #[error("a password cannot be only spaces")]
+    Blank,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PasswordPolicy {
+    pub min_chars: usize,
+    pub max_bytes: usize,
+}
+
+impl Default for PasswordPolicy {
+    fn default() -> Self {
+        Self {
+            min_chars: MIN_PASSWORD_CHARS,
+            max_bytes: MAX_PASSWORD_BYTES,
+        }
+    }
+}
+
+impl PasswordPolicy {
+    pub fn admits(self, password: &Password) -> Result<(), WeakPassword> {
+        let chosen = password.exposed();
+        if chosen.len() > self.max_bytes {
+            return Err(WeakPassword::TooLong(self.max_bytes));
+        }
+        if chosen.chars().count() < self.min_chars {
+            return Err(WeakPassword::TooShort(self.min_chars));
+        }
+        if chosen.trim().is_empty() {
+            return Err(WeakPassword::Blank);
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Email, InvalidCredential, Issuer, Password, Subject};
+    use super::{
+        Email, InvalidCredential, Issuer, Password, PasswordPolicy, Subject, WeakPassword,
+    };
 
     #[test]
     fn an_email_is_lowercased_and_trimmed() {
@@ -164,5 +210,92 @@ mod tests {
 
         assert_eq!(format!("{password:?}"), "Password(redacted)");
         assert_eq!(password.exposed(), "correct horse battery");
+    }
+
+    #[test]
+    fn a_password_shorter_than_the_floor_is_refused() {
+        let policy = PasswordPolicy::default();
+
+        assert_eq!(
+            policy.admits(&Password::new("short")),
+            Err(WeakPassword::TooShort(12))
+        );
+        assert_eq!(
+            policy.admits(&Password::new("elevenchars")),
+            Err(WeakPassword::TooShort(12))
+        );
+        assert_eq!(policy.admits(&Password::new("twelvechars!")), Ok(()));
+    }
+
+    #[test]
+    fn a_password_long_enough_to_cost_us_is_refused() {
+        let policy = PasswordPolicy::default();
+
+        assert_eq!(policy.admits(&Password::new(&"a".repeat(128))), Ok(()));
+        assert_eq!(
+            policy.admits(&Password::new(&"a".repeat(129))),
+            Err(WeakPassword::TooLong(128))
+        );
+    }
+
+    #[test]
+    fn a_password_of_spaces_is_refused_however_long_it_is() {
+        assert_eq!(
+            PasswordPolicy::default().admits(&Password::new(&" ".repeat(40))),
+            Err(WeakPassword::Blank)
+        );
+    }
+
+    #[test]
+    fn nothing_but_length_is_asked_of_a_password() {
+        let policy = PasswordPolicy::default();
+
+        for chosen in [
+            "correct horse battery staple",
+            "aaaaaaaaaaaaaaaa",
+            "il pleut sur la ville",
+        ] {
+            assert_eq!(
+                policy.admits(&Password::new(chosen)),
+                Ok(()),
+                "{chosen} should be admitted"
+            );
+        }
+    }
+
+    #[test]
+    fn the_floor_counts_characters_and_the_ceiling_counts_bytes() {
+        let policy = PasswordPolicy::default();
+        let four_glyphs = "🜛🜛🜛🜛";
+
+        assert_eq!(four_glyphs.len(), 16, "four glyphs, sixteen bytes");
+        assert_eq!(
+            policy.admits(&Password::new(four_glyphs)),
+            Err(WeakPassword::TooShort(12)),
+            "sixteen bytes must not pass for twelve characters"
+        );
+        assert_eq!(policy.admits(&Password::new(&"🜛".repeat(12))), Ok(()));
+        assert_eq!(
+            policy.admits(&Password::new(&"🜛".repeat(33))),
+            Err(WeakPassword::TooLong(128)),
+            "the ceiling is what we pay to hash, so it is counted in bytes"
+        );
+    }
+
+    #[test]
+    fn a_policy_can_be_loosened_or_tightened() {
+        let strict = PasswordPolicy {
+            min_chars: 20,
+            max_bytes: 64,
+        };
+
+        assert_eq!(
+            strict.admits(&Password::new("twelvechars!")),
+            Err(WeakPassword::TooShort(20))
+        );
+        assert_eq!(
+            strict.admits(&Password::new(&"a".repeat(65))),
+            Err(WeakPassword::TooLong(64))
+        );
     }
 }
