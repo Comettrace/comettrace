@@ -63,6 +63,54 @@ pub trait SessionStore {
     -> impl Future<Output = Result<(), SessionError>> + Send;
 }
 
+impl<T: SessionStore + Sync> SessionStore for &T {
+    fn issue(
+        &self,
+        account: AccountId,
+        org: Option<TenantId>,
+    ) -> impl Future<Output = Result<SessionToken, SessionError>> + Send {
+        (*self).issue(account, org)
+    }
+
+    fn resolve(
+        &self,
+        token: &SessionToken,
+    ) -> impl Future<Output = Result<Session, SessionError>> + Send {
+        (*self).resolve(token)
+    }
+
+    fn revoke(
+        &self,
+        token: &SessionToken,
+    ) -> impl Future<Output = Result<(), SessionError>> + Send {
+        (*self).revoke(token)
+    }
+}
+
+impl<T: SessionStore + Send + Sync> SessionStore for std::sync::Arc<T> {
+    fn issue(
+        &self,
+        account: AccountId,
+        org: Option<TenantId>,
+    ) -> impl Future<Output = Result<SessionToken, SessionError>> + Send {
+        self.as_ref().issue(account, org)
+    }
+
+    fn resolve(
+        &self,
+        token: &SessionToken,
+    ) -> impl Future<Output = Result<Session, SessionError>> + Send {
+        self.as_ref().resolve(token)
+    }
+
+    fn revoke(
+        &self,
+        token: &SessionToken,
+    ) -> impl Future<Output = Result<(), SessionError>> + Send {
+        self.as_ref().revoke(token)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PasswordCheck {
     Rejected,

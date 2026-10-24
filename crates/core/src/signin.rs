@@ -84,3 +84,13 @@ where
         Ok(self.sessions.revoke(token).await?)
     }
 }
+
+impl<T: AccountDirectory + Send + Sync> AccountDirectory for std::sync::Arc<T> {
+    fn provision(
+        &self,
+        identity: &ResolvedIdentity,
+        policy: ProvisionPolicy,
+    ) -> impl Future<Output = Result<AccountId, AuthError>> + Send {
+        self.as_ref().provision(identity, policy)
+    }
+}
