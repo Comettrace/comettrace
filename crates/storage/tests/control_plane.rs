@@ -1,6 +1,6 @@
 use comettrace_core::{
     DecompressedBytes, Email, IngestKey, Issuer, Projects, ProvisionPolicy, ResolvedIdentity,
-    SecretHash, Subject, TenantDirectory, TenantId, UnknownKey,
+    Scope, SecretHash, Subject, TenantDirectory, TenantId, UnknownKey,
 };
 use comettrace_storage::{
     AccountError, Allowance, CONTROL_PLANE, FixedClock, OVERAGE_FEATURE, PostgresAccounts,
@@ -591,7 +591,7 @@ async fn a_live_key_resolves_to_its_organisation() {
         .resolve(&IngestKey::from_plaintext("ct_live_abc.the-secret"))
         .await;
 
-    assert_eq!(resolved, Ok(TenantId::new(org)));
+    assert_eq!(resolved, Ok(Scope::of(TenantId::new(org))));
 }
 
 #[tokio::test]
@@ -702,7 +702,7 @@ async fn an_issued_key_authenticates_at_once() {
     let issued = directory.issue(org, None).await.expect("a key is issued");
     let resolved = directory.resolve(&issued).await;
 
-    assert_eq!(resolved, Ok(org));
+    assert_eq!(resolved, Ok(Scope::of(org)));
     assert_eq!(directory.live_keys(org).await.expect("a count"), 1);
 }
 
@@ -734,8 +734,8 @@ async fn two_issued_keys_never_collide() {
     let second = directory.issue(org, None).await.expect("the second");
 
     assert_ne!(first.exposed(), second.exposed());
-    assert_eq!(directory.resolve(&first).await, Ok(org));
-    assert_eq!(directory.resolve(&second).await, Ok(org));
+    assert_eq!(directory.resolve(&first).await, Ok(Scope::of(org)));
+    assert_eq!(directory.resolve(&second).await, Ok(Scope::of(org)));
     assert_eq!(directory.live_keys(org).await.expect("a count"), 2);
 }
 
@@ -754,7 +754,7 @@ async fn revoking_a_key_stops_it_without_touching_the_others() {
 
     assert!(revoked);
     assert_eq!(directory.resolve(&doomed).await, Err(UnknownKey));
-    assert_eq!(directory.resolve(&kept).await, Ok(org));
+    assert_eq!(directory.resolve(&kept).await, Ok(Scope::of(org)));
     assert_eq!(directory.live_keys(org).await.expect("a count"), 1);
 }
 
@@ -846,4 +846,40 @@ async fn the_only_project_is_named_only_when_there_is_exactly_one() {
         None,
         "with two, the choice is the operator's"
     );
+}
+
+#[tokio::test]
+async fn a_key_resolves_to_the_project_it_was_issued_for() {
+    let Some(pool) = migrated("keys_project").await else {
+        return;
+    };
+    let org = TenantId::new(seeded_org(&pool).await);
+    let project = PostgresProjects::new(pool.clone())
+        .create(org, "storefront")
+        .await
+        .expect("a project");
+    let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));
+
+    let key = directory
+        .issue(org, Some(project.as_uuid()))
+        .await
+        .expect("a key is issued");
+
+    assert_eq!(
+        directory.resolve(&key).await,
+        Ok(Scope::of(org).in_project(Some(project)))
+    );
+}
+
+#[tokio::test]
+async fn a_key_issued_for_no_project_resolves_to_none() {
+    let Some(pool) = migrated("keys_no_project").await else {
+        return;
+    };
+    let org = TenantId::new(seeded_org(&pool).await);
+    let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));
+
+    let key = directory.issue(org, None).await.expect("a key is issued");
+
+    assert_eq!(directory.resolve(&key).await, Ok(Scope::of(org)));
 }

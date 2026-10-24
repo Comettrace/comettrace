@@ -102,8 +102,8 @@ impl<C: Clock + Send + Sync> TenantDirectory for PostgresDirectory<C> {
         };
 
         let found = sqlx::query(
-            "SELECT id AS id, org_id AS org_id, secret_digest AS secret_digest, \
-             last_used_at AS last_used_at \
+            "SELECT id AS id, org_id AS org_id, project_id AS project_id, \
+             secret_digest AS secret_digest, last_used_at AS last_used_at \
              FROM api_keys WHERE prefix = $1 AND revoked_at IS NULL",
         )
         .bind(prefix)
