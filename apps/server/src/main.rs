@@ -215,16 +215,14 @@ impl TenantDirectory for Directory {
 }
 
 fn directory_of(pool: Option<&PgPool>) -> Directory {
-    match pool {
-        Some(pool) => Directory::ControlPlane(PostgresDirectory::new(pool.clone(), SystemClock)),
-        None => {
-            tracing::warn!(
-                "no control plane is configured, so no ingest key can authenticate; \
-                 issue one with `comettrace issue-key` once database_url is set"
-            );
-            Directory::Nothing(StaticDirectory::default())
-        }
-    }
+    let Some(pool) = pool else {
+        tracing::warn!(
+            "no control plane is configured, so no ingest key can authenticate; \
+             issue one with `comettrace issue-key` once database_url is set"
+        );
+        return Directory::Nothing(StaticDirectory::default());
+    };
+    Directory::ControlPlane(PostgresDirectory::new(pool.clone(), SystemClock))
 }
 
 fn gateway_of(
