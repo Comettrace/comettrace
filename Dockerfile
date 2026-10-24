@@ -8,13 +8,19 @@ COPY . .
 
 RUN set -eu; \
     case "$TARGETARCH" in \
-      amd64) target=x86_64-unknown-linux-gnu; cross=""; ;; \
-      arm64) target=aarch64-unknown-linux-gnu; cross="gcc-aarch64-linux-gnu"; ;; \
+      amd64) \
+        target=x86_64-unknown-linux-gnu; \
+        cross=""; \
+        ;; \
+      arm64) \
+        target=aarch64-unknown-linux-gnu; \
+        cross="gcc-aarch64-linux-gnu libc6-dev-arm64-cross"; \
+        ;; \
       *) echo "no build for $TARGETARCH" >&2; exit 1 ;; \
     esac; \
     if [ -n "$cross" ]; then \
       apt-get update; \
-      apt-get install --yes --no-install-recommends "$cross"; \
+      apt-get install --yes --no-install-recommends $cross; \
       rm -rf /var/lib/apt/lists/*; \
     fi; \
     rustup target add "$target"; \
