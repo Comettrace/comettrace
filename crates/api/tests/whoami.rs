@@ -125,10 +125,22 @@ async fn a_live_session_is_answered_with_its_account_and_its_roles() {
         serde_json::json!(Uuid::from_u128(ACTIVE).to_string())
     );
     assert_eq!(
+        standing["email"], "person@example.com",
+        "a menu has an address to show rather than an identifier"
+    );
+    assert_eq!(
         standing["memberships"],
         serde_json::json!([
-            { "org": Uuid::from_u128(ACTIVE).to_string(), "role": "owner" },
-            { "org": Uuid::from_u128(OTHER).to_string(), "role": "member" },
+            {
+                "org": Uuid::from_u128(ACTIVE).to_string(),
+                "name": "Acme",
+                "role": "owner",
+            },
+            {
+                "org": Uuid::from_u128(OTHER).to_string(),
+                "name": "Globex",
+                "role": "member",
+            },
         ])
     );
 }
