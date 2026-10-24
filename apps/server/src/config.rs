@@ -15,6 +15,8 @@ pub struct Config {
     pub grpc_address: SocketAddr,
     pub http_address: SocketAddr,
     #[serde(default)]
+    pub database_url: Option<String>,
+    #[serde(default)]
     pub tenants: Vec<TenantKey>,
 }
 
@@ -50,6 +52,7 @@ impl Default for Config {
         Self {
             grpc_address: SocketAddr::from(([0, 0, 0, 0], 4317)),
             http_address: SocketAddr::from(([0, 0, 0, 0], 4318)),
+            database_url: None,
             tenants: Vec::new(),
         }
     }

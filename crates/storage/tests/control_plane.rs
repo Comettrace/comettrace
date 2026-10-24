@@ -1,4 +1,5 @@
-use comettrace_storage::{CONTROL_PLANE, SELF_HOSTED_PLAN};
+use comettrace_core::DecompressedBytes;
+use comettrace_storage::{Allowance, CONTROL_PLANE, OVERAGE_FEATURE, SELF_HOSTED_PLAN};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 
@@ -256,4 +257,104 @@ async fn seeded_org(pool: &PgPool) -> uuid::Uuid {
         .await
         .expect("an org");
     org
+}
+
+async fn plan_with(
+    pool: &PgPool,
+    slug: &str,
+    ingest_gb: Option<i32>,
+    features: &[&str],
+) -> uuid::Uuid {
+    let id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO plans (id, slug, name, ingest_gb, features) VALUES ($1, $2, $2, $3, $4)",
+    )
+    .bind(id)
+    .bind(slug)
+    .bind(ingest_gb)
+    .bind(features.iter().map(|f| (*f).to_owned()).collect::<Vec<_>>())
+    .execute(pool)
+    .await
+    .expect("a plan");
+    id
+}
+
+async fn org_on(pool: &PgPool, plan: uuid::Uuid) -> comettrace_core::TenantId {
+    let org = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO orgs (id, name, plan_id) VALUES ($1, 'Acme', $2)")
+        .bind(org)
+        .bind(plan)
+        .execute(pool)
+        .await
+        .expect("an org");
+    comettrace_core::TenantId::new(org)
+}
+
+#[tokio::test]
+async fn a_plan_without_an_ingest_limit_loads_as_unlimited() {
+    let Some(pool) = migrated("control_unlimited").await else {
+        return;
+    };
+    let plan = plan_with(&pool, "generous", None, &[]).await;
+    let tenant = org_on(&pool, plan).await;
+
+    let allowances = comettrace_storage::load_allowances(&pool)
+        .await
+        .expect("the allowances load");
+
+    assert_eq!(allowances.get(&tenant), Some(&Allowance::Unlimited));
+}
+
+#[tokio::test]
+async fn a_plan_without_the_overage_feature_caps_hard() {
+    let Some(pool) = migrated("control_capped").await else {
+        return;
+    };
+    let plan = plan_with(&pool, "free", Some(2), &[]).await;
+    let tenant = org_on(&pool, plan).await;
+
+    let allowances = comettrace_storage::load_allowances(&pool)
+        .await
+        .expect("the allowances load");
+
+    assert_eq!(
+        allowances.get(&tenant),
+        Some(&Allowance::Capped(DecompressedBytes::new(
+            2 * 1024 * 1024 * 1024
+        )))
+    );
+}
+
+#[tokio::test]
+async fn a_plan_carrying_the_overage_feature_allows_the_overage() {
+    let Some(pool) = migrated("control_overage").await else {
+        return;
+    };
+    let plan = plan_with(&pool, "pro", Some(1), &[OVERAGE_FEATURE, "sso"]).await;
+    let tenant = org_on(&pool, plan).await;
+
+    let allowances = comettrace_storage::load_allowances(&pool)
+        .await
+        .expect("the allowances load");
+
+    assert_eq!(
+        allowances.get(&tenant),
+        Some(&Allowance::Overage(DecompressedBytes::new(
+            1024 * 1024 * 1024
+        )))
+    );
+}
+
+#[tokio::test]
+async fn an_org_on_the_default_plan_is_unlimited() {
+    let Some(pool) = migrated("control_default_plan").await else {
+        return;
+    };
+    let tenant = comettrace_core::TenantId::new(seeded_org(&pool).await);
+
+    let allowances = comettrace_storage::load_allowances(&pool)
+        .await
+        .expect("the allowances load");
+
+    assert_eq!(allowances.get(&tenant), Some(&Allowance::Unlimited));
 }
