@@ -9,6 +9,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use comettrace_core::{
     Email, Mailer, Password, PasswordHasher, ResetError, ResetPassword, ResetStore, ResetToken,
+    WeakPassword,
 };
 use serde::Deserialize;
 
@@ -96,6 +97,8 @@ pub enum ResetRefused {
     NotFromOurOrigin,
     #[error("this link is spent or was never issued")]
     Link,
+    #[error(transparent)]
+    Weak(WeakPassword),
     #[error("the password could not be changed")]
     Unavailable,
 }
@@ -104,6 +107,7 @@ impl From<ResetError> for ResetRefused {
     fn from(error: ResetError) -> Self {
         match error {
             ResetError::Unknown => Self::Link,
+            ResetError::Weak(weak) => Self::Weak(weak),
             ResetError::StoreUnreachable | ResetError::Undeliverable | ResetError::Hashing(_) => {
                 Self::Unavailable
             }
@@ -116,6 +120,7 @@ impl IntoResponse for ResetRefused {
         let status = match self {
             Self::NotFromOurOrigin => StatusCode::FORBIDDEN,
             Self::Link => StatusCode::BAD_REQUEST,
+            Self::Weak(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         };
         if status.is_server_error() {

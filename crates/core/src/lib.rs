@@ -17,7 +17,9 @@ mod tenant;
 mod usage;
 
 pub use clock::{Clock, UnixSeconds};
-pub use credential::{Email, InvalidCredential, Issuer, Password, Subject};
+pub use credential::{
+    Email, InvalidCredential, Issuer, Password, PasswordPolicy, Subject, WeakPassword,
+};
 pub use federated::{Authorizer, FederatedError, FederatedSignIn};
 pub use identity::{
     AccountId, AuthError, AuthProvider, AuthSources, NoProvider, ProvisionPolicy, ResolvedIdentity,
