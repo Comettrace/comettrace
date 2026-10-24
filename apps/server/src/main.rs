@@ -12,9 +12,9 @@ use comettrace_api::{
     SessionCookie, auth_router, me_router, oidc_router, reset_router, router, trace_server,
 };
 use comettrace_core::{
-    AuthSources, Clock, DecompressedBytes, FederatedSignIn, Ingest, IngestKey, NoProvider, OrgRole,
-    ProvisionPolicy, ResetPassword, SessionLifetime, SignIn, TenantDirectory, TenantId, UnknownKey,
-    UsageMeter, UsageReader, Whoami,
+    AccountId, AuthSources, Clock, DecompressedBytes, Email, FederatedSignIn, Ingest, IngestKey,
+    NoProvider, OrgRole, ProvisionPolicy, ResetPassword, ResetStore, ResetToken, SessionLifetime,
+    SignIn, TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink,
@@ -80,6 +80,16 @@ enum Command {
         #[arg(long)]
         prefix: String,
     },
+    /// Create an account with no password and print the link that sets one
+    CreateAccount {
+        #[arg(long)]
+        email: String,
+    },
+    /// Print a fresh link that sets the password of an existing account
+    ResetPassword {
+        #[arg(long)]
+        email: String,
+    },
     /// Create an organisation and make an existing account its owner
     CreateOrg {
         #[arg(long)]
@@ -115,6 +125,31 @@ impl From<Role> for OrgRole {
     }
 }
 
+const INVITE_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
+
+async fn invite(pool: &PgPool, account: AccountId) -> anyhow::Result<ResetToken> {
+    let token = ResetToken::random();
+    PostgresResets::new(pool.clone(), SystemClock)
+        .with_window(INVITE_WINDOW)
+        .begin(account, token.hash())
+        .await
+        .context("opening the password reset")?;
+    Ok(token)
+}
+
+fn print_the_way_in(token: &ResetToken) {
+    eprintln!(
+        "The token printed below lasts {} hours and can be spent once:",
+        INVITE_WINDOW.as_secs() / 3600
+    );
+    eprintln!(
+        "  curl -X POST <base>/auth/reset/confirm -H 'x-requested-with: cli' \\\n    \
+         -H 'content-type: application/json' \\\n    \
+         -d '{{\"token\":\"<token>\",\"password\":\"<chosen>\"}}'"
+    );
+    println!("{}", token.exposed());
+}
+
 async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
     let pool = control_plane_pool(config)
         .await?
@@ -139,6 +174,36 @@ async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
             } else {
                 eprintln!("{prefix} matched no live key.");
             }
+        }
+        Command::CreateAccount { email } => {
+            let email = Email::try_from(email.as_str()).context("reading the address")?;
+            let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
+            let locked = hasher.locked().context("locking the new account")?;
+            let account = PostgresAccounts::new(pool.clone())
+                .create(&email, &locked)
+                .await
+                .context("creating the account")?;
+            let token = invite(&pool, account).await?;
+            eprintln!(
+                "{} cannot sign in until it carries a password.",
+                email.as_str()
+            );
+            print_the_way_in(&token);
+        }
+        Command::ResetPassword { email } => {
+            let email = Email::try_from(email.as_str()).context("reading the address")?;
+            let resets = PostgresResets::new(pool.clone(), SystemClock);
+            let account = resets
+                .account_for(&email)
+                .await
+                .context("looking the account up")?
+                .with_context(|| format!("no account carries {}", email.as_str()))?;
+            let token = invite(&pool, account).await?;
+            eprintln!(
+                "Every session of {} ends once the password changes.",
+                email.as_str()
+            );
+            print_the_way_in(&token);
         }
         Command::CreateOrg { name, owner } => {
             let org = PostgresMemberships::new(pool)

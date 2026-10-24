@@ -1,4 +1,6 @@
-use comettrace_core::{AccountDirectory, AccountId, AuthError, ProvisionPolicy, ResolvedIdentity};
+use comettrace_core::{
+    AccountDirectory, AccountId, AuthError, Email, PasswordHash, ProvisionPolicy, ResolvedIdentity,
+};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -8,6 +10,8 @@ pub enum AccountError {
     ControlPlane(#[from] sqlx::Error),
     #[error("this identity carries no account and provisioning is off")]
     NotProvisioned,
+    #[error("an account already carries this address")]
+    Taken,
 }
 
 #[derive(Debug, Clone)]
@@ -18,6 +22,27 @@ pub struct PostgresAccounts {
 impl PostgresAccounts {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    pub async fn create(
+        &self,
+        email: &Email,
+        locked: &PasswordHash,
+    ) -> Result<AccountId, AccountError> {
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO accounts (id, email, password_hash) VALUES ($1, $2, $3)")
+            .bind(id)
+            .bind(email.as_str())
+            .bind(locked.encoded())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| match &error {
+                sqlx::Error::Database(refusal) if refusal.is_unique_violation() => {
+                    AccountError::Taken
+                }
+                _ => AccountError::ControlPlane(error),
+            })?;
+        Ok(AccountId::new(id))
     }
 
     pub async fn linked(
@@ -91,7 +116,7 @@ impl AccountDirectory for PostgresAccounts {
         match PostgresAccounts::provision(self, identity, policy).await {
             Ok(account) => Ok(account),
             Err(AccountError::NotProvisioned) => Err(AuthError::Rejected),
-            Err(AccountError::ControlPlane(error)) => {
+            Err(error) => {
                 tracing::error!(%error, "the control plane refused to provision an account");
                 Err(AuthError::ProviderUnreachable)
             }

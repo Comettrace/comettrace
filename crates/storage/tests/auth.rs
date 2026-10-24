@@ -1,11 +1,11 @@
 use comettrace_core::{
     AccountId, AuthError, AuthProvider, CodeVerifier, Email, FlowError, Mailer, OidcFlows,
-    Password, PasswordCheck, PasswordHasher, PendingFlow, ResetError, ResetPassword, ResetToken,
-    SessionError, SessionLifetime, SessionStore, SignInProof,
+    Password, PasswordCheck, PasswordHasher, PendingFlow, ResetError, ResetPassword, ResetStore,
+    ResetToken, SessionError, SessionLifetime, SessionStore, SignInProof,
 };
 use comettrace_storage::{
-    Argon2Hasher, CONTROL_PLANE, FixedClock, LocalPasswordProvider, PostgresFlows, PostgresResets,
-    PostgresSessions,
+    AccountError, Argon2Hasher, CONTROL_PLANE, FixedClock, LocalPasswordProvider, PostgresAccounts,
+    PostgresFlows, PostgresResets, PostgresSessions,
 };
 use std::sync::Mutex;
 use std::time::Duration;
@@ -560,4 +560,77 @@ async fn a_reset_past_its_window_is_gone() {
     .await;
 
     assert_eq!(late, Err(ResetError::Unknown));
+}
+
+#[tokio::test]
+async fn a_created_account_is_locked_until_a_password_is_chosen() {
+    let Some(pool) = control_plane("accounts_locked").await else {
+        return;
+    };
+    let address = Email::try_from("fresh@example.com").expect("an address");
+    let locked = cheap().locked().expect("a locked hash");
+    let account = PostgresAccounts::new(pool.clone())
+        .create(&address, &locked)
+        .await
+        .expect("the account is created");
+    let provider = LocalPasswordProvider::new(pool.clone(), cheap());
+
+    assert_eq!(
+        provider.sign_in(a_proof("fresh@example.com", "")).await,
+        Err(AuthError::Rejected),
+        "an empty password must not open a locked account"
+    );
+    assert_eq!(
+        provider
+            .sign_in(a_proof("fresh@example.com", "correct horse"))
+            .await,
+        Err(AuthError::Rejected)
+    );
+
+    let outbox = Outbox::default();
+    let resets = PostgresResets::new(pool.clone(), FixedClock::at(NOW));
+    let invite = a_reset_token("invite");
+    resets
+        .begin(account, invite.hash())
+        .await
+        .expect("the invite is opened");
+    ResetPassword::new(resets, cheap(), &outbox)
+        .confirm(&invite, &Password::new("chosen at last"))
+        .await
+        .expect("the password is chosen");
+
+    assert!(
+        provider
+            .sign_in(a_proof("fresh@example.com", "chosen at last"))
+            .await
+            .is_ok(),
+        "the account opens once its password is chosen"
+    );
+}
+
+#[tokio::test]
+async fn an_address_carries_at_most_one_account() {
+    let Some(pool) = control_plane("accounts_taken").await else {
+        return;
+    };
+    let address = Email::try_from("twice@example.com").expect("an address");
+    let accounts = PostgresAccounts::new(pool.clone());
+    let locked = cheap().locked().expect("a locked hash");
+    accounts
+        .create(&address, &locked)
+        .await
+        .expect("the first account");
+
+    let refused = accounts.create(&address, &locked).await;
+
+    assert!(matches!(refused, Err(AccountError::Taken)));
+}
+
+#[tokio::test]
+async fn two_locked_accounts_do_not_share_a_hash() {
+    let hasher = cheap();
+    let one = hasher.locked().expect("a locked hash");
+    let other = hasher.locked().expect("another locked hash");
+
+    assert_ne!(one.encoded(), other.encoded());
 }
