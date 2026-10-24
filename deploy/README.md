@@ -98,7 +98,9 @@ COMETTRACE_LOCAL_PASSWORD=false
 
 An account is provisioned the first time somebody signs in, so run
 `bootstrap` with that person's address afterwards to give them an
-organisation to own.
+organisation to own. It prints no reset token in that case: there is no
+password to set, and `/auth/reset/*` is not mounted when local passwords
+are off.
 
 ## Multi-tenancy
 

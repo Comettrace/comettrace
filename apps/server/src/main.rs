@@ -14,9 +14,9 @@ use comettrace_api::{
 };
 use comettrace_core::{
     AccountId, AuthSources, Clock, DecompressedBytes, Email, FederatedSignIn, Ingest, IngestKey,
-    NoProvider, OrgRole, ProvisionPolicy, ResetPassword, ResetStore, ResetToken, SessionLifetime,
-    SignIn, SinkError, Span, SpanSink, TenantDirectory, TenantId, UnknownKey, UsageMeter,
-    UsageReader, Whoami,
+    Mailer, NoProvider, OrgRole, ProvisionPolicy, ResetError, ResetPassword, ResetStore,
+    ResetToken, SessionLifetime, SignIn, SinkError, Span, SpanSink, TenantDirectory, TenantId,
+    UnknownKey, UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseSink, LocalPasswordProvider, MailSettings,
@@ -50,6 +50,24 @@ impl SpanSink for Sink {
         match self {
             Self::Memory(sink) => sink.accept(tenant, spans).await,
             Self::Spans(sink) => sink.accept(tenant, spans).await,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum Relay {
+    Smtp(SmtpMailer),
+    Unreachable,
+}
+
+impl Mailer for Relay {
+    async fn send_password_reset(&self, to: &Email, token: &ResetToken) -> Result<(), ResetError> {
+        match self {
+            Self::Smtp(mailer) => mailer.send_password_reset(to, token).await,
+            Self::Unreachable => {
+                tracing::warn!("a reset link was asked for but no mail relay is configured");
+                Err(ResetError::Undeliverable)
+            }
         }
     }
 }
@@ -184,7 +202,9 @@ async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
     match command {
         Command::IssueKey { org, project } => issue_key(pool, org, project).await,
         Command::RevokeKey { prefix } => revoke_key(pool, &prefix).await,
-        Command::Bootstrap { email, org } => bootstrap(pool, &email, &org).await,
+        Command::Bootstrap { email, org } => {
+            bootstrap(pool, &email, &org, config.local_password).await
+        }
         Command::CreateAccount { email } => create_account(pool, &email).await,
         Command::ResetPassword { email } => reset_password(pool, &email).await,
         Command::CreateOrg { name, owner } => create_org(pool, &name, &owner).await,
@@ -217,7 +237,12 @@ async fn revoke_key(pool: PgPool, prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn bootstrap(pool: PgPool, email: &str, org: &str) -> anyhow::Result<()> {
+async fn bootstrap(
+    pool: PgPool,
+    email: &str,
+    org: &str,
+    local_password: bool,
+) -> anyhow::Result<()> {
     let memberships = PostgresMemberships::new(pool.clone());
     if let Some(existing) = memberships
         .founded()
@@ -237,12 +262,16 @@ async fn bootstrap(pool: PgPool, email: &str, org: &str) -> anyhow::Result<()> {
         .found(org, email.as_str())
         .await
         .context("creating the organisation")?;
-    let token = invite(&pool, account).await?;
 
     eprintln!("{} owns {org} ({tenant}).", email.as_str());
     eprintln!("Draw its first ingest key with:");
     eprintln!("  comettrace issue-key --org {tenant}");
-    print_the_way_in(&token);
+
+    if !local_password {
+        eprintln!("Local passwords are off, so sign in through the identity provider.");
+        return Ok(());
+    }
+    print_the_way_in(&invite(&pool, account).await?);
     Ok(())
 }
 
@@ -505,7 +534,7 @@ async fn flush_once(sink: &Sink) {
 type LocalSource = LocalPasswordProvider<Argon2Hasher>;
 type Sessions = PostgresSessions<SystemClock>;
 type PasswordSignIn = SignIn<LocalSource, NoProvider, PostgresAccounts, Arc<Sessions>>;
-type Resets = ResetPassword<PostgresResets<SystemClock>, Argon2Hasher, SmtpMailer>;
+type Resets = ResetPassword<PostgresResets<SystemClock>, Argon2Hasher, Relay>;
 type Me = Whoami<Arc<Sessions>, PostgresMemberships>;
 type Federated =
     FederatedSignIn<OidcProvider, PostgresFlows<SystemClock>, PostgresAccounts, Arc<Sessions>>;
@@ -566,29 +595,41 @@ async fn identity_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Resu
         tracing::info!(issuer = %settings.issuer, "federated sign in accepted");
     }
 
-    if let Some(mail) = &config.mail {
-        if !config.local_password {
-            tracing::warn!("a mail relay is configured but local passwords are off");
-        }
-        let mailer = SmtpMailer::connect(&MailSettings {
-            relay: mail.relay.clone(),
-            username: mail.username.clone(),
-            password: mail.password.clone(),
-            from: mail.from.clone(),
-            base_url: mail.base_url.clone(),
-        })
-        .context("preparing the mail relay")?;
+    if config.mail.is_some() && !config.local_password {
+        tracing::warn!("a mail relay is configured but local passwords are off");
+    }
+
+    if config.local_password {
         let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
         let reset: Arc<Resets> = Arc::new(ResetPassword::new(
             PostgresResets::new(pool.clone(), SystemClock),
             hasher,
-            mailer,
+            relay_of(config)?,
         ));
         routes = routes.merge(reset_router(reset));
-        tracing::info!(relay = %mail.relay, "password resets can be sent");
     }
 
     Ok(routes)
+}
+
+fn relay_of(config: &Config) -> anyhow::Result<Relay> {
+    let Some(mail) = &config.mail else {
+        tracing::warn!(
+            "no mail relay is configured, so nobody can ask for a reset link; \
+             hand one over with `comettrace reset-password`"
+        );
+        return Ok(Relay::Unreachable);
+    };
+    let mailer = SmtpMailer::connect(&MailSettings {
+        relay: mail.relay.clone(),
+        username: mail.username.clone(),
+        password: mail.password.clone(),
+        from: mail.from.clone(),
+        base_url: mail.base_url.clone(),
+    })
+    .context("preparing the mail relay")?;
+    tracing::info!(relay = %mail.relay, "password resets can be sent");
+    Ok(Relay::Smtp(mailer))
 }
 
 async fn serve_http(

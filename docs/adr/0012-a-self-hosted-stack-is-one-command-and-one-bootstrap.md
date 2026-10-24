@@ -67,3 +67,24 @@ own than this gap.
 Images are not published anywhere. The compose file builds from the
 checkout, so a self-hoster needs the source. Publishing on semver tags is
 #67 and stays there.
+
+## What the smoke test found
+
+`/auth/reset/*` was mounted only when a mail relay was configured. The CLI
+mints a reset token precisely so that a deployment with no relay can let
+somebody in, and the endpoint that spends it was behind the very condition
+that makes the CLI necessary. The token `bootstrap` printed could not be
+spent at all, and the stack was unusable out of the box.
+
+The two halves of a reset want different things. `request` needs a mailer
+to send a link. `confirm` needs only the store and the hasher. So the
+reset routes are now mounted whenever local passwords are on, with the
+relay chosen the way the meter and the span store are: an SMTP relay when
+one is configured, otherwise one that refuses to deliver and says why at
+start.
+
+`request` keeps answering 204 either way, so it still tells a caller
+nothing about which addresses exist.
+
+This is the whole argument for the job: the mistake was invisible to every
+unit and integration test, because each half was correct on its own.
