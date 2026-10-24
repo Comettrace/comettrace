@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 
 use clickhouse::{Client, Row};
 use comettrace_core::{
-    ReadError, ServiceSummary, Span, SpanId, SpanKind, SpanReader, SpanStatus, TenantId,
+    ProjectId, ReadError, ServiceSummary, Span, SpanId, SpanKind, SpanReader, SpanStatus, TenantId,
     TraceFilter, TraceId, TraceOrder, TraceSummary, Window,
 };
 use serde::Deserialize;
+use uuid::Uuid;
 
 const SERVICES: &str = "SELECT \
      service_name AS name, \
@@ -20,6 +21,7 @@ const SERVICES: &str = "SELECT \
      AND start_time >= fromUnixTimestamp64Nano(?) \
      AND start_time < fromUnixTimestamp64Nano(?) \
      AND kind IN ('server', 'consumer') \
+     AND (? = 0 OR project_id = ?) \
    GROUP BY service_name \
    ORDER BY requests DESC \
    LIMIT 500";
@@ -36,6 +38,7 @@ const SUMMARIES: &str = "SELECT \
    WHERE tenant_id = ? \
      AND start_time >= fromUnixTimestamp64Nano(?) \
      AND start_time < fromUnixTimestamp64Nano(?) \
+     AND (? = 0 OR project_id = ?) \
    GROUP BY trace_id \
    HAVING (? = '' OR countIf(service_name = ?) > 0) \
      AND (? = 0 OR errors > 0) \
@@ -106,6 +109,7 @@ impl SpanReader for ClickhouseReader {
         &self,
         tenant: TenantId,
         window: Window,
+        project: Option<ProjectId>,
     ) -> Result<Vec<ServiceSummary>, ReadError> {
         let rows: Vec<ServiceRow> = self
             .client
@@ -113,6 +117,8 @@ impl SpanReader for ClickhouseReader {
             .bind(tenant.as_uuid())
             .bind(nanos(window.from_unix_nanos()))
             .bind(nanos(window.to_unix_nanos()))
+            .bind(u8::from(project.is_some()))
+            .bind(uuid_of(project))
             .fetch_all()
             .await
             .map_err(|error| refused(&error))?;
@@ -132,6 +138,8 @@ impl SpanReader for ClickhouseReader {
             .bind(tenant.as_uuid())
             .bind(nanos(filter.window.from_unix_nanos()))
             .bind(nanos(filter.window.to_unix_nanos()))
+            .bind(u8::from(filter.project.is_some()))
+            .bind(uuid_of(filter.project))
             .bind(service)
             .bind(service)
             .bind(u8::from(filter.only_errors))
@@ -258,6 +266,13 @@ fn read_status(spelling: &str) -> SpanStatus {
         "error" => SpanStatus::Error,
         _ => SpanStatus::Unset,
     }
+}
+
+/* ClickHouse has no nullable bind here, so the predicate is switched off by a flag and the uuid
+only read when it is on. The zero uuid is also what a span with no project carries, so it must
+not double as "no filter". */
+fn uuid_of(project: Option<ProjectId>) -> Uuid {
+    project.map(ProjectId::as_uuid).unwrap_or_default()
 }
 
 fn nanos(value: u64) -> i64 {

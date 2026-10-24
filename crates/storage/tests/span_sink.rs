@@ -774,7 +774,7 @@ async fn the_services_table_measures_only_the_spans_a_service_was_called_on() {
     store.flush().await.expect("the batch commits");
 
     let found = reader
-        .services(tenant, a_wide_window())
+        .services(tenant, a_wide_window(), None)
         .await
         .expect("the services read");
 
@@ -823,7 +823,7 @@ async fn the_services_table_never_crosses_tenants() {
     store.flush().await.expect("the batch commits");
 
     let found = reader
-        .services(mine, a_wide_window())
+        .services(mine, a_wide_window(), None)
         .await
         .expect("the services read");
 
@@ -896,5 +896,95 @@ async fn a_span_from_a_key_naming_no_project_carries_none() {
         stored_project(&client).await,
         Uuid::nil(),
         "no project is the only honest answer a project filter can be given"
+    );
+}
+
+#[tokio::test]
+async fn a_project_narrows_what_the_services_table_and_the_trace_list_answer() {
+    let Some((url, reader)) = a_written_store("read_by_project").await else {
+        return;
+    };
+    let store = open_span_store(&settings_for(&url, "read_by_project"), FixedClock::at(NOW))
+        .await
+        .expect("a sink")
+        .sink;
+    let tenant = TenantId::new(Uuid::from_u128(1));
+    let storefront = ProjectId::new(Uuid::from_u128(11));
+    let payments = ProjectId::new(Uuid::from_u128(12));
+    store
+        .accept(
+            Scope::of(tenant).in_project(Some(storefront)),
+            vec![a_span(1, "checkout")],
+        )
+        .await
+        .expect("the first project");
+    store
+        .accept(
+            Scope::of(tenant).in_project(Some(payments)),
+            vec![a_span(2, "billing")],
+        )
+        .await
+        .expect("the second project");
+    store.flush().await.expect("the batch commits");
+
+    let everything = reader
+        .services(tenant, a_wide_window(), None)
+        .await
+        .expect("a read");
+    let only_storefront = reader
+        .services(tenant, a_wide_window(), Some(storefront))
+        .await
+        .expect("a read");
+    let mut narrowed = a_wide_filter();
+    narrowed.project = Some(payments);
+
+    assert_eq!(everything.len(), 2, "no project asked for means every one");
+    assert_eq!(only_storefront.len(), 1);
+    assert_eq!(&*only_storefront[0].name, "checkout");
+
+    let traces = reader.traces(tenant, &narrowed).await.expect("a read");
+    assert_eq!(traces.len(), 1);
+    assert_eq!(&*traces[0].root_service, "billing");
+}
+
+#[tokio::test]
+async fn a_project_nobody_wrote_under_answers_nothing_rather_than_everything() {
+    let Some((url, reader)) = a_written_store("read_absent_project").await else {
+        return;
+    };
+    let store = open_span_store(
+        &settings_for(&url, "read_absent_project"),
+        FixedClock::at(NOW),
+    )
+    .await
+    .expect("a sink")
+    .sink;
+    let tenant = TenantId::new(Uuid::from_u128(1));
+    store
+        .accept(
+            Scope::of(tenant).in_project(Some(ProjectId::new(Uuid::from_u128(11)))),
+            vec![a_span(1, "checkout")],
+        )
+        .await
+        .expect("a batch");
+    store.flush().await.expect("the batch commits");
+
+    let stranger = Some(ProjectId::new(Uuid::from_u128(99)));
+    let mut narrowed = a_wide_filter();
+    narrowed.project = stranger;
+
+    assert!(
+        reader
+            .services(tenant, a_wide_window(), stranger)
+            .await
+            .expect("a read")
+            .is_empty()
+    );
+    assert!(
+        reader
+            .traces(tenant, &narrowed)
+            .await
+            .expect("a read")
+            .is_empty()
     );
 }

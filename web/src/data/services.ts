@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { get, json } from '@/auth/client'
 import { useOrganizations } from '@/auth/session'
+import { useScope } from '@/lib/scope'
 import { dur } from '@/lib/format'
 
 export type Service = { name: string; project: string; rps: string; err: number | null; p50: string; p95: string; p99: string; seen: string; spark: number[] }
@@ -41,14 +42,18 @@ export const serving = (service: Serving): Service => ({
 
 export function useServices(): Service[] {
   const { active } = useOrganizations()
+  const { project } = useScope()
   const { data } = useQuery({
-    queryKey: ['services', active?.org],
+    queryKey: ['services', active?.org, project],
     enabled: Boolean(active),
     staleTime: FRESH_MS,
     queryFn: async () => {
       const to = Date.now()
       const from = to - WINDOW_MS
-      const found = await json<{ services: Serving[] }>(await get(`/api/orgs/${active?.org}/services?from=${from}&to=${to}`))
+      const within = project ? `&project=${project}` : ''
+      const found = await json<{ services: Serving[] }>(
+        await get(`/api/orgs/${active?.org}/services?from=${from}&to=${to}${within}`),
+      )
       return found.services.map(serving)
     },
   })

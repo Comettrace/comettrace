@@ -9,8 +9,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use comettrace_core::{
-    Explore, ExploreError, Memberships, ServiceSummary, SessionStore, SessionToken, Span, SpanKind,
-    SpanReader, SpanStatus, TenantId, TraceFilter, TraceId, TraceOrder, TraceSummary, Window,
+    Explore, ExploreError, Memberships, ProjectId, ServiceSummary, SessionStore, SessionToken,
+    Span, SpanKind, SpanReader, SpanStatus, TenantId, TraceFilter, TraceId, TraceOrder,
+    TraceSummary, Window,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -25,6 +26,8 @@ const NANOS_PER_MICRO: u64 = 1_000;
 pub struct Asked {
     from: u64,
     to: u64,
+    #[serde(default)]
+    project: Option<Uuid>,
     #[serde(default)]
     service: Option<String>,
     #[serde(default)]
@@ -194,6 +197,7 @@ where
     )
     .map_err(|_| LookRefused::Window)?;
     let mut filter = TraceFilter::over(window);
+    filter.project = asked.project.map(ProjectId::new);
     filter.service = asked.service.map(Into::into);
     filter.only_errors = asked.errors;
     filter.at_least_nanos = asked
@@ -343,7 +347,12 @@ where
     let seconds = (over.to.saturating_sub(over.from) as f64) / 1000.0;
 
     let found = explore
-        .services(&token, TenantId::new(org), window)
+        .services(
+            &token,
+            TenantId::new(org),
+            window,
+            over.project.map(ProjectId::new),
+        )
         .await?
         .into_iter()
         .map(|summary| serving(summary, seconds))
@@ -355,4 +364,6 @@ where
 pub struct Spanning {
     from: u64,
     to: u64,
+    #[serde(default)]
+    project: Option<Uuid>,
 }
