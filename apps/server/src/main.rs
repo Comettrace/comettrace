@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::Context;
 use axum::Router;
 use clap::{Parser, Subcommand};
-use comettrace_api::{SessionCookie, auth_router, oidc_router, router, trace_server};
+use comettrace_api::{SessionCookie, auth_router, oidc_router, reset_router, router, trace_server};
 use comettrace_core::{
     AuthSources, Clock, DecompressedBytes, FederatedSignIn, Ingest, IngestKey, NoProvider,
     ProvisionPolicy, SessionLifetime, SignIn, TenantDirectory, TenantId, UnknownKey, UsageMeter,
@@ -237,6 +237,7 @@ fn gateway_of(
 type LocalSource = LocalPasswordProvider<Argon2Hasher>;
 type Sessions = PostgresSessions<SystemClock>;
 type PasswordSignIn = SignIn<LocalSource, NoProvider, PostgresAccounts, Arc<Sessions>>;
+type Resets = ResetPassword<PostgresResets<SystemClock>, Argon2Hasher, SmtpMailer>;
 type Federated =
     FederatedSignIn<OidcProvider, PostgresFlows<SystemClock>, PostgresAccounts, Arc<Sessions>>;
 
@@ -290,6 +291,28 @@ async fn identity_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Resu
         ));
         routes = routes.merge(oidc_router(federated, cookie, config.after_sign_in.clone()));
         tracing::info!(issuer = %settings.issuer, "federated sign in accepted");
+    }
+
+    if let Some(mail) = &config.mail {
+        if !config.local_password {
+            tracing::warn!("a mail relay is configured but local passwords are off");
+        }
+        let mailer = SmtpMailer::connect(&MailSettings {
+            relay: mail.relay.clone(),
+            username: mail.username.clone(),
+            password: mail.password.clone(),
+            from: mail.from.clone(),
+            base_url: mail.base_url.clone(),
+        })
+        .context("preparing the mail relay")?;
+        let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
+        let reset: Arc<Resets> = Arc::new(ResetPassword::new(
+            PostgresResets::new(pool.clone(), SystemClock),
+            hasher,
+            mailer,
+        ));
+        routes = routes.merge(reset_router(reset));
+        tracing::info!(relay = %mail.relay, "password resets can be sent");
     }
 
     Ok(routes)

@@ -17,6 +17,7 @@ sqlx.workspace = true
 subtle.workspace = true
 argon2.workspace = true
 hex.workspace = true
+lettre.workspace = true
 openidconnect.workspace = true
 reqwest.workspace = true
 rand.workspace = true

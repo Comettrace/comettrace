@@ -22,6 +22,8 @@ pub struct Config {
     pub tenants: Vec<TenantKey>,
     #[serde(default)]
     pub oidc: Option<OidcConfig>,
+    #[serde(default)]
+    pub mail: Option<MailConfig>,
     #[serde(default = "yes")]
     pub local_password: bool,
     #[serde(default = "yes")]
@@ -36,6 +38,15 @@ fn yes() -> bool {
 
 fn console() -> String {
     "/console".to_owned()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailConfig {
+    pub relay: String,
+    pub username: String,
+    pub password: String,
+    pub from: String,
+    pub base_url: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +92,7 @@ impl Default for Config {
             redis_url: None,
             tenants: Vec::new(),
             oidc: None,
+            mail: None,
             local_password: true,
             cookie_secure: true,
             after_sign_in: console(),
@@ -181,6 +193,30 @@ mod tests {
                 config.tenants[1].allowance,
                 TenantAllowance::Overage(10_485_760)
             );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn a_mail_relay_is_declared_whole_or_not_at_all() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                FILE,
+                r#"
+                [mail]
+                relay = "mail.example.com"
+                username = "postmaster"
+                password = "secret"
+                from = "Comettrace <no-reply@example.com>"
+                base_url = "https://app.example.com"
+                "#,
+            )?;
+
+            let config: Config = figment().extract()?;
+            let mail = config.mail.expect("a relay");
+
+            assert_eq!(mail.relay, "mail.example.com");
+            assert_eq!(mail.base_url, "https://app.example.com");
             Ok(())
         });
     }
