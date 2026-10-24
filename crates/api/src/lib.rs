@@ -1,5 +1,6 @@
 mod auth;
 mod error;
+mod explore_routes;
 mod grpc;
 mod health;
 mod http;
@@ -11,6 +12,7 @@ mod sign_in;
 mod whoami_routes;
 
 pub use error::ApiError;
+pub use explore_routes::{LookRefused, explore_router};
 pub use grpc::{TraceGateway, trace_server};
 pub use health::health_router;
 pub use http::{MAX_DECOMPRESSED_BYTES, router};

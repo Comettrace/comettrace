@@ -9,20 +9,21 @@ use anyhow::Context;
 use axum::Router;
 use clap::{Parser, Subcommand, ValueEnum};
 use comettrace_api::{
-    SessionCookie, SignInMethods, auth_router, health_router, me_router, methods_router,
-    oidc_router, reset_router, router, trace_server,
+    SessionCookie, SignInMethods, auth_router, explore_router, health_router, me_router,
+    methods_router, oidc_router, reset_router, router, trace_server,
 };
 use comettrace_core::{
-    AccountId, AuthSources, Clock, DecompressedBytes, Email, FederatedSignIn, Ingest, IngestKey,
-    Mailer, NoProvider, OrgRole, ProvisionPolicy, ResetError, ResetPassword, ResetStore,
+    AccountId, AuthSources, Clock, DecompressedBytes, Email, Explore, FederatedSignIn, Ingest,
+    IngestKey, Mailer, NoProvider, OrgRole, ProvisionPolicy, ResetError, ResetPassword, ResetStore,
     ResetToken, SessionLifetime, SignIn, SinkError, Span, SpanSink, TenantDirectory, TenantId,
     UnknownKey, UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
-    Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseSink, LocalPasswordProvider, MailSettings,
-    MemoryMeter, MemorySink, OidcProvider, OidcSettings, PostgresAccounts, PostgresDirectory,
-    PostgresFlows, PostgresMemberships, PostgresResets, PostgresSessions, RedisMeter, SmtpMailer,
-    SpanStoreSettings, StaticDirectory, StaticQuota, SystemClock, load_allowances, open_span_store,
+    Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink,
+    LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink, OidcProvider, OidcSettings,
+    PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresMemberships, PostgresResets,
+    PostgresSessions, RedisMeter, SmtpMailer, SpanStoreSettings, StaticDirectory, StaticQuota,
+    SystemClock, load_allowances, open_span_store,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -382,12 +383,15 @@ async fn main() -> anyhow::Result<()> {
     let pool = control_plane_pool(&config).await?;
     let allowances = allowances_of(&config, pool.as_ref()).await?;
     let meter = Arc::new(meter_of(&config, pool.as_ref()).await?);
-    let identity = identity_routes(&config, pool.as_ref()).await?;
     if let (Some(pool), Meter::Redis(_)) = (pool.as_ref(), meter.as_ref()) {
         tokio::spawn(roll_up_hourly(Arc::clone(&meter), pool.clone()));
     }
-    let sink = Arc::new(sink_of(&config).await?);
+    let (sink, reader) = spans_of(&config).await?;
+    let sink = Arc::new(sink);
     tokio::spawn(flush_spans(Arc::clone(&sink)));
+    let identity = identity_routes(&config, pool.as_ref())
+        .await?
+        .merge(explore_routes(pool.as_ref(), reader));
     let gateway = Arc::new(gateway_of(
         directory_of(pool.as_ref()),
         allowances,
@@ -507,16 +511,39 @@ fn gateway_of(
     Ingest::new(directory, quota, sink, meter)
 }
 
-async fn sink_of(config: &Config) -> anyhow::Result<Sink> {
+type Looking = Explore<Arc<Sessions>, PostgresMemberships, ClickhouseReader>;
+
+fn explore_routes(pool: Option<&PgPool>, reader: Option<ClickhouseReader>) -> Router {
+    let (Some(pool), Some(reader)) = (pool, reader) else {
+        tracing::warn!(
+            "traces cannot be read back: that needs both a control plane to \
+             authorise the reader and a span store to read from"
+        );
+        return Router::new();
+    };
+    let sessions = Arc::new(PostgresSessions::new(
+        pool.clone(),
+        SystemClock,
+        SessionLifetime::default(),
+    ));
+    let explore: Arc<Looking> = Arc::new(Explore::new(
+        Whoami::new(sessions, PostgresMemberships::new(pool.clone())),
+        reader,
+    ));
+    explore_router(explore)
+}
+
+async fn spans_of(config: &Config) -> anyhow::Result<(Sink, Option<ClickhouseReader>)> {
     let Some(spans) = config.spans.clone() else {
         tracing::warn!(
             "no span store is configured, so accepted spans are held in memory and \
-             lost when this process ends; set spans.url to keep them"
+             lost when this process ends, and no trace can be read back; \
+             set spans.url to keep them"
         );
-        return Ok(Sink::Memory(MemorySink::default()));
+        return Ok((Sink::Memory(MemorySink::default()), None));
     };
     let settings = SpanStoreSettings::from(spans);
-    let sink = open_span_store(&settings, SystemClock)
+    let store = open_span_store(&settings, SystemClock)
         .await
         .context("opening the span store")?;
     tracing::info!(
@@ -524,7 +551,7 @@ async fn sink_of(config: &Config) -> anyhow::Result<Sink> {
         retention_days = settings.retention_days,
         "spans are written to the span store"
     );
-    Ok(Sink::Spans(Box::new(sink)))
+    Ok((Sink::Spans(Box::new(store.sink)), Some(store.reader)))
 }
 
 async fn flush_spans(sink: Arc<Sink>) {

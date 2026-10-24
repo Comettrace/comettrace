@@ -3,7 +3,9 @@ use std::time::Duration;
 use clickhouse::Client;
 use comettrace_core::Clock;
 
-use crate::clickhouse::{BatchLimits, ClickhouseMigrator, ClickhouseSink, MigrateError};
+use crate::clickhouse::{
+    BatchLimits, ClickhouseMigrator, ClickhouseReader, ClickhouseSink, MigrateError,
+};
 
 const DEFAULT_RETENTION_DAYS: u64 = 30;
 const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
@@ -47,10 +49,16 @@ impl SpanStoreSettings {
     }
 }
 
+#[derive(Debug)]
+pub struct SpanStore<C> {
+    pub sink: ClickhouseSink<C>,
+    pub reader: ClickhouseReader,
+}
+
 pub async fn open<C: Clock>(
     settings: &SpanStoreSettings,
     clock: C,
-) -> Result<ClickhouseSink<C>, MigrateError> {
+) -> Result<SpanStore<C>, MigrateError> {
     let client = settings.client();
     let ran = ClickhouseMigrator::new(client.clone()).up().await?;
     if ran.is_empty() {
@@ -58,12 +66,10 @@ pub async fn open<C: Clock>(
     } else {
         tracing::info!(?ran, "the span schema was migrated");
     }
-    Ok(ClickhouseSink::new(
-        &client,
-        BatchLimits::default(),
-        settings.retention(),
-        clock,
-    ))
+    Ok(SpanStore {
+        sink: ClickhouseSink::new(&client, BatchLimits::default(), settings.retention(), clock),
+        reader: ClickhouseReader::new(client),
+    })
 }
 
 #[cfg(test)]

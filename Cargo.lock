@@ -568,6 +568,7 @@ dependencies = [
  "comettrace-otlp",
  "comettrace-storage",
  "flate2",
+ "hex",
  "opentelemetry-proto",
  "prost",
  "serde",

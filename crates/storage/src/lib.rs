@@ -21,7 +21,8 @@ mod usage;
 
 pub use accounts::{AccountError, PostgresAccounts};
 pub use clickhouse::{
-    BatchLimits, ClickhouseMigrator, ClickhouseSink, MIGRATIONS, MigrateError, Migration,
+    BatchLimits, ClickhouseMigrator, ClickhouseReader, ClickhouseSink, MIGRATIONS, MigrateError,
+    Migration,
 };
 pub use clock::{FixedClock, SystemClock};
 pub use counter::{CounterError, RedisMeter};
@@ -39,5 +40,5 @@ pub use quota::{Allowance, StaticQuota};
 pub use resets::PostgresResets;
 pub use sessions::PostgresSessions;
 pub use sink::MemorySink;
-pub use spans::{SpanStoreSettings, open as open_span_store};
+pub use spans::{SpanStore, SpanStoreSettings, open as open_span_store};
 pub use usage::MemoryMeter;
