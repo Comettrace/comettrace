@@ -335,7 +335,7 @@ async fn the_services_table_is_read_for_the_same_organisation() {
     assert_eq!(service["requests"], 10);
     assert_eq!(service["errors"], 1);
     assert_eq!(
-        service["per_second"], 0.16666666666666666,
+        service["per_second"], 0.166_666_666_666_666_66,
         "ten requests over a minute"
     );
     assert_eq!(service["p50_us"], 96_000);
