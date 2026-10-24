@@ -6,6 +6,7 @@ mod key;
 mod quota;
 mod secret;
 mod session;
+mod signin;
 mod sink;
 mod span;
 mod tenant;
@@ -25,6 +26,7 @@ pub use session::{
     HashError, PasswordCheck, PasswordHash, PasswordHasher, Session, SessionError, SessionLifetime,
     SessionStore,
 };
+pub use signin::{AccountDirectory, SignIn, SignInError};
 pub use sink::{SinkError, SpanSink};
 pub use span::{InvalidId, Span, SpanId, SpanKind, SpanStatus, TraceId};
 pub use tenant::{TenantDirectory, TenantId, UnknownKey};
