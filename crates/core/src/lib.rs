@@ -1,3 +1,4 @@
+mod catalogue;
 mod clock;
 mod credential;
 mod explore;
@@ -17,6 +18,7 @@ mod span;
 mod tenant;
 mod usage;
 
+pub use catalogue::{Catalogue, Project, ProjectId, Projects};
 pub use clock::{Clock, UnixSeconds};
 pub use credential::{
     Email, InvalidCredential, Issuer, Password, PasswordPolicy, Subject, WeakPassword,

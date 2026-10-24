@@ -10,21 +10,21 @@ use anyhow::Context;
 use axum::Router;
 use clap::{Parser, Subcommand, ValueEnum};
 use comettrace_api::{
-    SessionCookie, SignInMethods, auth_router, explore_router, health_router, me_router,
-    methods_router, oidc_router, reset_router, router, trace_server, web_router,
+    SessionCookie, SignInMethods, auth_router, catalogue_router, explore_router, health_router,
+    me_router, methods_router, oidc_router, reset_router, router, trace_server, web_router,
 };
 use comettrace_core::{
-    AccountId, AuthSources, Clock, DecompressedBytes, Email, Explore, FederatedSignIn, Ingest,
-    IngestKey, Mailer, NoProvider, OrgRole, ProvisionPolicy, ResetError, ResetPassword, ResetStore,
-    ResetToken, SessionLifetime, SignIn, SinkError, Span, SpanSink, TenantDirectory, TenantId,
-    UnknownKey, UsageMeter, UsageReader, Whoami,
+    AccountId, AuthSources, Catalogue, Clock, DecompressedBytes, Email, Explore, FederatedSignIn,
+    Ingest, IngestKey, Mailer, NoProvider, OrgRole, ProvisionPolicy, ResetError, ResetPassword,
+    ResetStore, ResetToken, SessionLifetime, SignIn, SinkError, Span, SpanSink, TenantDirectory,
+    TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink,
     LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink, OidcProvider, OidcSettings,
-    PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresMemberships, PostgresResets,
-    PostgresSessions, RedisMeter, SmtpMailer, SpanStoreSettings, StaticDirectory, StaticQuota,
-    SystemClock, load_allowances, open_span_store,
+    PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresMemberships, PostgresProjects,
+    PostgresResets, PostgresSessions, RedisMeter, SmtpMailer, SpanStoreSettings, StaticDirectory,
+    StaticQuota, SystemClock, load_allowances, open_span_store,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -138,6 +138,13 @@ enum Command {
         #[arg(long)]
         email: String,
     },
+    /// Add a project to an organisation
+    CreateProject {
+        #[arg(long)]
+        org: Uuid,
+        #[arg(long)]
+        name: String,
+    },
     /// Create an organisation and make an existing account its owner
     CreateOrg {
         #[arg(long)]
@@ -232,6 +239,7 @@ async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
         }
         Command::CreateAccount { email } => create_account(pool, &email).await,
         Command::ResetPassword { email } => reset_password(pool, &email).await,
+        Command::CreateProject { org, name } => create_project(pool, org, &name).await,
         Command::CreateOrg { name, owner } => create_org(pool, &name, &owner).await,
         Command::GrantRole { org, member, role } => {
             grant_role(pool, org, &member, role.into()).await
@@ -287,10 +295,15 @@ async fn bootstrap(
         .found(org, email.as_str())
         .await
         .context("creating the organisation")?;
+    let project = PostgresProjects::new(pool.clone())
+        .create(tenant, "Default")
+        .await
+        .context("creating the first project")?;
 
     eprintln!("{} owns {org} ({tenant}).", email.as_str());
+    eprintln!("It holds one project, Default ({project}).");
     eprintln!("Draw its first ingest key with:");
-    eprintln!("  comettrace issue-key --org {tenant}");
+    eprintln!("  comettrace issue-key --org {tenant} --project {project}");
 
     if !local_password {
         eprintln!("Local passwords are off, so sign in through the identity provider.");
@@ -348,6 +361,17 @@ async fn reset_password(pool: PgPool, email: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn create_project(pool: PgPool, org: Uuid, name: &str) -> anyhow::Result<()> {
+    let project = PostgresProjects::new(pool)
+        .create(TenantId::new(org), name)
+        .await
+        .context("creating the project")?;
+    eprintln!("{org} now holds {name}. Draw a key for it with:");
+    eprintln!("  comettrace issue-key --org {org} --project {project}");
+    println!("{project}");
+    Ok(())
+}
+
 async fn create_org(pool: PgPool, name: &str, owner: &str) -> anyhow::Result<()> {
     let org = PostgresMemberships::new(pool)
         .found(name, owner)
@@ -392,7 +416,8 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(flush_spans(Arc::clone(&sink)));
     let identity = identity_routes(&config, pool.as_ref())
         .await?
-        .merge(explore_routes(pool.as_ref(), reader));
+        .merge(explore_routes(pool.as_ref(), reader))
+        .merge(catalogue_routes(pool.as_ref()));
     let gateway = Arc::new(gateway_of(
         directory_of(pool.as_ref()),
         allowances,
@@ -514,6 +539,23 @@ fn gateway_of(
 }
 
 type Looking = Explore<Arc<Sessions>, PostgresMemberships, ClickhouseReader>;
+type Holding = Catalogue<Arc<Sessions>, PostgresMemberships, PostgresProjects>;
+
+fn catalogue_routes(pool: Option<&PgPool>) -> Router {
+    let Some(pool) = pool else {
+        return Router::new();
+    };
+    let sessions = Arc::new(PostgresSessions::new(
+        pool.clone(),
+        SystemClock,
+        SessionLifetime::default(),
+    ));
+    let catalogue: Arc<Holding> = Arc::new(Catalogue::new(
+        Whoami::new(sessions, PostgresMemberships::new(pool.clone())),
+        PostgresProjects::new(pool.clone()),
+    ));
+    catalogue_router(catalogue)
+}
 
 fn explore_routes(pool: Option<&PgPool>, reader: Option<ClickhouseReader>) -> Router {
     let (Some(pool), Some(reader)) = (pool, reader) else {
