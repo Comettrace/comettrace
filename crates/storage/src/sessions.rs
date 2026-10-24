@@ -2,7 +2,6 @@ use comettrace_core::{
     AccountId, Clock, SESSION_PREFIX, Session, SessionError, SessionLifetime, SessionStore,
     SessionToken, TenantId, UnixSeconds,
 };
-use rand::RngCore;
 use sqlx::{PgPool, Row};
 
 const TOKEN_BYTES: usize = 32;
@@ -108,8 +107,7 @@ impl<C: Clock + Send + Sync> SessionStore for PostgresSessions<C> {
 }
 
 fn mint() -> SessionToken {
-    let mut bytes = [0u8; TOKEN_BYTES];
-    rand::rng().fill_bytes(&mut bytes);
+    let bytes: [u8; TOKEN_BYTES] = rand::random();
     SessionToken::from_plaintext(&format!("{SESSION_PREFIX}{}", hex::encode(bytes)))
 }
 
