@@ -113,26 +113,11 @@ pub enum SignInRefused {
 impl From<SignInError> for SignInRefused {
     fn from(error: SignInError) -> Self {
         match error {
-            SignInError::Auth(AuthError::Rejected) => Self::Credentials,
+            SignInError::Auth(AuthError::Rejected)
+            | SignInError::Session(SessionError::Unknown) => Self::Credentials,
             SignInError::Auth(AuthError::SourceDisabled) => Self::NotEnabled,
             SignInError::Auth(AuthError::ProviderUnreachable)
             | SignInError::Session(SessionError::StoreUnreachable) => Self::Unavailable,
-            SignInError::Session(SessionError::Unknown) => Self::Credentials,
         }
-    }
-}
-
-impl IntoResponse for SignInRefused {
-    fn into_response(self) -> Response {
-        let status = match self {
-            Self::NotFromOurOrigin => StatusCode::FORBIDDEN,
-            Self::Credentials => StatusCode::UNAUTHORIZED,
-            Self::NotEnabled => StatusCode::NOT_IMPLEMENTED,
-            Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-        };
-        if status.is_server_error() {
-            tracing::error!(error = %self, "a sign in could not be served");
-        }
-        (status, self.to_string()).into_response()
     }
 }
