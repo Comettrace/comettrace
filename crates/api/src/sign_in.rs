@@ -121,3 +121,18 @@ impl From<SignInError> for SignInRefused {
         }
     }
 }
+
+impl IntoResponse for SignInRefused {
+    fn into_response(self) -> Response {
+        let status = match self {
+            Self::NotFromOurOrigin => StatusCode::FORBIDDEN,
+            Self::Credentials => StatusCode::UNAUTHORIZED,
+            Self::NotEnabled => StatusCode::NOT_IMPLEMENTED,
+            Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        };
+        if status.is_server_error() {
+            tracing::error!(error = %self, "a sign in could not be served");
+        }
+        (status, self.to_string()).into_response()
+    }
+}
