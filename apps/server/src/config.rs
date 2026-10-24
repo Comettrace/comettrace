@@ -49,7 +49,6 @@ pub struct OidcConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TenantKey {
     pub id: Uuid,
-    pub key: String,
     #[serde(default)]
     pub allowance: TenantAllowance,
 }
@@ -126,7 +125,6 @@ mod tests {
 
                 [[tenants]]
                 id = "00000000-0000-0000-0000-000000000001"
-                key = "live"
                 "#,
             )?;
 
@@ -135,7 +133,6 @@ mod tests {
             assert_eq!(config.http_address.port(), 9318);
             assert_eq!(config.grpc_address.port(), 4317);
             assert_eq!(config.tenants.len(), 1);
-            assert_eq!(config.tenants[0].key, "live");
             Ok(())
         });
     }
@@ -148,7 +145,6 @@ mod tests {
                 r#"
                 [[tenants]]
                 id = "00000000-0000-0000-0000-000000000001"
-                key = "live"
                 "#,
             )?;
 
@@ -167,12 +163,10 @@ mod tests {
                 r#"
                 [[tenants]]
                 id = "00000000-0000-0000-0000-000000000002"
-                key = "free"
                 allowance = { kind = "capped", bytes = 1048576 }
 
                 [[tenants]]
                 id = "00000000-0000-0000-0000-000000000003"
-                key = "paid"
                 allowance = { kind = "overage", bytes = 10485760 }
                 "#,
             )?;
