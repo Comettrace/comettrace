@@ -42,11 +42,7 @@ impl<T: QuotaPolicy + Send + Sync> QuotaPolicy for std::sync::Arc<T> {
 pub struct Unmetered;
 
 impl QuotaPolicy for Unmetered {
-    fn admit(
-        &self,
-        _tenant: TenantId,
-        _incoming: DecompressedBytes,
-    ) -> impl Future<Output = Admission> + Send {
-        async { Admission::Within }
+    async fn admit(&self, _tenant: TenantId, _incoming: DecompressedBytes) -> Admission {
+        Admission::Within
     }
 }
