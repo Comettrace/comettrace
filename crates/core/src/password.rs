@@ -113,11 +113,8 @@ mod tests {
 
     use super::{ChangeError, ChangePassword};
     use crate::clock::UnixSeconds;
-    use crate::credential::{Email, Password, WeakPassword};
-    use crate::identity::AccountId;
-    use crate::identity::{
-        AuthError, AuthProvider, Issuer, ResolvedIdentity, SignInProof, Subject,
-    };
+    use crate::credential::{Email, Issuer, Password, Subject, WeakPassword};
+    use crate::identity::{AccountId, AuthError, AuthProvider, ResolvedIdentity, SignInProof};
     use crate::reset::{ResetError, ResetStore};
     use crate::secret::{SecretHash, SessionToken};
     use crate::session::{
