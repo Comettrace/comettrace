@@ -11,13 +11,14 @@ use clap::{Parser, Subcommand};
 use comettrace_api::{SessionCookie, auth_router, oidc_router, reset_router, router, trace_server};
 use comettrace_core::{
     AuthSources, Clock, DecompressedBytes, FederatedSignIn, Ingest, IngestKey, NoProvider,
-    ProvisionPolicy, SessionLifetime, SignIn, TenantDirectory, TenantId, UnknownKey, UsageMeter,
-    UsageReader,
+    ProvisionPolicy, ResetPassword, SessionLifetime, SignIn, TenantDirectory, TenantId, UnknownKey,
+    UsageMeter, UsageReader,
 };
 use comettrace_storage::{
-    Allowance, Argon2Hasher, LocalPasswordProvider, MemoryMeter, MemorySink, OidcProvider,
-    OidcSettings, PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresSessions, RedisMeter,
-    StaticDirectory, StaticQuota, SystemClock, load_allowances,
+    Allowance, Argon2Hasher, LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink,
+    OidcProvider, OidcSettings, PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresResets,
+    PostgresSessions, RedisMeter, SmtpMailer, StaticDirectory, StaticQuota, SystemClock,
+    load_allowances,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
