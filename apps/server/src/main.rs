@@ -7,27 +7,30 @@ use std::time::Duration;
 
 use anyhow::Context;
 use axum::Router;
+use clap::{Parser, Subcommand};
 use comettrace_api::{SessionCookie, auth_router, oidc_router, router, trace_server};
 use comettrace_core::{
-    AuthSources, Clock, DecompressedBytes, FederatedSignIn, Ingest, NoProvider, ProvisionPolicy,
-    SessionLifetime, SignIn, TenantId, UsageMeter, UsageReader,
+    AuthSources, Clock, DecompressedBytes, FederatedSignIn, Ingest, IngestKey, NoProvider,
+    ProvisionPolicy, SessionLifetime, SignIn, TenantDirectory, TenantId, UnknownKey, UsageMeter,
+    UsageReader,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, LocalPasswordProvider, MemoryMeter, MemorySink, OidcProvider,
-    OidcSettings, PostgresAccounts, PostgresFlows, PostgresSessions, RedisMeter, StaticDirectory,
-    StaticQuota, SystemClock, load_allowances,
+    OidcSettings, PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresSessions, RedisMeter,
+    StaticDirectory, StaticQuota, SystemClock, load_allowances,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
 use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
+use uuid::Uuid;
 
 use crate::config::Config;
 
 const SECONDS_PER_HOUR: u64 = 3600;
 
-type Gateway = Ingest<StaticDirectory, StaticQuota<Arc<Meter>>, Arc<MemorySink>, Arc<Meter>>;
+type Gateway = Ingest<Directory, StaticQuota<Arc<Meter>>, Arc<MemorySink>, Arc<Meter>>;
 
 #[derive(Debug)]
 enum Meter {
@@ -53,6 +56,59 @@ impl UsageReader for Meter {
     }
 }
 
+#[derive(Debug, Parser)]
+#[command(name = "comettrace", about = "OTLP ingestion and its control plane")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Draw a new ingest key for an organisation and print it once
+    IssueKey {
+        #[arg(long)]
+        org: Uuid,
+        #[arg(long)]
+        project: Option<Uuid>,
+    },
+    /// Stop a key from authenticating, named by its clear prefix
+    RevokeKey {
+        #[arg(long)]
+        prefix: String,
+    },
+}
+
+async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
+    let pool = control_plane_pool(config)
+        .await?
+        .context("this command needs a control plane, so set database_url")?;
+    let directory = PostgresDirectory::new(pool, SystemClock);
+
+    match command {
+        Command::IssueKey { org, project } => {
+            let key = directory
+                .issue(TenantId::new(org), project)
+                .await
+                .context("issuing the key")?;
+            eprintln!("This key is shown once. Store it now; it cannot be read back.");
+            println!("{}", key.exposed());
+        }
+        Command::RevokeKey { prefix } => {
+            let stopped = directory
+                .revoke(&prefix)
+                .await
+                .context("revoking the key")?;
+            if stopped {
+                eprintln!("{prefix} will not authenticate the next payload.");
+            } else {
+                eprintln!("{prefix} matched no live key.");
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -60,6 +116,9 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = config::load().context("reading the configuration")?;
+    if let Some(command) = Cli::parse().command {
+        return run_command(command, &config).await;
+    }
     let pool = control_plane_pool(&config).await?;
     let allowances = allowances_of(&config, pool.as_ref()).await?;
     let meter = Arc::new(meter_of(&config, pool.as_ref()).await?);
@@ -67,7 +126,7 @@ async fn main() -> anyhow::Result<()> {
     if let (Some(pool), Meter::Redis(_)) = (pool.as_ref(), meter.as_ref()) {
         tokio::spawn(roll_up_hourly(Arc::clone(&meter), pool.clone()));
     }
-    let gateway = Arc::new(gateway_of(&config, allowances, meter));
+    let gateway = Arc::new(gateway_of(directory_of(pool.as_ref()), allowances, meter));
 
     tracing::info!(
         grpc = %config.grpc_address,
@@ -140,17 +199,39 @@ async fn meter_of(config: &Config, pool: Option<&PgPool>) -> anyhow::Result<Mete
     Ok(Meter::Redis(meter))
 }
 
+#[derive(Debug)]
+enum Directory {
+    Nothing(StaticDirectory),
+    ControlPlane(PostgresDirectory<SystemClock>),
+}
+
+impl TenantDirectory for Directory {
+    async fn resolve(&self, key: &IngestKey) -> Result<TenantId, UnknownKey> {
+        match self {
+            Self::Nothing(directory) => directory.resolve(key).await,
+            Self::ControlPlane(directory) => directory.resolve(key).await,
+        }
+    }
+}
+
+fn directory_of(pool: Option<&PgPool>) -> Directory {
+    match pool {
+        Some(pool) => Directory::ControlPlane(PostgresDirectory::new(pool.clone(), SystemClock)),
+        None => {
+            tracing::warn!(
+                "no control plane is configured, so no ingest key can authenticate; \
+                 issue one with `comettrace issue-key` once database_url is set"
+            );
+            Directory::Nothing(StaticDirectory::default())
+        }
+    }
+}
+
 fn gateway_of(
-    config: &Config,
+    directory: Directory,
     allowances: BTreeMap<TenantId, Allowance>,
     meter: Arc<Meter>,
 ) -> Gateway {
-    let directory = StaticDirectory::from_plaintext(
-        config
-            .tenants
-            .iter()
-            .map(|tenant| (tenant.key.clone(), TenantId::new(tenant.id))),
-    );
     let quota = StaticQuota::new(Arc::clone(&meter), allowances);
     Ingest::new(directory, quota, Arc::new(MemorySink::default()), meter)
 }
