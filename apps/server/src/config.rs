@@ -30,7 +30,7 @@ pub struct Config {
     pub local_password: bool,
     #[serde(default = "yes")]
     pub cookie_secure: bool,
-    #[serde(default = "console")]
+    #[serde(default = "landing")]
     pub after_sign_in: String,
 }
 
@@ -38,8 +38,8 @@ fn yes() -> bool {
     true
 }
 
-fn console() -> String {
-    "/console".to_owned()
+fn landing() -> String {
+    "/".to_owned()
 }
 
 fn a_month() -> u64 {
@@ -127,7 +127,7 @@ impl Default for Config {
             mail: None,
             local_password: true,
             cookie_secure: true,
-            after_sign_in: console(),
+            after_sign_in: landing(),
         }
     }
 }
