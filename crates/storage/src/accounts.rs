@@ -1,4 +1,4 @@
-use comettrace_core::{AccountId, ProvisionPolicy, ResolvedIdentity};
+use comettrace_core::{AccountDirectory, AccountId, AuthError, ProvisionPolicy, ResolvedIdentity};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -79,5 +79,22 @@ impl PostgresAccounts {
 
         transaction.commit().await?;
         Ok(AccountId::new(account))
+    }
+}
+
+impl AccountDirectory for PostgresAccounts {
+    async fn provision(
+        &self,
+        identity: &ResolvedIdentity,
+        policy: ProvisionPolicy,
+    ) -> Result<AccountId, AuthError> {
+        match PostgresAccounts::provision(self, identity, policy).await {
+            Ok(account) => Ok(account),
+            Err(AccountError::NotProvisioned) => Err(AuthError::Rejected),
+            Err(AccountError::ControlPlane(error)) => {
+                tracing::error!(%error, "the control plane refused to provision an account");
+                Err(AuthError::ProviderUnreachable)
+            }
+        }
     }
 }
