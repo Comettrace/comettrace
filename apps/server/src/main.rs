@@ -178,7 +178,7 @@ async fn roll_up_hourly(meter: Arc<Meter>, pool: PgPool) {
         return;
     };
     loop {
-        tokio::time::sleep(until_the_next_hour(&SystemClock)).await;
+        tokio::time::sleep(until_the_next_hour(SystemClock)).await;
         match redis.roll_up(&pool).await {
             Ok(tenants) => tracing::info!(tenants, "the finished hour was rolled up"),
             Err(error) => tracing::error!(%error, "the usage rollup failed"),
@@ -186,7 +186,7 @@ async fn roll_up_hourly(meter: Arc<Meter>, pool: PgPool) {
     }
 }
 
-fn until_the_next_hour(clock: &SystemClock) -> Duration {
+fn until_the_next_hour(clock: SystemClock) -> Duration {
     let elapsed = clock.now().get() % SECONDS_PER_HOUR;
     Duration::from_secs(SECONDS_PER_HOUR - elapsed)
 }

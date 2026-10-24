@@ -132,8 +132,9 @@ mod tests {
 
     #[test]
     fn an_instant_inside_an_hour_names_that_hour() {
-        let early = BillingHour::containing(UnixSeconds::new(1_700_000_000));
-        let late = BillingHour::containing(UnixSeconds::new(1_700_000_000 + 3599));
+        let start = 1_699_999_200;
+        let early = BillingHour::containing(UnixSeconds::new(start));
+        let late = BillingHour::containing(UnixSeconds::new(start + 3599));
 
         assert_eq!(early, late);
     }
