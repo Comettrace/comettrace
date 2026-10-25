@@ -152,6 +152,41 @@ docker compose exec server comettrace reset-password --email somebody@example.co
 `create-account` and `grant-role` still do the same job from the command
 line, which is how you add the first person when nobody can sign in yet.
 
+## Integrations
+
+A project management tool is wired up here, in the deployment's
+configuration, the way the identity provider and the mail relay already
+are. Settings > Organization > Integrations reads what is wired up and
+names the setting that wired it; there is nothing on that screen to press.
+
+```sh
+COMETTRACE_LINEAR__TOKEN=lin_api_...
+
+COMETTRACE_GITHUB__TOKEN=ghp_...
+COMETTRACE_GITHUB__REPOSITORY=acme/storefront
+
+COMETTRACE_JIRA__BASE_URL=https://acme.atlassian.net
+COMETTRACE_JIRA__EMAIL=operator@example.com
+COMETTRACE_JIRA__TOKEN=...
+COMETTRACE_JIRA__PROJECT_KEY=OPS
+```
+
+Each block asks for the least that makes it usable, which is not the same
+amount for all three: a Linear key stands alone, a Jira token means nothing
+without the site it belongs to and the address that drew it, and a GitHub
+token wants to know which repository an issue goes in.
+
+The tokens stay in this file. `/api/integrations` answers whether a thing
+is configured and the settings that are not secrets — the Jira site and
+project key, the GitHub repository — and never a token. One deployment has
+one set of them; a token per organisation would mean a secret in the
+control plane, and that is a key the deployment could lose.
+
+**Nothing opens an issue yet.** An exception has nowhere to live until a
+span carries its events, so these settings are read and reported and
+otherwise wait. Wiring them up early costs nothing and tells the screen the
+truth.
+
 ## Projects
 
 Telemetry arrives under a project, and `bootstrap` makes the first one,
