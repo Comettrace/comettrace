@@ -58,4 +58,6 @@ pub use sink::{SinkError, SpanSink};
 pub use span::{InvalidId, Span, SpanId, SpanKind, SpanStatus, TraceId};
 pub use teams::{BadTeamName, Named, Owned, Squad, Squads, Team, TeamError, TeamId, TeamName};
 pub use tenant::{Scope, TenantDirectory, TenantId, UnknownKey};
-pub use usage::{DecompressedBytes, UsageMeter, UsageReader};
+pub use usage::{
+    Consumed, Consumption, DecompressedBytes, Metering, UsageHistory, UsageMeter, UsageReader,
+};

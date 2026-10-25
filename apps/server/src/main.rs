@@ -13,22 +13,22 @@ use comettrace_api::{
     Repository, SessionCookie, SignInMethods, Site, Wired, auth_router, catalogue_router,
     explore_router, health_router, integrations_router, me_router, methods_router, oidc_router,
     org_router, password_router, reset_router, roster_router, router, team_router, trace_server,
-    web_router,
+    usage_router, web_router,
 };
 use comettrace_core::{
     AccountId, AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
-    FederatedSignIn, Ingest, IngestKey, Mailer, NoProvider, OrgRole, OrgSettings, ProjectId,
-    ProjectName, ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken, Roster, Scope,
-    SessionLifetime, SignIn, SinkError, Span, SpanSink, Squad, TenantDirectory, TenantId,
-    UnknownKey, UsageMeter, UsageReader, Whoami,
+    FederatedSignIn, Ingest, IngestKey, Mailer, Metering, NoProvider, OrgRole, OrgSettings,
+    ProjectId, ProjectName, ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken,
+    Roster, Scope, SessionLifetime, SignIn, SinkError, Span, SpanSink, Squad, TenantDirectory,
+    TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink,
     LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink, OidcProvider, OidcSettings,
     PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresMemberships, PostgresOrgs,
-    PostgresProjects, PostgresResets, PostgresRoster, PostgresSessions, PostgresTeams, RedisMeter,
-    SmtpMailer, SpanStoreSettings, StaticDirectory, StaticQuota, SystemClock, load_allowances,
-    open_span_store,
+    PostgresProjects, PostgresResets, PostgresRoster, PostgresSessions, PostgresTeams,
+    PostgresUsage, RedisMeter, SmtpMailer, SpanStoreSettings, StaticDirectory, StaticQuota,
+    SystemClock, load_allowances, open_span_store,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -444,7 +444,8 @@ async fn main() -> anyhow::Result<()> {
         .merge(catalogue_routes(pool.as_ref()))
         .merge(org_routes(pool.as_ref()))
         .merge(roster_routes(pool.as_ref())?)
-        .merge(team_routes(pool.as_ref()));
+        .merge(team_routes(pool.as_ref()))
+        .merge(usage_routes(pool.as_ref(), Arc::clone(&meter)));
     let gateway = Arc::new(gateway_of(
         directory_of(pool.as_ref()),
         allowances,
@@ -570,6 +571,7 @@ type Holding = Catalogue<Arc<Sessions>, PostgresMemberships, PostgresProjects>;
 type Settling = OrgSettings<Arc<Sessions>, PostgresMemberships, PostgresOrgs>;
 type Enrolling = Roster<Arc<Sessions>, PostgresMemberships, PostgresRoster<SystemClock>>;
 type Arranging = Squad<Arc<Sessions>, PostgresMemberships, PostgresTeams>;
+type Measuring = Metering<Arc<Sessions>, PostgresMemberships, Arc<Meter>, PostgresUsage>;
 
 /* The hasher is here because admitting an address can create the account it names, and an account
 with no reachable password is still an account that carries a hash. */
@@ -588,6 +590,26 @@ fn roster_routes(pool: Option<&PgPool>) -> anyhow::Result<Router> {
         PostgresRoster::new(pool.clone(), hasher, SystemClock),
     ));
     Ok(roster_router(roster))
+}
+
+/* The live total comes from the counter the quota already reads on every payload, and the shape
+over time from the table the rollup writes. Two stores, because they answer two different
+questions: what has been ingested this minute, and what was ingested last Tuesday. */
+fn usage_routes(pool: Option<&PgPool>, meter: Arc<Meter>) -> Router {
+    let Some(pool) = pool else {
+        return Router::new();
+    };
+    let sessions = Arc::new(PostgresSessions::new(
+        pool.clone(),
+        SystemClock,
+        SessionLifetime::default(),
+    ));
+    let metering: Arc<Measuring> = Arc::new(Metering::new(
+        Whoami::new(sessions, PostgresMemberships::new(pool.clone())),
+        meter,
+        PostgresUsage::new(pool.clone()),
+    ));
+    usage_router(metering)
 }
 
 fn team_routes(pool: Option<&PgPool>) -> Router {
