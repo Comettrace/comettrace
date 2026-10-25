@@ -11,24 +11,26 @@ use axum::Router;
 use clap::{Parser, Subcommand, ValueEnum};
 use comettrace_api::{
     Repository, SessionCookie, SignInMethods, Site, Wired, auth_router, catalogue_router,
-    explore_router, health_router, integrations_router, me_router, methods_router, oidc_router,
-    org_router, password_router, reset_router, roster_router, router, team_router, trace_server,
-    usage_router, web_router,
+    connection_router, explore_router, health_router, integrations_router, me_router,
+    methods_router, oidc_router, org_router, password_router, reset_router, roster_router, router,
+    team_router, trace_server, usage_router, web_router,
 };
 use comettrace_core::{
-    AccountId, AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
-    FederatedSignIn, Ingest, IngestKey, Mailer, Metering, NoProvider, OrgRole, OrgSettings,
-    ProjectId, ProjectName, ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken,
-    Roster, Scope, SessionLifetime, SignIn, SinkError, Span, SpanSink, Squad, TenantDirectory,
-    TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
+    AccountId, AuthSources, Authorized, Catalogue, ChangePassword, Clock, ConnectionError,
+    DecompressedBytes, Email, Explore, FederatedSignIn, Handshake, Ingest, IngestKey, Linking,
+    Mailer, Metering, NoProvider, OrgRole, OrgSettings, ProjectId, ProjectName, Provider,
+    ProviderToken, ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken, Roster,
+    Scope, SealError, Sealed, SessionLifetime, SignIn, SinkError, Span, SpanSink, Squad,
+    TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Vault, Whoami,
 };
 use comettrace_storage::{
-    Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink,
-    LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink, OidcProvider, OidcSettings,
-    PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresMemberships, PostgresOrgs,
-    PostgresProjects, PostgresResets, PostgresRoster, PostgresSessions, PostgresTeams,
-    PostgresUsage, RedisMeter, SealedVault, SmtpMailer, SpanStoreSettings, StaticDirectory,
-    StaticQuota, SystemClock, load_allowances, open_span_store,
+    Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink, LinearHandshake,
+    LinearSettings, LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink, OidcProvider,
+    OidcSettings, PostgresAccounts, PostgresAttempts, PostgresConnections, PostgresDirectory,
+    PostgresFlows, PostgresMemberships, PostgresOrgs, PostgresProjects, PostgresResets,
+    PostgresRoster, PostgresSessions, PostgresTeams, PostgresUsage, RedisMeter, SealedVault,
+    SmtpMailer, SpanStoreSettings, StaticDirectory, StaticQuota, SystemClock, load_allowances,
+    open_span_store,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -460,7 +462,8 @@ async fn main() -> anyhow::Result<()> {
         .merge(org_routes(pool.as_ref()))
         .merge(roster_routes(pool.as_ref())?)
         .merge(team_routes(pool.as_ref()))
-        .merge(usage_routes(pool.as_ref(), Arc::clone(&meter)));
+        .merge(usage_routes(pool.as_ref(), Arc::clone(&meter)))
+        .merge(connection_routes(&config, pool.as_ref())?);
     let gateway = Arc::new(gateway_of(
         directory_of(pool.as_ref()),
         allowances,
@@ -951,4 +954,108 @@ fn print_a_secret_key() {
     eprintln!("Set this as COMETTRACE_SECRET_KEY, and keep it:");
     eprintln!("every provider token sealed under it is unreadable without it.");
     println!("{}", SealedVault::fresh_key());
+}
+
+/* Two shapes the same arrangement the mail relay already has: a thing a deployment may or may not
+have configured, kept as an enum so the type does not change with the configuration and the
+refusal is an answer rather than a startup failure. */
+#[derive(Debug)]
+enum Keeper {
+    Sealed(Box<SealedVault>),
+    Unkeyed,
+}
+
+impl Vault for Keeper {
+    fn seal(&self, secret: &ProviderToken) -> Result<Sealed, SealError> {
+        match self {
+            Self::Sealed(vault) => vault.seal(secret),
+            Self::Unkeyed => Err(SealError::NoKey),
+        }
+    }
+
+    fn open(&self, sealed: &Sealed) -> Result<ProviderToken, SealError> {
+        match self {
+            Self::Sealed(vault) => vault.open(sealed),
+            Self::Unkeyed => Err(SealError::NoKey),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum Handshaking {
+    Linear(Box<LinearHandshake>),
+    Unconfigured,
+}
+
+/* One adapter answers for one provider, so this is where a provider becomes the adapter that
+knows it — and where a provider nobody registered an application for becomes an answer. */
+impl Handshake for Handshaking {
+    fn authorize_url(&self, provider: Provider, state: &str) -> Result<String, ConnectionError> {
+        match (self, provider) {
+            (Self::Linear(linear), Provider::Linear) => linear.authorize_url(provider, state),
+            _ => Err(ConnectionError::ProviderUnconfigured),
+        }
+    }
+
+    async fn finish(&self, provider: Provider, code: &str) -> Result<Authorized, ConnectionError> {
+        match (self, provider) {
+            (Self::Linear(linear), Provider::Linear) => linear.finish(provider, code).await,
+            _ => Err(ConnectionError::ProviderUnconfigured),
+        }
+    }
+}
+
+fn keeper_of(config: &Config) -> anyhow::Result<Keeper> {
+    let Some(key) = config.secret_key.as_deref() else {
+        tracing::warn!(
+            "no secret_key is set, so no provider can be connected; draw one with \
+             `comettrace secret-key`"
+        );
+        return Ok(Keeper::Unkeyed);
+    };
+    let vault = SealedVault::from_hex_key(key).context("reading the deployment key")?;
+    tracing::info!("provider connections are sealed at rest");
+    Ok(Keeper::Sealed(Box::new(vault)))
+}
+
+fn handshaking_of(config: &Config) -> Handshaking {
+    let Some(linear) = config.linear.as_ref() else {
+        return Handshaking::Unconfigured;
+    };
+    tracing::info!(
+        redirect_uri = %linear.redirect_uri,
+        "linear can be connected"
+    );
+    Handshaking::Linear(Box::new(LinearHandshake::new(LinearSettings {
+        client_id: linear.client_id.clone(),
+        client_secret: linear.client_secret.clone(),
+        redirect_uri: linear.redirect_uri.clone(),
+    })))
+}
+
+type Joining = Linking<
+    Arc<Sessions>,
+    PostgresMemberships,
+    PostgresConnections<Keeper>,
+    PostgresAttempts<SystemClock>,
+    Handshaking,
+>;
+
+fn connection_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Result<Router> {
+    let Some(pool) = pool else {
+        return Ok(Router::new());
+    };
+    let sessions = Arc::new(PostgresSessions::new(
+        pool.clone(),
+        SystemClock,
+        SessionLifetime::default(),
+    ));
+    let linking: Arc<Joining> = Arc::new(Linking::new(
+        sessions,
+        PostgresMemberships::new(pool.clone()),
+        PostgresConnections::new(pool.clone(), keeper_of(config)?),
+        PostgresAttempts::new(pool.clone(), SystemClock),
+        handshaking_of(config),
+    ));
+    Ok(connection_router(linking))
 }

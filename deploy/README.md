@@ -177,7 +177,10 @@ names the setting that wired it; there is nothing on that screen to press.
 In `.env`, beside the rest:
 
 ```sh
-COMETTRACE_LINEAR__TOKEN=lin_api_...
+# Register the application at linear.app > Settings > API > OAuth applications
+COMETTRACE_LINEAR__CLIENT_ID=...
+COMETTRACE_LINEAR__CLIENT_SECRET=...
+COMETTRACE_LINEAR__REDIRECT_URI=http://localhost:4318/api/integrations/linear/callback
 
 COMETTRACE_GITHUB__TOKEN=ghp_...
 COMETTRACE_GITHUB__REPOSITORY=acme/storefront
@@ -188,10 +191,20 @@ COMETTRACE_JIRA__TOKEN=...
 COMETTRACE_JIRA__PROJECT_KEY=OPS
 ```
 
-Each block asks for the least that makes it usable, which is not the same
-amount for all three: a Linear key stands alone, a Jira token means nothing
-without the site it belongs to and the address that drew it, and a GitHub
-token wants to know which repository an issue goes in.
+Linear is an OAuth application, which is the shape all three are going to.
+What lives in this file are the client credentials the deployment registered;
+the connection itself belongs to an organisation, is made by an administrator
+pressing Connect, and is sealed under `COMETTRACE_SECRET_KEY`. Without that
+key nothing can be connected, and the screen says so.
+
+The redirect uri has to match what was registered character for character,
+and it is the path this server answers on: `/api/integrations/linear/callback`.
+
+GitHub and Jira still hold a token, which is one person's rather than an
+organisation's and the same one for every organisation here. They keep it
+until their flows land. Each asks for the least that makes it usable, which
+differs: a Jira token means nothing without the site it belongs to and the
+address that drew it, and a GitHub token wants to know which repository.
 
 The tokens stay in this file. `/api/integrations` answers whether a thing
 is configured and the settings that are not secrets — the Jira site and
