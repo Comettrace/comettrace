@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { EmptyState, Kpi, PageHeader, ServiceDot, SeverityBadge } from '@/components/cmt/bits'
 import { LineChart } from '@/components/cmt/charts'
 import { useLogs } from '@/data/logs'
-import { useProjects } from '@/data/organization'
+import { useSampledProjects } from '@/data/organization'
 import { DEPLOY_MARKERS, useOverviewSeries } from '@/data/series'
 import { useServices } from '@/data/services'
 import { useTraces } from '@/data/traces'
@@ -16,7 +16,7 @@ export function Overview() {
   const all = useServices()
   const logs = useLogs()
   const traces = useTraces()
-  const projects = useProjects()
+  const projects = useSampledProjects()
   const series = useOverviewSeries()
   if (!all.length) return <><PageHeader title="Overview" meta="no signals yet" /><EmptyState icon={<Rocket />} title="No signals yet" code={`OTEL_SERVICE_NAME=checkout-api\nOTEL_EXPORTER_OTLP_ENDPOINT=${otlpEndpoint()}\nOTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer <ingest key>"`} actions={<Button asChild size="sm" variant="primary"><Link to="/onboarding">Connect your first service</Link></Button>}>This page fills in as soon as your first span, log record or metric point arrives. Set three environment variables in any OpenTelemetry SDK and restart your service.</EmptyState></>
   const services = [...all].filter((s) => s.err !== null).sort((a, b) => (b.err ?? 0) - (a.err ?? 0)).slice(0, 5)

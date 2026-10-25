@@ -1,6 +1,6 @@
 use comettrace_core::{
-    DecompressedBytes, Email, IngestKey, Issuer, Projects, ProvisionPolicy, ResolvedIdentity,
-    Scope, SecretHash, Subject, TenantDirectory, TenantId, UnknownKey,
+    DecompressedBytes, Email, IngestKey, Issuer, ProjectName, Projects, ProvisionPolicy,
+    ResolvedIdentity, Scope, SecretHash, Subject, TenantDirectory, TenantId, UnknownKey,
 };
 use comettrace_storage::{
     AccountError, Allowance, CONTROL_PLANE, FixedClock, OVERAGE_FEATURE, PostgresAccounts,
@@ -9,6 +9,10 @@ use comettrace_storage::{
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 use uuid::Uuid;
+
+fn a_slug(name: &str) -> ProjectName {
+    ProjectName::try_from(name).expect("an admitted name")
+}
 
 fn url() -> Option<String> {
     if let Ok(url) = std::env::var("DATABASE_URL") {
@@ -776,8 +780,14 @@ async fn an_organisation_holds_the_projects_it_was_given() {
     let org = TenantId::new(seeded_org(&pool).await);
     let projects = PostgresProjects::new(pool.clone());
 
-    let storefront = projects.create(org, "storefront").await.expect("one");
-    projects.create(org, "payments").await.expect("another");
+    let storefront = projects
+        .claim(org, &a_slug("storefront"))
+        .await
+        .expect("one");
+    projects
+        .claim(org, &a_slug("payments"))
+        .await
+        .expect("another");
 
     let held = projects.of(org).await.expect("the projects read");
 
@@ -800,14 +810,20 @@ async fn two_organisations_may_each_hold_a_project_of_the_same_name() {
     let theirs = TenantId::new(seeded_org(&pool).await);
     let projects = PostgresProjects::new(pool.clone());
 
-    projects.create(mine, "storefront").await.expect("mine");
-    projects.create(theirs, "storefront").await.expect("theirs");
+    projects
+        .claim(mine, &a_slug("storefront"))
+        .await
+        .expect("mine");
+    projects
+        .claim(theirs, &a_slug("storefront"))
+        .await
+        .expect("theirs");
 
     assert_eq!(projects.of(mine).await.expect("a read").len(), 1);
     assert_eq!(projects.of(theirs).await.expect("a read").len(), 1);
     assert!(
         matches!(
-            projects.create(mine, "storefront").await,
+            projects.claim(mine, &a_slug("storefront")).await,
             Err(ProjectError::Taken(_))
         ),
         "one organisation cannot hold the same name twice"
@@ -821,7 +837,7 @@ async fn a_project_of_an_organisation_nobody_holds_is_refused() {
     };
 
     let refused = PostgresProjects::new(pool.clone())
-        .create(TenantId::new(Uuid::new_v4()), "storefront")
+        .claim(TenantId::new(Uuid::new_v4()), &a_slug("storefront"))
         .await;
 
     assert!(matches!(refused, Err(ProjectError::NoSuchOrg(_))));
@@ -837,10 +853,16 @@ async fn the_only_project_is_named_only_when_there_is_exactly_one() {
 
     assert_eq!(projects.only(org).await.expect("a read"), None, "none yet");
 
-    let first = projects.create(org, "storefront").await.expect("one");
+    let first = projects
+        .claim(org, &a_slug("storefront"))
+        .await
+        .expect("one");
     assert_eq!(projects.only(org).await.expect("a read"), Some(first));
 
-    projects.create(org, "payments").await.expect("another");
+    projects
+        .claim(org, &a_slug("payments"))
+        .await
+        .expect("another");
     assert_eq!(
         projects.only(org).await.expect("a read"),
         None,
@@ -855,7 +877,7 @@ async fn a_key_resolves_to_the_project_it_was_issued_for() {
     };
     let org = TenantId::new(seeded_org(&pool).await);
     let project = PostgresProjects::new(pool.clone())
-        .create(org, "storefront")
+        .claim(org, &a_slug("storefront"))
         .await
         .expect("a project");
     let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));

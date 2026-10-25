@@ -22,7 +22,10 @@ mod teams;
 mod tenant;
 mod usage;
 
-pub use catalogue::{Catalogue, Project, ProjectId, Projects};
+pub use catalogue::{
+    Assigned, BadProjectName, Catalogue, CatalogueError, Created, OwnerTeam, Project, ProjectId,
+    ProjectName, Projects, Renamed,
+};
 pub use clock::{Clock, UnixSeconds};
 pub use credential::{
     Email, InvalidCredential, Issuer, Password, PasswordPolicy, Subject, WeakPassword,

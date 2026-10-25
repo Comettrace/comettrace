@@ -152,6 +152,28 @@ docker compose exec server comettrace reset-password --email somebody@example.co
 `create-account` and `grant-role` still do the same job from the command
 line, which is how you add the first person when nobody can sign in yet.
 
+## Projects
+
+Telemetry arrives under a project, and `bootstrap` makes the first one,
+`default`. Settings > Organization > Projects makes the rest, renames them,
+hands them to a team and deletes them; `create-project` still does the
+first two from the command line.
+
+A name is a slug — lowercase letters, digits and dashes — because it is
+typed into a configuration file beside an ingest key and read out of a url.
+What you type is lowered rather than refused, so `Payments-EU` is kept as
+`payments-eu`.
+
+Renaming keeps the keys and the signals: a key carries the project id and
+so does every span, and nothing anywhere holds the name. Deleting is not
+the same bargain. The api keys go with the project at once, and the spans
+already written stay in the span store until their retention expires —
+unreachable from the application, because nothing names them any more.
+
+How long a signal is kept is a property of the deployment rather than of
+one project: `spans.retention_days`, which ClickHouse applies on its own
+schedule.
+
 ## Multi-tenancy
 
 Organisations exist and every span carries one, but a self-hosted

@@ -1,5 +1,6 @@
 use comettrace_core::{
-    AccountId, Named, OrgRole, ProjectId, Roll, Squads, Team, TeamId, TeamName, TenantId,
+    AccountId, Named, OrgRole, ProjectId, ProjectName, Roll, Squads, Team, TeamId, TeamName,
+    TenantId,
 };
 use comettrace_storage::{
     CONTROL_PLANE, PostgresMemberships, PostgresProjects, PostgresRoster, PostgresTeams,
@@ -79,7 +80,7 @@ async fn a_member(pool: &PgPool, org: TenantId, email: &str) -> AccountId {
 
 async fn a_project(pool: &PgPool, org: TenantId, name: &str) -> ProjectId {
     PostgresProjects::new(pool.clone())
-        .create(org, name)
+        .claim(org, &ProjectName::try_from(name).expect("an admitted name"))
         .await
         .expect("creating the project")
 }

@@ -101,11 +101,11 @@ const settingsChildren = [
   createRoute({ getParentRoute: () => settingsRoute, path: 'general', component: OrgGeneral, staticData: real }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'members', component: Members, staticData: real }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'teams', component: Teams, staticData: real }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'projects', component: Projects, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'projects', component: Projects, staticData: real }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'integrations', component: Integrations, staticData: mock }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'usage', component: Usage, staticData: mock }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'billing', component: Billing, staticData: mock }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'project/general', component: ProjectGeneral, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'project/general', component: ProjectGeneral, staticData: real }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'project/alerts', component: ProjectAlerts, staticData: mock }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'project/api-keys', component: ProjectApiKeys, staticData: mock }),
 ]
