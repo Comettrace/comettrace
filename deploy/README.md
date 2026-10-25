@@ -91,6 +91,21 @@ Every field of `comettrace.toml` can be given as an environment variable:
 uppercase, prefixed with `COMETTRACE_`, with `__` between a section and
 its field. `COMETTRACE_SPANS__RETENTION_DAYS` is `spans.retention_days`.
 
+Put them in a `.env` beside the compose file. `.env.example` lists every
+one of them, commented out, so copying it changes nothing:
+
+```sh
+cp .env.example .env
+```
+
+That file does two jobs, and it is worth knowing which line does which. The
+names without the prefix — `POSTGRES_PASSWORD`, `OTLP_HTTP_PORT` — are read
+by the compose file, to fill in a password or a port. The ones with it are
+handed to the server through `env_file`, which is how a setting the compose
+file never mentions still reaches it. The handful the compose file sets
+itself win over the file, because they are how the server reaches the three
+stores inside its own network rather than something to choose.
+
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `POSTGRES_PASSWORD` | `comettrace` | The control plane password |
@@ -107,7 +122,7 @@ its field. `COMETTRACE_SPANS__RETENTION_DAYS` is `spans.retention_days`.
 
 ## Signing in with an identity provider instead
 
-Set the OIDC block and local passwords become unnecessary:
+Set the OIDC block in `.env` and local passwords become unnecessary:
 
 ```sh
 COMETTRACE_OIDC__ISSUER=https://id.example.com
@@ -158,6 +173,8 @@ A project management tool is wired up here, in the deployment's
 configuration, the way the identity provider and the mail relay already
 are. Settings > Organization > Integrations reads what is wired up and
 names the setting that wired it; there is nothing on that screen to press.
+
+In `.env`, beside the rest:
 
 ```sh
 COMETTRACE_LINEAR__TOKEN=lin_api_...
