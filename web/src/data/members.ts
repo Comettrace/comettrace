@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { roleRank, type Role } from '@/auth/api'
 import { del, get, json, patch, post } from '@/auth/client'
 import { useOrganizations } from '@/auth/session'
+import { nothingYet } from './orgs'
 
 export type Member = { account: string; email: string; role: Role; joined_at_ms: number }
 
@@ -13,14 +14,15 @@ export type Welcomed = { member: Member; invite_token: string | null }
 const key = (org: string | undefined) => ['org', org, 'members']
 
 export function useMembers() {
-  const { active } = useOrganizations()
-  const { data, isPending } = useQuery({
+  const found = useOrganizations()
+  const { active } = found
+  const { data, isPending, error } = useQuery({
     queryKey: key(active?.org),
     enabled: Boolean(active),
     staleTime: 30_000,
     queryFn: async () => (await json<{ members: Member[] }>(await get(`/api/orgs/${active?.org}/members`))).members,
   })
-  return { members: data, loading: Boolean(active) && isPending }
+  return { members: data, nothing: nothingYet(found, isPending, error, 'members') }
 }
 
 /* Every change answers with the member as the server now holds it, so the table is written from

@@ -1,21 +1,40 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { accountQuery } from '@/auth/api'
-import { get, json, patch } from '@/auth/client'
+import { because, get, json, patch } from '@/auth/client'
 import { useOrganizations } from '@/auth/session'
 
 export type OrgCard = { id: string; name: string; plan: string; created_at_ms: number; version: string }
 
 const key = (org: string | undefined) => ['org', org]
 
+/* Three different nothings used to read as one sentence on the screen: still asking, a session
+   that belongs to no organisation at all — the query is disabled then, so it neither loads nor
+   fails — and a request that came back refused. Only the last is the server's to explain, and it
+   explains it in plain text, so that is what gets shown. */
+export function nothingYet(
+  found: { active: unknown; asking: boolean },
+  isPending: boolean,
+  error: unknown,
+  what: string,
+) {
+  if (found.asking) return 'Asking the server who you are…'
+  if (!found.active) {
+    return 'This session belongs to no organization. An operator grants one with `comettrace grant-role`.'
+  }
+  if (isPending) return `Reading the ${what}…`
+  return because(error, `The ${what} could not be read.`)
+}
+
 export function useOrgCard() {
-  const { active } = useOrganizations()
-  const { data, isPending } = useQuery({
+  const found = useOrganizations()
+  const { active } = found
+  const { data, isPending, error } = useQuery({
     queryKey: key(active?.org),
     enabled: Boolean(active),
     staleTime: 60_000,
     queryFn: async () => json<OrgCard>(await get(`/api/orgs/${active?.org}`)),
   })
-  return { card: data, loading: Boolean(active) && isPending }
+  return { card: data, nothing: nothingYet(found, isPending, error, 'organization') }
 }
 
 /* The rename answers with the card the server kept, so that replaces this cache rather than being
