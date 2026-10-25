@@ -330,10 +330,10 @@ async fn an_administrator_is_refused_the_owner_role_in_either_direction() {
 }
 
 #[tokio::test]
-async fn your_own_row_is_refused_whatever_you_are() {
+async fn the_last_owner_stays_an_owner_however_it_asks() {
     let kept = Kept::of(vec![a_member(ME, OrgRole::Owner)]);
 
-    let (status, _) = served(
+    let (status, body) = served(
         OrgRole::Owner,
         &kept,
         asking(
@@ -345,7 +345,57 @@ async fn your_own_row_is_refused_whatever_you_are() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(body.contains("at least one owner"), "{body}");
+    assert_eq!(kept.roll()[0].role, OrgRole::Owner);
+}
+
+/* The row the complaint was about: an owner that is not the last one may step down, and may walk
+out afterwards. Nothing about it being your own row refuses it any more. */
+#[tokio::test]
+async fn an_owner_steps_down_from_its_own_row_once_another_owner_stays() {
+    let kept = Kept::of(vec![
+        a_member(ME, OrgRole::Owner),
+        a_member(SOMEBODY, OrgRole::Owner),
+    ]);
+
+    let (status, body) = served(
+        OrgRole::Owner,
+        &kept,
+        asking(
+            Method::PATCH,
+            &format!("/api/orgs/{}/members/{}", org(MINE), org(ME)),
+            Some(r#"{"role":"admin"}"#),
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read(&body)["role"], "admin");
+}
+
+#[tokio::test]
+async fn an_administrator_walks_out_of_an_organisation_it_does_not_own() {
+    let kept = Kept::of(vec![
+        a_member(ME, OrgRole::Admin),
+        a_member(SOMEBODY, OrgRole::Owner),
+    ]);
+
+    let (status, _) = served(
+        OrgRole::Admin,
+        &kept,
+        asking(
+            Method::DELETE,
+            &format!("/api/orgs/{}/members/{}", org(MINE), org(ME)),
+            None,
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(kept.roll().len(), 1);
     assert_eq!(kept.roll()[0].role, OrgRole::Owner);
 }
 

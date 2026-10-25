@@ -67,11 +67,14 @@ export function useInvite() {
 export const sorted = (roll: Member[]) =>
   [...roll].sort((a, b) => roleRank[a.role] - roleRank[b.role] || a.email.localeCompare(b.email))
 
-/* Two of the three rules the server enforces, said once here so a control can be greyed out
-   rather than pressed and refused. The third one, that nobody edits their own standing, is the
-   row itself knowing it is yours. */
+/* The rules the server enforces, said once here so a control can be greyed out rather than
+   pressed and refused. Your own row is a row like any other: what holds the last owner in place
+   is that the organisation would be left with none, not that the row is yours. */
 export const mayChange = (mine: Role | undefined, theirs: Role) =>
   mine === 'owner' || (mine === 'admin' && theirs !== 'owner')
+
+export const theLastOwner = (roll: Member[], member: Member) =>
+  member.role === 'owner' && roll.filter((one) => one.role === 'owner').length <= 1
 
 export const mayHandOut = (mine: Role | undefined): Role[] =>
   mine === 'owner' ? ['owner', 'admin', 'member'] : ['admin', 'member']

@@ -147,8 +147,8 @@ pub enum RosterError {
     NotYoursToChange,
     #[error("the owner role is an owner to hand out and an owner to take back")]
     OwnersOnly,
-    #[error("your own standing is not yours to change here")]
-    Yourself,
+    #[error("an organisation keeps at least one owner")]
+    LastOwner,
     #[error("no member of this organisation carries that account")]
     NoSuchMember,
     #[error("that address already belongs to this organisation")]
@@ -207,9 +207,9 @@ where
         role: OrgRole,
     ) -> Result<Member, RosterError> {
         let who = self.standing(token, org, OrgRole::Admin).await?;
-        let held = self.held_by(org, account).await?;
-        not_yourself(&who, account)?;
+        let (held, owners) = self.standing_in(org, account).await?;
         owners_only(&who, org, [held, role])?;
+        keeps_an_owner(held, Some(role), owners)?;
         self.roll
             .grant(org, account, role)
             .await?
@@ -223,9 +223,9 @@ where
         account: AccountId,
     ) -> Result<(), RosterError> {
         let who = self.standing(token, org, OrgRole::Admin).await?;
-        let held = self.held_by(org, account).await?;
-        not_yourself(&who, account)?;
+        let (held, owners) = self.standing_in(org, account).await?;
         owners_only(&who, org, [held])?;
+        keeps_an_owner(held, None, owners)?;
         if self.roll.remove(org, account).await? {
             Ok(())
         } else {
@@ -270,31 +270,51 @@ where
         }
     }
 
-    /* Read before written, because what a member is today decides who may change it. An
-    organisation holds tens of members, so the whole roll costs about what one row of it would. */
-    async fn held_by(&self, org: TenantId, account: AccountId) -> Result<OrgRole, RosterError> {
-        self.roll
-            .of(org)
-            .await?
-            .into_iter()
+    /* Read before written, because what a member is today decides who may change it, and how many
+    owners there are decides whether this one may stop being one. An organisation holds tens of
+    members, so the whole roll costs about what one row of it would. */
+    async fn standing_in(
+        &self,
+        org: TenantId,
+        account: AccountId,
+    ) -> Result<(OrgRole, usize), RosterError> {
+        let roll = self.roll.of(org).await?;
+        let held = roll
+            .iter()
             .find(|member| member.account == account)
             .map(|member| member.role)
-            .ok_or(RosterError::NoSuchMember)
+            .ok_or(RosterError::NoSuchMember)?;
+        Ok((held, owners_among(&roll)))
     }
 }
 
-/* Nobody edits their own standing. It is what keeps an administrator from promoting itself, and
-it is what the screen already shows: your own row carries no controls. */
-fn not_yourself(who: &Who, account: AccountId) -> Result<(), RosterError> {
-    if who.account == account {
-        return Err(RosterError::Yourself);
+fn owners_among(roll: &[Member]) -> usize {
+    roll.iter()
+        .filter(|member| member.role == OrgRole::Owner)
+        .count()
+}
+
+/* The one invariant worth holding: an organisation that has lost its last owner is one nobody
+inside it can hand the role back out in, because the rule below holds every administrator off it.
+Only the command line could rescue it. So the last owner stays, whoever is asking, themselves
+included — and everything else an owner might want is allowed: stepping down once somebody else
+answers for the organisation, handing the role on, leaving afterwards.
+
+`wanted` is the role being granted, or nothing when the membership is going away. */
+fn keeps_an_owner(
+    held: OrgRole,
+    wanted: Option<OrgRole>,
+    owners: usize,
+) -> Result<(), RosterError> {
+    let staying = wanted == Some(OrgRole::Owner);
+    if held == OrgRole::Owner && !staying && owners <= 1 {
+        return Err(RosterError::LastOwner);
     }
     Ok(())
 }
 
-/* Only an owner may hand out the owner role, change an owner, or show one the door. Together
-with the rule above, that is what keeps the last owner in place without anybody counting owners:
-the one account that could demote or remove it is itself, and that is refused. */
+/* Only an owner may hand out the owner role, change an owner, or show one the door. An
+administrator that could do any of those could promote itself through a colleague. */
 fn owners_only<const N: usize>(
     who: &Who,
     org: TenantId,
@@ -609,18 +629,71 @@ mod tests {
         assert_eq!(changed.role, OrgRole::Owner);
     }
 
-    /* The last owner is safe because of this one refusal: every other account is held off an
-    owner by the rule above, so the only account left that could demote it is itself. */
+    /* The only account that could leave an organisation ownerless is the last owner itself, and
+    this is the refusal that stops it. Nothing short of the command line could put the role back. */
     #[tokio::test]
-    async fn nobody_changes_their_own_standing() {
+    async fn the_last_owner_cannot_stop_being_one() {
         let held = Held::of(vec![a_member(ME, OrgRole::Owner)]);
 
         let refused = roster(OrgRole::Owner, &held)
             .grant(&token(), an_org(MINE), an_account(ME), OrgRole::Member)
             .await;
 
-        assert_eq!(refused, Err(RosterError::Yourself));
+        assert_eq!(refused, Err(RosterError::LastOwner));
         assert!(held.written().granted.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_owner_steps_down_once_somebody_else_answers_for_the_organisation() {
+        let held = Held::of(vec![
+            a_member(ME, OrgRole::Owner),
+            a_member(SOMEBODY, OrgRole::Owner),
+        ]);
+
+        let changed = roster(OrgRole::Owner, &held)
+            .grant(&token(), an_org(MINE), an_account(ME), OrgRole::Admin)
+            .await
+            .expect("an owner may step down while another one stays");
+
+        assert_eq!(changed.role, OrgRole::Admin);
+    }
+
+    /* Handing the role on and then leaving is two changes, and both of them are allowed in that
+    order. It is the whole reason the rule counts owners rather than refusing your own row. */
+    #[tokio::test]
+    async fn an_owner_hands_the_role_on_and_then_leaves() {
+        let held = Held::of(vec![
+            a_member(ME, OrgRole::Owner),
+            a_member(SOMEBODY, OrgRole::Admin),
+        ]);
+        let settling = roster(OrgRole::Owner, &held);
+
+        settling
+            .grant(&token(), an_org(MINE), an_account(SOMEBODY), OrgRole::Owner)
+            .await
+            .expect("the role is handed on");
+        settling
+            .remove(&token(), an_org(MINE), an_account(ME))
+            .await
+            .expect("and then the organisation can be left");
+
+        assert_eq!(held.roll().len(), 1);
+        assert_eq!(held.roll()[0].role, OrgRole::Owner);
+    }
+
+    #[tokio::test]
+    async fn an_administrator_may_leave_an_organisation_it_does_not_own() {
+        let held = Held::of(vec![
+            a_member(ME, OrgRole::Admin),
+            a_member(SOMEBODY, OrgRole::Owner),
+        ]);
+
+        roster(OrgRole::Admin, &held)
+            .remove(&token(), an_org(MINE), an_account(ME))
+            .await
+            .expect("leaving is a change to your own membership and nobody else");
+
+        assert_eq!(held.written().removed, vec![an_account(ME)]);
     }
 
     #[tokio::test]
@@ -649,14 +722,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn nobody_removes_themselves_from_this_screen() {
-        let held = Held::of(vec![a_member(ME, OrgRole::Owner)]);
+    async fn the_last_owner_cannot_leave_either() {
+        let held = Held::of(vec![
+            a_member(ME, OrgRole::Owner),
+            a_member(SOMEBODY, OrgRole::Admin),
+        ]);
 
         let refused = roster(OrgRole::Owner, &held)
             .remove(&token(), an_org(MINE), an_account(ME))
             .await;
 
-        assert_eq!(refused, Err(RosterError::Yourself));
+        assert_eq!(
+            refused,
+            Err(RosterError::LastOwner),
+            "an administrator left behind could not hand the role back out"
+        );
         assert!(held.written().removed.is_empty());
     }
 
