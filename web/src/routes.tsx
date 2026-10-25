@@ -24,7 +24,19 @@ import { ForgotPassword } from '@/pages/auth/ForgotPassword'
 import { ResetPassword } from '@/pages/auth/ResetPassword'
 import { SignIn } from '@/pages/auth/SignIn'
 import { SettingsLayout } from '@/pages/settings/SettingsLayout'
-import * as S from '@/pages/settings/sections'
+import { Profile } from '@/pages/settings/Profile'
+import { Security } from '@/pages/settings/Security'
+import { Preferences } from '@/pages/settings/Preferences'
+import { OrgGeneral } from '@/pages/settings/OrgGeneral'
+import { Members } from '@/pages/settings/Members'
+import { Teams } from '@/pages/settings/Teams'
+import { Projects } from '@/pages/settings/Projects'
+import { Integrations } from '@/pages/settings/Integrations'
+import { Usage } from '@/pages/settings/Usage'
+import { Billing } from '@/pages/settings/Billing'
+import { ProjectGeneral } from '@/pages/settings/ProjectGeneral'
+import { ProjectAlerts } from '@/pages/settings/ProjectAlerts'
+import { ProjectApiKeys } from '@/pages/settings/ProjectApiKeys'
 
 declare module '@tanstack/react-router' {
   interface StaticDataRouteOption {
@@ -83,19 +95,19 @@ const settingsRoute = createRoute({ getParentRoute: () => shellRoute, path: '/se
 
 const settingsChildren = [
   createRoute({ getParentRoute: () => settingsRoute, path: '/', beforeLoad: () => { throw redirect({ to: '/settings/general' }) } }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'profile', component: S.Profile, staticData: mock }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'security', component: S.Security, staticData: mock }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'preferences', component: S.Preferences, staticData: mock }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'general', component: S.OrgGeneral, staticData: real }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'members', component: S.Members, staticData: real }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'teams', component: S.Teams, staticData: mock }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'projects', component: S.Projects, staticData: mock }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'integrations', component: S.Integrations, staticData: mock }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'usage', component: S.Usage, staticData: mock }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'billing', component: S.Billing, staticData: mock }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'project/general', component: S.ProjectGeneral, staticData: mock }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'project/alerts', component: S.Alerts, staticData: mock }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'project/api-keys', component: S.ApiKeys, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'profile', component: Profile, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'security', component: Security, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'preferences', component: Preferences, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'general', component: OrgGeneral, staticData: real }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'members', component: Members, staticData: real }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'teams', component: Teams, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'projects', component: Projects, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'integrations', component: Integrations, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'usage', component: Usage, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'billing', component: Billing, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'project/general', component: ProjectGeneral, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'project/alerts', component: ProjectAlerts, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'project/api-keys', component: ProjectApiKeys, staticData: mock }),
 ]
 
 const routeTree = rootRoute.addChildren([
