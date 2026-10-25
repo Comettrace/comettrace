@@ -28,19 +28,6 @@ pub struct Config {
     pub oidc: Option<OidcConfig>,
     #[serde(default)]
     pub mail: Option<MailConfig>,
-    /* Thirty-two bytes of hex, which is what a token for somebody else's service is sealed
-    under. A deployment that sets none can do everything it did before; what it cannot do is hold
-    such a token, and the integrations screen says so rather than the server refusing to start.
-    Lose it and the sealed rows are unreadable — which is the whole bargain, and why
-    `comettrace secret-key` prints one rather than anybody inventing their own. */
-    #[serde(default)]
-    pub secret_key: Option<String>,
-    #[serde(default)]
-    pub linear: Option<LinearConfig>,
-    #[serde(default)]
-    pub github: Option<GithubConfig>,
-    #[serde(default)]
-    pub jira: Option<JiraConfig>,
     #[serde(default = "yes")]
     pub local_password: bool,
     #[serde(default = "yes")]
@@ -103,46 +90,6 @@ pub struct OidcConfig {
     pub redirect_uri: String,
 }
 
-/* The three project management blocks, which are halfway through changing shape and say so.
-
-Linear is an OAuth application: what lives here are the client credentials the deployment
-registered, and the connection itself belongs to an organisation and is sealed in the control
-plane under `secret_key`. That is the shape all three are going to.
-
-GitHub and Jira still hold a token, which is one person's rather than an organisation's and the
-same one for every organisation on the deployment. They keep it until their flows land. Each asks
-for the least that makes it usable, which differs: a Jira token means nothing without the site it
-belongs to and the address that drew it, and a GitHub token wants to know which repository. */
-
-/* All three fields go together. A deployment that sets one and forgets the others is refused at
-startup, which is the right moment — the alternative is finding out halfway through a handshake,
-in front of somebody who clicked Connect. */
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LinearConfig {
-    pub client_id: String,
-    pub client_secret: String,
-    /// Registered with Linear verbatim; it has to match on the way back or the code is refused.
-    pub redirect_uri: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GithubConfig {
-    pub token: String,
-    /// `owner/name`, the repository an issue is opened in when nobody names another.
-    pub repository: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JiraConfig {
-    /// The site, such as `https://acme.atlassian.net`.
-    pub base_url: String,
-    /// The address the api token was drawn for; Jira Cloud authenticates the pair.
-    pub email: String,
-    pub token: String,
-    /// The project key an issue is opened under, such as `OPS`.
-    pub project_key: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TenantKey {
     pub id: Uuid,
@@ -181,10 +128,6 @@ impl Default for Config {
             tenants: Vec::new(),
             oidc: None,
             mail: None,
-            secret_key: None,
-            linear: None,
-            github: None,
-            jira: None,
             local_password: true,
             cookie_secure: true,
             after_sign_in: landing(),
@@ -352,119 +295,6 @@ mod tests {
 
             assert_eq!(mail.relay, "mail.example.com");
             assert_eq!(mail.base_url, "https://app.example.com");
-            Ok(())
-        });
-    }
-
-    /* A deployment that sets no key is the ordinary case, not a broken one: everything but
-    holding a token for somebody else's service works without it. */
-    #[test]
-    fn a_deployment_with_no_key_is_the_default() {
-        figment::Jail::expect_with(|_jail| {
-            let config: Config = figment().extract()?;
-
-            assert_eq!(config.secret_key, None);
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn a_key_is_read_from_the_file_and_from_the_environment() {
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(FILE, "secret_key = \"ab\"\n")?;
-            assert_eq!(
-                figment().extract::<Config>()?.secret_key.as_deref(),
-                Some("ab")
-            );
-
-            jail.set_env("COMETTRACE_SECRET_KEY", "cd");
-            assert_eq!(
-                figment().extract::<Config>()?.secret_key.as_deref(),
-                Some("cd"),
-                "the environment wins over the file, as it does for everything else"
-            );
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn a_deployment_wired_to_no_tracker_declares_none_of_the_three() {
-        figment::Jail::expect_with(|_jail| {
-            let config: Config = figment().extract()?;
-
-            assert_eq!(config.linear, None);
-            assert_eq!(config.github, None);
-            assert_eq!(config.jira, None);
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn a_tracker_asks_for_the_least_that_makes_it_usable() {
-        figment::Jail::expect_with(|jail| {
-            jail.create_file(
-                FILE,
-                r#"
-                [linear]
-                client_id = "an-application"
-                client_secret = "a-secret"
-                redirect_uri = "http://localhost:4318/api/integrations/linear/callback"
-
-                [github]
-                token = "ghp_secret"
-                repository = "acme/storefront"
-
-                [jira]
-                base_url = "https://acme.atlassian.net"
-                email = "operator@example.com"
-                token = "jira_secret"
-                project_key = "OPS"
-                "#,
-            )?;
-
-            let config: Config = figment().extract()?;
-
-            let linear = config.linear.expect("an application");
-            assert_eq!(linear.client_id, "an-application");
-            assert_eq!(
-                linear.redirect_uri,
-                "http://localhost:4318/api/integrations/linear/callback"
-            );
-            assert_eq!(
-                config.github.expect("a repository").repository,
-                "acme/storefront"
-            );
-            let jira = config.jira.expect("a site");
-            assert_eq!(jira.base_url, "https://acme.atlassian.net");
-            assert_eq!(jira.project_key, "OPS");
-            Ok(())
-        });
-    }
-
-    /* The spelling the deployment README promises, which is the part somebody types by hand and
-    the part a typo is silent in: a block and its field, split on the double underscore. */
-    #[test]
-    fn a_tracker_is_declared_by_environment_variable_too() {
-        figment::Jail::expect_with(|jail| {
-            jail.set_env("COMETTRACE_JIRA__BASE_URL", "https://acme.atlassian.net");
-            jail.set_env("COMETTRACE_JIRA__EMAIL", "operator@example.com");
-            jail.set_env("COMETTRACE_JIRA__TOKEN", "jira_secret");
-            jail.set_env("COMETTRACE_JIRA__PROJECT_KEY", "OPS");
-            jail.set_env("COMETTRACE_LINEAR__CLIENT_ID", "an-application");
-            jail.set_env("COMETTRACE_LINEAR__CLIENT_SECRET", "a-secret");
-            jail.set_env(
-                "COMETTRACE_LINEAR__REDIRECT_URI",
-                "http://localhost:4318/cb",
-            );
-
-            let config: Config = figment().extract()?;
-
-            assert_eq!(config.jira.expect("a site").project_key, "OPS");
-            assert_eq!(
-                config.linear.expect("an application").client_id,
-                "an-application"
-            );
-            assert_eq!(config.github, None);
             Ok(())
         });
     }

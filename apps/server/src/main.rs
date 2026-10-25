@@ -10,28 +10,24 @@ use anyhow::Context;
 use axum::Router;
 use clap::{Parser, Subcommand, ValueEnum};
 use comettrace_api::{
-    Repository, SessionCookie, SignInMethods, Site, Wired, auth_router, catalogue_router,
-    connection_router, explore_router, filing_router, health_router, integrations_router,
+    SessionCookie, SignInMethods, auth_router, catalogue_router, explore_router, health_router,
     me_router, methods_router, oidc_router, org_router, password_router, reset_router,
     roster_router, router, team_router, trace_server, usage_router, web_router,
 };
 use comettrace_core::{
-    AccountId, AuthSources, Authorized, Catalogue, ChangePassword, Clock, ConnectionError,
-    DecompressedBytes, Destination, Destinations, Email, Explore, FederatedSignIn, Filing,
-    Handshake, Ingest, IngestKey, Linking, Mailer, Metering, NoProvider, OrgRole, OrgSettings,
-    ProjectId, ProjectName, Provider, ProviderToken, ProvisionPolicy, ResetError, ResetPassword,
-    ResetStore, ResetToken, Roster, Scope, SealError, Sealed, SessionLifetime, SignIn, SinkError,
-    Span, SpanSink, Squad, TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Vault,
-    Whoami,
+    AccountId, AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
+    FederatedSignIn, Ingest, IngestKey, Mailer, Metering, NoProvider, OrgRole, OrgSettings,
+    ProjectId, ProjectName, ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken,
+    Roster, Scope, SessionLifetime, SignIn, SinkError, Span, SpanSink, Squad, TenantDirectory,
+    TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
-    Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink, LinearHandshake,
-    LinearSettings, LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink, OidcProvider,
-    OidcSettings, PostgresAccounts, PostgresAttempts, PostgresConnections, PostgresDirectory,
-    PostgresFilings, PostgresFlows, PostgresMemberships, PostgresOrgs, PostgresProjects,
-    PostgresResets, PostgresRoster, PostgresSessions, PostgresTeams, PostgresUsage, RedisMeter,
-    SealedVault, SmtpMailer, SpanStoreSettings, StaticDirectory, StaticQuota, SystemClock,
-    load_allowances, open_span_store,
+    Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink,
+    LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink, OidcProvider, OidcSettings,
+    PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresMemberships, PostgresOrgs,
+    PostgresProjects, PostgresResets, PostgresRoster, PostgresSessions, PostgresTeams,
+    PostgresUsage, RedisMeter, SmtpMailer, SpanStoreSettings, StaticDirectory, StaticQuota,
+    SystemClock, load_allowances, open_span_store,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -126,8 +122,6 @@ enum Command {
         #[arg(long)]
         prefix: String,
     },
-    /// Print thirty-two random bytes of hex, for the key that seals a provider token
-    SecretKey,
     /// Ask the server on this host whether it is serving, for a healthcheck
     Health,
     /// Give a fresh deployment one account, one organisation, and the way in
@@ -240,14 +234,10 @@ async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
         .context("this command needs a control plane, so set database_url")?;
 
     match command {
-        /* Both are answered before a control plane is opened, so neither reaches here. Kept as
-        themselves rather than as a panic: an arm that cannot run should still be the right answer
-        if it ever does. */
+        /* Answered before a control plane is opened, so it does not reach here. Kept as itself
+        rather than as a panic: an arm that cannot run should still be the right answer if it
+        ever does. */
         Command::Health => health(config).await,
-        Command::SecretKey => {
-            print_a_secret_key();
-            Ok(())
-        }
         Command::IssueKey { org, project } => issue_key(pool, org, project).await,
         Command::RevokeKey { prefix } => revoke_key(pool, &prefix).await,
         Command::Bootstrap { email, org } => {
@@ -437,13 +427,9 @@ async fn main() -> anyhow::Result<()> {
 
     let config = config::load().context("reading the configuration")?;
     match Cli::parse().command {
+        /* A healthcheck needs no control plane, and asking for one would make it fail on
+        exactly the deployment it is being asked about. */
         Some(Command::Health) => return health(&config).await,
-        /* Neither of these needs a control plane, and asking for one would make `secret-key`
-        fail on exactly the deployment that has not been set up yet. */
-        Some(Command::SecretKey) => {
-            print_a_secret_key();
-            return Ok(());
-        }
         Some(command) => return run_command(command, &config).await,
         None => {}
     }
@@ -463,8 +449,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(org_routes(pool.as_ref()))
         .merge(roster_routes(pool.as_ref())?)
         .merge(team_routes(pool.as_ref()))
-        .merge(usage_routes(pool.as_ref(), Arc::clone(&meter)))
-        .merge(connection_routes(&config, pool.as_ref())?);
+        .merge(usage_routes(pool.as_ref(), Arc::clone(&meter)));
     let gateway = Arc::new(gateway_of(
         directory_of(pool.as_ref()),
         allowances,
@@ -786,9 +771,7 @@ async fn identity_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Resu
         Arc::clone(&sessions),
         PostgresMemberships::new(pool.clone()),
     ));
-    let mut routes = offered
-        .merge(me_router(Arc::clone(&whoami)))
-        .merge(integrations_router(whoami, wired_up(config)));
+    let mut routes = offered.merge(me_router(whoami));
 
     if config.local_password {
         let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
@@ -931,169 +914,4 @@ async fn roll_up_hourly(meter: Arc<Meter>, pool: PgPool) {
 fn until_the_next_hour(clock: SystemClock) -> Duration {
     let elapsed = clock.now().get() % SECONDS_PER_HOUR;
     Duration::from_secs(SECONDS_PER_HOUR - elapsed)
-}
-
-/* Read straight off the configuration, because that is where a token for somebody else's service
-belongs: the identity provider and the mail relay are already set there, and the control plane
-holds no secret it could leak. What reaches the screen is whether a thing is wired up, plus the
-settings that are not secrets — the Jira site and project, the GitHub repository. */
-fn wired_up(config: &Config) -> Wired {
-    Wired {
-        linear: config.linear.is_some(),
-        github: config.github.as_ref().map(|github| Repository {
-            repository: github.repository.clone(),
-        }),
-        jira: config.jira.as_ref().map(|jira| Site {
-            base_url: jira.base_url.clone(),
-            project_key: jira.project_key.clone(),
-        }),
-        mail: config.mail.is_some(),
-    }
-}
-
-fn print_a_secret_key() {
-    eprintln!("Set this as COMETTRACE_SECRET_KEY, and keep it:");
-    eprintln!("every provider token sealed under it is unreadable without it.");
-    println!("{}", SealedVault::fresh_key());
-}
-
-/* Two shapes the same arrangement the mail relay already has: a thing a deployment may or may not
-have configured, kept as an enum so the type does not change with the configuration and the
-refusal is an answer rather than a startup failure. */
-#[derive(Debug)]
-enum Keeper {
-    Sealed(Box<SealedVault>),
-    Unkeyed,
-}
-
-impl Vault for Keeper {
-    fn seal(&self, secret: &ProviderToken) -> Result<Sealed, SealError> {
-        match self {
-            Self::Sealed(vault) => vault.seal(secret),
-            Self::Unkeyed => Err(SealError::NoKey),
-        }
-    }
-
-    fn open(&self, sealed: &Sealed) -> Result<ProviderToken, SealError> {
-        match self {
-            Self::Sealed(vault) => vault.open(sealed),
-            Self::Unkeyed => Err(SealError::NoKey),
-        }
-    }
-}
-
-#[derive(Debug)]
-enum Handshaking {
-    Linear(Box<LinearHandshake>),
-    Unconfigured,
-}
-
-/* One adapter answers for one provider, so this is where a provider becomes the adapter that
-knows it — and where a provider nobody registered an application for becomes an answer. */
-impl Handshake for Handshaking {
-    fn authorize_url(&self, provider: Provider, state: &str) -> Result<String, ConnectionError> {
-        match (self, provider) {
-            (Self::Linear(linear), Provider::Linear) => linear.authorize_url(provider, state),
-            _ => Err(ConnectionError::ProviderUnconfigured),
-        }
-    }
-
-    async fn finish(&self, provider: Provider, code: &str) -> Result<Authorized, ConnectionError> {
-        match (self, provider) {
-            (Self::Linear(linear), Provider::Linear) => linear.finish(provider, code).await,
-            _ => Err(ConnectionError::ProviderUnconfigured),
-        }
-    }
-}
-
-/* Where issues can be filed is asked of the same adapter that did the handshake, because the
-credential it is asked with is the one that adapter minted. */
-impl Destinations for Handshaking {
-    async fn offered(
-        &self,
-        provider: Provider,
-        credential: &ProviderToken,
-    ) -> Result<Vec<Destination>, ConnectionError> {
-        match (self, provider) {
-            (Self::Linear(linear), Provider::Linear) => linear.offered(provider, credential).await,
-            _ => Err(ConnectionError::ProviderUnconfigured),
-        }
-    }
-}
-
-fn keeper_of(config: &Config) -> anyhow::Result<Keeper> {
-    let Some(key) = config.secret_key.as_deref() else {
-        tracing::warn!(
-            "no secret_key is set, so no provider can be connected; draw one with \
-             `comettrace secret-key`"
-        );
-        return Ok(Keeper::Unkeyed);
-    };
-    let vault = SealedVault::from_hex_key(key).context("reading the deployment key")?;
-    tracing::info!("provider connections are sealed at rest");
-    Ok(Keeper::Sealed(Box::new(vault)))
-}
-
-fn handshaking_of(config: &Config) -> Handshaking {
-    let Some(linear) = config.linear.as_ref() else {
-        return Handshaking::Unconfigured;
-    };
-    tracing::info!(
-        redirect_uri = %linear.redirect_uri,
-        "linear can be connected"
-    );
-    Handshaking::Linear(Box::new(LinearHandshake::new(LinearSettings {
-        client_id: linear.client_id.clone(),
-        client_secret: linear.client_secret.clone(),
-        redirect_uri: linear.redirect_uri.clone(),
-    })))
-}
-
-type Joining = Linking<
-    Arc<Sessions>,
-    PostgresMemberships,
-    Arc<PostgresConnections<Keeper>>,
-    PostgresAttempts<SystemClock>,
-    Arc<Handshaking>,
->;
-
-type Aiming = Filing<
-    Arc<Sessions>,
-    PostgresMemberships,
-    Arc<PostgresConnections<Keeper>>,
-    PostgresFilings,
-    Arc<Handshaking>,
->;
-
-/* Connecting a provider and pointing it at somewhere are two use cases over one set of
-adapters, so the adapters are built once and shared: a second keeper would be a second copy of
-the deployment key, and a second handshaking would say "linear can be connected" twice to a log
-somebody is reading to find out whether it can. */
-fn connection_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Result<Router> {
-    let Some(pool) = pool else {
-        return Ok(Router::new());
-    };
-    let sessions = Arc::new(PostgresSessions::new(
-        pool.clone(),
-        SystemClock,
-        SessionLifetime::default(),
-    ));
-    let connections = Arc::new(PostgresConnections::new(pool.clone(), keeper_of(config)?));
-    let handshaking = Arc::new(handshaking_of(config));
-
-    let linking: Arc<Joining> = Arc::new(Linking::new(
-        Arc::clone(&sessions),
-        PostgresMemberships::new(pool.clone()),
-        Arc::clone(&connections),
-        PostgresAttempts::new(pool.clone(), SystemClock),
-        Arc::clone(&handshaking),
-    ));
-    let filing: Arc<Aiming> = Arc::new(Filing::new(
-        sessions,
-        PostgresMemberships::new(pool.clone()),
-        connections,
-        PostgresFilings::new(pool.clone()),
-        handshaking,
-    ));
-    Ok(connection_router(linking).merge(filing_router(filing)))
 }

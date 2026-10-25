@@ -1,16 +1,12 @@
 mod accounts;
-mod attempts;
 mod clickhouse;
 mod clock;
-mod connections;
 mod counter;
 mod directory;
-mod filings;
 mod flows;
 mod hasher;
 mod history;
 mod keys;
-mod linear;
 mod local;
 mod mail;
 mod memberships;
@@ -27,24 +23,19 @@ mod sink;
 mod spans;
 mod teams;
 mod usage;
-mod vault;
 
 pub use accounts::{AccountError, PostgresAccounts};
-pub use attempts::PostgresAttempts;
 pub use clickhouse::{
     BatchLimits, ClickhouseMigrator, ClickhouseReader, ClickhouseSink, MIGRATIONS, MigrateError,
     Migration,
 };
 pub use clock::{FixedClock, SystemClock};
-pub use connections::PostgresConnections;
 pub use counter::{CounterError, RedisMeter};
 pub use directory::StaticDirectory;
-pub use filings::PostgresFilings;
 pub use flows::PostgresFlows;
 pub use hasher::Argon2Hasher;
 pub use history::PostgresUsage;
 pub use keys::{KeyError, PostgresDirectory};
-pub use linear::{LinearHandshake, LinearSettings};
 pub use local::LocalPasswordProvider;
 pub use mail::{MailError, MailSettings, SmtpMailer};
 pub use memberships::{MembershipError, PostgresMemberships};
@@ -61,4 +52,3 @@ pub use sink::MemorySink;
 pub use spans::{SpanStore, SpanStoreSettings, open as open_span_store};
 pub use teams::PostgresTeams;
 pub use usage::MemoryMeter;
-pub use vault::{BadKey, SealedVault};
