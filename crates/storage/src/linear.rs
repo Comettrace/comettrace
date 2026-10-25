@@ -1,4 +1,6 @@
-use comettrace_core::{Authorized, ConnectionError, Handshake, Provider, ProviderToken};
+use comettrace_core::{
+    Authorized, ConnectionError, Destination, Destinations, Handshake, Provider, ProviderToken,
+};
 use serde::{Deserialize, Serialize};
 
 const AUTHORIZE: &str = "https://linear.app/oauth/authorize";
@@ -178,6 +180,88 @@ fn unreachable(error: &reqwest::Error, what: &str) -> ConnectionError {
     ConnectionError::ProviderUnreachable
 }
 
+#[derive(Debug, Deserialize)]
+struct Listed {
+    data: Option<Teamed>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Teamed {
+    teams: Nodes,
+}
+
+#[derive(Debug, Deserialize)]
+struct Nodes {
+    nodes: Vec<Team>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Team {
+    id: String,
+    name: String,
+    key: String,
+}
+
+impl Destinations for LinearHandshake {
+    /* A Linear team is where an issue is filed, and the key is what people call it in
+    conversation — ENG-412 is a key and a number — so the name carries both. Archived teams are
+    absent because Linear leaves them out unless asked for, which is the right default here: a
+    chooser that offered one would offer a place nothing can be filed into. */
+    async fn offered(
+        &self,
+        provider: Provider,
+        credential: &ProviderToken,
+    ) -> Result<Vec<Destination>, ConnectionError> {
+        if provider != Provider::Linear {
+            return Err(ConnectionError::ProviderUnconfigured);
+        }
+        let access_token = access_of(credential)?;
+
+        let answered = self
+            .http
+            .post(GRAPHQL)
+            .bearer_auth(&access_token)
+            .json(&serde_json::json!({
+                "query": "{ teams(first: 250) { nodes { id name key } } }"
+            }))
+            .send()
+            .await
+            .map_err(|error| unreachable(&error, "list the teams"))?;
+
+        if !answered.status().is_success() {
+            tracing::warn!(status = %answered.status(), "linear refused to list the teams");
+            return Err(ConnectionError::ProviderRefused);
+        }
+
+        let read: Listed = answered.json().await.map_err(|error| {
+            tracing::error!(%error, "linear answered something that is not a team list");
+            ConnectionError::ProviderRefused
+        })?;
+
+        Ok(read
+            .data
+            .map(|teamed| teamed.teams.nodes)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|team| Destination {
+                id: team.id.into(),
+                name: format!("{} ({})", team.name, team.key).into(),
+            })
+            .collect())
+    }
+}
+
+/* The credential is the json this adapter sealed, so this is the one place that knows its shape.
+A credential that does not parse is one sealed by another version of this code, and saying so is
+more use than a panic. */
+fn access_of(credential: &ProviderToken) -> Result<String, ConnectionError> {
+    serde_json::from_str::<Credential>(credential.exposed())
+        .map(|credential| credential.access_token)
+        .map_err(|error| {
+            tracing::error!(%error, "a stored linear credential could not be read");
+            ConnectionError::Unopenable
+        })
+}
 #[cfg(test)]
 mod tests {
     use comettrace_core::{ConnectionError, Handshake, Provider};

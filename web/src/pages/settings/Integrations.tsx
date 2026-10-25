@@ -7,8 +7,9 @@ import { useOrganizations } from '@/auth/session'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { WHY, useConnect, useConnections, useDisconnect, useWired, type Connected } from '@/data/integrations'
+import { WHY, useConnect, useConnections, useDisconnect, useFilings, useWired, type Connected, type Routing } from '@/data/integrations'
 import { stamp } from '@/lib/format'
+import { Aim } from './aim'
 import { H, Sub } from './parts'
 
 /* Every one of these is registered by the deployment in its configuration file, the way the
@@ -28,6 +29,7 @@ type Wiring = {
 function Tile({
   wiring,
   connection,
+  routing,
   mayConnect,
   busy,
   onConnect,
@@ -35,6 +37,7 @@ function Tile({
 }: {
   wiring: Wiring
   connection?: Connected
+  routing?: Routing
   mayConnect: boolean
   busy: boolean
   onConnect: () => void
@@ -49,9 +52,14 @@ function Tile({
       </div>
       <span className="flex-1 text-control text-muted-foreground">{wiring.what}</span>
       {connection ? (
-        <span className="text-caption text-muted-foreground">
-          <span className="font-semibold text-foreground">{connection.account_label}</span> · since {stamp(connection.connected_at_ms)}
-        </span>
+        <>
+          <span className="text-caption text-muted-foreground">
+            <span className="font-semibold text-foreground">{connection.account_label}</span> · since {stamp(connection.connected_at_ms)}
+          </span>
+          {/* Where the organisation files by default. A project can differ, and says so on its
+             own settings screen rather than here: this card is the organisation's. */}
+          {routing ? <Aim routing={routing} mayChange={mayConnect} /> : null}
+        </>
       ) : (
         <>
           {wiring.on && wiring.detail ? <span className="font-mono text-caption text-muted-foreground">{wiring.detail}</span> : null}
@@ -76,10 +84,12 @@ export function Integrations() {
   const { wired, loading, unreachable } = useWired()
   const methods = useQuery(methodsQuery).data
   const connections = useConnections()
+  const { routings } = useFilings()
   const connect = useConnect()
   const disconnect = useDisconnect()
   const mayConnect = active?.role === 'owner' || active?.role === 'admin'
   const connected = (provider: string) => connections.find((one) => one.provider === provider)
+  const aimed = (provider: string) => routings?.find((one) => one.provider === provider)
 
   /* The callback sends the browser back here with one word. Said once, then taken out of the url
      so a reload does not say it again. */
@@ -144,6 +154,7 @@ export function Integrations() {
       key={wiring.name}
       wiring={wiring}
       connection={wiring.provider ? connected(wiring.provider) : undefined}
+      routing={wiring.provider ? aimed(wiring.provider) : undefined}
       mayConnect={mayConnect}
       busy={connect.isPending || disconnect.isPending}
       onConnect={() =>
