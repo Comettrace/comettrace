@@ -27,8 +27,8 @@ use comettrace_storage::{
     LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink, OidcProvider, OidcSettings,
     PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresMemberships, PostgresOrgs,
     PostgresProjects, PostgresResets, PostgresRoster, PostgresSessions, PostgresTeams,
-    PostgresUsage, RedisMeter, SmtpMailer, SpanStoreSettings, StaticDirectory, StaticQuota,
-    SystemClock, load_allowances, open_span_store,
+    PostgresUsage, RedisMeter, SealedVault, SmtpMailer, SpanStoreSettings, StaticDirectory,
+    StaticQuota, SystemClock, load_allowances, open_span_store,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -123,6 +123,8 @@ enum Command {
         #[arg(long)]
         prefix: String,
     },
+    /// Print thirty-two random bytes of hex, for the key that seals a provider token
+    SecretKey,
     /// Ask the server on this host whether it is serving, for a healthcheck
     Health,
     /// Give a fresh deployment one account, one organisation, and the way in
@@ -235,7 +237,14 @@ async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
         .context("this command needs a control plane, so set database_url")?;
 
     match command {
+        /* Both are answered before a control plane is opened, so neither reaches here. Kept as
+        themselves rather than as a panic: an arm that cannot run should still be the right answer
+        if it ever does. */
         Command::Health => health(config).await,
+        Command::SecretKey => {
+            print_a_secret_key();
+            Ok(())
+        }
         Command::IssueKey { org, project } => issue_key(pool, org, project).await,
         Command::RevokeKey { prefix } => revoke_key(pool, &prefix).await,
         Command::Bootstrap { email, org } => {
@@ -426,6 +435,12 @@ async fn main() -> anyhow::Result<()> {
     let config = config::load().context("reading the configuration")?;
     match Cli::parse().command {
         Some(Command::Health) => return health(&config).await,
+        /* Neither of these needs a control plane, and asking for one would make `secret-key`
+        fail on exactly the deployment that has not been set up yet. */
+        Some(Command::SecretKey) => {
+            print_a_secret_key();
+            return Ok(());
+        }
         Some(command) => return run_command(command, &config).await,
         None => {}
     }
@@ -930,4 +945,10 @@ fn wired_up(config: &Config) -> Wired {
         }),
         mail: config.mail.is_some(),
     }
+}
+
+fn print_a_secret_key() {
+    eprintln!("Set this as COMETTRACE_SECRET_KEY, and keep it:");
+    eprintln!("every provider token sealed under it is unreadable without it.");
+    println!("{}", SealedVault::fresh_key());
 }

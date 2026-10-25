@@ -28,6 +28,13 @@ pub struct Config {
     pub oidc: Option<OidcConfig>,
     #[serde(default)]
     pub mail: Option<MailConfig>,
+    /* Thirty-two bytes of hex, which is what a token for somebody else's service is sealed
+    under. A deployment that sets none can do everything it did before; what it cannot do is hold
+    such a token, and the integrations screen says so rather than the server refusing to start.
+    Lose it and the sealed rows are unreadable — which is the whole bargain, and why
+    `comettrace secret-key` prints one rather than anybody inventing their own. */
+    #[serde(default)]
+    pub secret_key: Option<String>,
     #[serde(default)]
     pub linear: Option<LinearConfig>,
     #[serde(default)]
@@ -166,6 +173,7 @@ impl Default for Config {
             tenants: Vec::new(),
             oidc: None,
             mail: None,
+            secret_key: None,
             linear: None,
             github: None,
             jira: None,
@@ -336,6 +344,37 @@ mod tests {
 
             assert_eq!(mail.relay, "mail.example.com");
             assert_eq!(mail.base_url, "https://app.example.com");
+            Ok(())
+        });
+    }
+
+    /* A deployment that sets no key is the ordinary case, not a broken one: everything but
+    holding a token for somebody else's service works without it. */
+    #[test]
+    fn a_deployment_with_no_key_is_the_default() {
+        figment::Jail::expect_with(|_jail| {
+            let config: Config = figment().extract()?;
+
+            assert_eq!(config.secret_key, None);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn a_key_is_read_from_the_file_and_from_the_environment() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(FILE, "secret_key = \"ab\"\n")?;
+            assert_eq!(
+                figment().extract::<Config>()?.secret_key.as_deref(),
+                Some("ab")
+            );
+
+            jail.set_env("COMETTRACE_SECRET_KEY", "cd");
+            assert_eq!(
+                figment().extract::<Config>()?.secret_key.as_deref(),
+                Some("cd"),
+                "the environment wins over the file, as it does for everything else"
+            );
             Ok(())
         });
     }
