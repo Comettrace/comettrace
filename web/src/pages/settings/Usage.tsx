@@ -12,36 +12,25 @@ const DAY = 86_400_000
 const month = (at: number) => new Date(at).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 const dayLabel = (at: number) => new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
 
-/* A headline against a ceiling is a stat tile, not a chart: one number, one comparison, no axis
-   worth drawing. The bar is the comparison, and the number is read off the text beside it. */
-function Meter({ used, included }: { used: number; included: number | null }) {
-  const share = included && included > 0 ? Math.min(100, (used / included) * 100) : null
+/* Four cards of the same shape, which is what makes a row of them readable: a label, a value,
+   what it is measured against, a bar, and a line saying what the bar means. Only one quantity is
+   metered here — decompressed payload bytes — so what differs between the cards is not the
+   measure but what each one compares it to. None of the four is invented.
+
+   `share` of nothing draws no bar, because a bar with no denominator is a decoration. */
+function Meter({ label, used, of, share, note }: { label: string; used: string; of?: string; share: number | null; note: string }) {
   return (
     <Card className="flex flex-col gap-2 p-3.5">
       <div className="flex items-baseline gap-2">
-        <span className="flex-1 text-control font-semibold">Ingested this month</span>
-        <span className="font-mono text-control">{bytes(used)}</span>
-        {included ? <span className="text-caption text-muted-foreground">of {bytes(included)} included</span> : null}
+        <span className="flex-1 text-control font-semibold">{label}</span>
+        <span className="font-mono text-control">{used}</span>
+        {of ? <span className="text-caption text-muted-foreground">{of}</span> : null}
       </div>
-      {share === null ? (
-        <span className="text-caption text-muted-foreground">This plan sets no ceiling, so there is nothing to fill.</span>
-      ) : (
-        <>
-          <div className="relative h-2 rounded bg-muted" role="img" aria-label={`${share.toFixed(0)} percent of the included amount`}>
-            <div className="absolute inset-y-0 left-0 rounded bg-series" style={{ width: `${share}%` }} />
-          </div>
-          <span className="text-caption text-muted-foreground">{share.toFixed(0)} % used</span>
-        </>
+      {share === null ? null : (
+        <div className="relative h-2 rounded bg-muted" role="img" aria-label={`${share.toFixed(0)} percent`}>
+          <div className="absolute inset-y-0 left-0 rounded bg-series" style={{ width: `${Math.min(100, share)}%` }} />
+        </div>
       )}
-    </Card>
-  )
-}
-
-function Stat({ label, value, note }: { label: string; value: string; note: string }) {
-  return (
-    <Card className="flex flex-col gap-1 p-3.5">
-      <span className="text-control font-semibold">{label}</span>
-      <span className="font-mono text-title">{value}</span>
       <span className="text-caption text-muted-foreground">{note}</span>
     </Card>
   )
@@ -49,7 +38,6 @@ function Stat({ label, value, note }: { label: string; value: string; note: stri
 
 /* One series of daily totals: bars, because the buckets are discrete and the question is
    magnitude per day. No legend — the heading names the one series — and no number on every bar.
-   The two ends of the window are labelled and the rest is read by hovering.
 
    The readout sits in the heading rather than floating over the hovered bar. A bubble centred on
    a bar overflows the card at either end of a month, and on a narrow screen that is the page
@@ -102,17 +90,23 @@ export function Usage() {
 
   const [from, to] = useMemo(() => {
     const start = startOfMonth(now)
-    return period === 'this'
-      ? [start, startOfNextMonth(now)]
-      : [startOfMonth(start - DAY), start]
+    return period === 'this' ? [start, startOfNextMonth(now)] : [startOfMonth(start - DAY), start]
   }, [period, now])
 
   const { metered, nothing } = useMetered(from, to)
   const days = useMemo(() => (metered ? byDay(metered.hours, from, Math.min(to, now + DAY)) : []), [metered, from, to, now])
+
   const rolled = days.reduce((total, d) => total + d.bytes, 0)
   /* This month's figure is the live counter, which counts the hour in progress. A past month has
      no live counter to read, so it is the rolled up hours and nothing else. */
   const used = period === 'this' ? (metered?.ingested_bytes ?? 0) : rolled
+  const included = metered?.included_bytes ?? null
+  const busiest = days.reduce<Day | null>((peak, d) => (peak === null || d.bytes > peak.bytes ? d : peak), null)
+  const average = days.length > 0 ? Math.round(rolled / days.length) : 0
+  const ceiling = (count: number) => (included && included > 0 ? (count / included) * 100 : null)
+  const ofIncluded = included ? `of ${bytes(included)} included` : undefined
+  const noCeiling = 'This plan sets no ceiling.'
+  const ahead = projected(used, now)
 
   return (
     <>
@@ -127,13 +121,48 @@ export function Usage() {
       {metered ? (
         <>
           <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3">
-            <Meter used={used} included={metered.included_bytes} />
+            <Meter
+              label={period === 'this' ? 'Ingested this month' : 'Ingested'}
+              used={bytes(used)}
+              of={ofIncluded}
+              share={ceiling(used)}
+              note={included ? `${(ceiling(used) ?? 0).toFixed(0)} % of what the plan allows` : noCeiling}
+            />
             {period === 'this' ? (
-              <Stat label="Projected at month end" value={bytes(projected(used, now))} note="If the rest of the month looks like the part that has happened." />
+              <Meter
+                label="Projected at month end"
+                used={bytes(ahead)}
+                of={ofIncluded}
+                share={ceiling(ahead)}
+                note={
+                  included && (ceiling(ahead) ?? 0) > 100
+                    ? 'Past the ceiling before the month is out, at this rate.'
+                    : 'If the rest of the month looks like the part that has happened.'
+                }
+              />
             ) : (
-              <Stat label="Rolled up" value={bytes(rolled)} note="Every finished hour of that month, added up." />
+              <Meter
+                label="Rolled up"
+                used={bytes(rolled)}
+                of={ofIncluded}
+                share={ceiling(rolled)}
+                note="Every finished hour of that month, added up."
+              />
             )}
-            <Stat label="Busiest day" value={bytes(Math.max(0, ...days.map((d) => d.bytes)))} note={days.length > 0 ? `Of ${days.length} days read.` : 'Nothing has arrived yet.'} />
+            <Meter
+              label="Busiest day"
+              used={bytes(busiest?.bytes ?? 0)}
+              of={rolled > 0 ? `of ${bytes(rolled)} rolled up` : undefined}
+              share={rolled > 0 ? ((busiest?.bytes ?? 0) / rolled) * 100 : null}
+              note={busiest && busiest.bytes > 0 ? dayLabel(busiest.at) : 'Nothing has arrived yet.'}
+            />
+            <Meter
+              label="Average per day"
+              used={bytes(average)}
+              of={busiest && busiest.bytes > 0 ? `of ${bytes(busiest.bytes)} at peak` : undefined}
+              share={busiest && busiest.bytes > 0 ? (average / busiest.bytes) * 100 : null}
+              note={days.length > 0 ? `Across the ${days.length} days read.` : 'No day has been rolled up yet.'}
+            />
           </div>
           <Daily days={days} />
           <Sub>By day</Sub>
