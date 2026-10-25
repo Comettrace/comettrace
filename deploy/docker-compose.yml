@@ -65,6 +65,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Anything else the server reads — the identity provider, the mail relay,
+    # a project management token — is set here rather than named above, so
+    # that adding a setting does not mean editing this file. A missing .env is
+    # the ordinary case: the stack comes up on a clean machine without one.
+    env_file:
+      - path: .env
+        required: false
+    # These win over the file, because they are how the server reaches the
+    # three stores inside this network rather than something to choose.
     environment:
       COMETTRACE_DATABASE_URL: postgres://comettrace:${POSTGRES_PASSWORD:-comettrace}@postgres:5432/comettrace
       COMETTRACE_REDIS_URL: redis://redis:6379
