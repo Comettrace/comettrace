@@ -41,13 +41,15 @@ export function Danger({ title, text, action, onClick }: { title: string; text: 
   )
 }
 
-export function ConfirmDelete({ open, onOpenChange, name, what, body }: { open: boolean; onOpenChange: (o: boolean) => void; name: string; what: string; body: string }) {
+/* Without `onConfirm` nothing deletes this kind of thing yet, and the dialog says so rather than
+   pretending: it is the one way a screen can offer the button honestly before the route exists. */
+export function ConfirmDelete({ open, onOpenChange, name, what, body, onConfirm, busy }: { open: boolean; onOpenChange: (o: boolean) => void; name: string; what: string; body: string; onConfirm?: () => void; busy?: boolean }) {
   const [v, setV] = useState('')
   return (
     <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); setV('') }}>
       <DialogContent role="alertdialog" title={`Delete ${name}?`} description={body}>
         <Field label={<>Type <span className="font-mono">{name}</span> to confirm</>} htmlFor="cd-in"><Input id="cd-in" mono value={v} onChange={(e) => setV(e.target.value)} autoFocus /></Field>
-        <DialogFooter><Button onClick={() => onOpenChange(false)}>Cancel</Button><Button variant="destructive" disabled={v !== name} onClick={() => { onOpenChange(false); toast('Nothing was deleted', { description: `No route deletes a ${what} yet, so ${name} stays in place.` }) }}>Delete {what}</Button></DialogFooter>
+        <DialogFooter><Button onClick={() => onOpenChange(false)}>Cancel</Button><Button variant="destructive" disabled={v !== name || busy} onClick={() => { if (onConfirm) { onConfirm(); return } onOpenChange(false); toast('Nothing was deleted', { description: `No route deletes a ${what} yet, so ${name} stays in place.` }) }}>Delete {what}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   )

@@ -5,11 +5,13 @@ import { useMock } from './seam'
    its members (src/data/members) and its teams (src/data/teams), and so are memberships and
    projects (src/auth, src/data/projects); no key endpoint exists yet.
 
-   The assignees below are the cast the issue screens pick from. Issues are sample data through
-   and through, so the people on them are too: the real members are read by the settings screen
-   and nothing else. */
+   The two lists below yield the names they used to hold, because a real list now answers to them.
+   The assignees are the cast the issue screens pick from: issues are sample data through and
+   through, so the people on them are too. The sampled projects are the ones the overview invents
+   an ingest rate for, positionally — three projects, three rates — so pointing that card at the
+   real catalogue would put a made-up rate against a real name, which is worse than this. */
 
-export function useProjects() {
+export function useSampledProjects() {
   return useMock(['organization', 'projects'], () => PROJECTS)
 }
 

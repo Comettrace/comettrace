@@ -3,23 +3,74 @@ use std::sync::Arc;
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path, State};
-use axum::http::HeaderMap;
-use axum::routing::get;
-use comettrace_core::{Catalogue, Memberships, Projects, SessionStore, TenantId};
-use serde::Serialize;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, patch, put};
+use comettrace_core::{
+    BadProjectName, Catalogue, CatalogueError, Memberships, Project, ProjectId, ProjectName,
+    Projects, SessionStore, TeamId, TenantId,
+};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::explore_routes::{LookRefused, carried};
+use crate::explore_routes::{NotCarried, carried};
+
+const NANOS_PER_MILLI: u64 = 1_000_000;
 
 #[derive(Debug, Serialize)]
 pub struct Held {
     projects: Vec<Kept>,
 }
 
+/* The switcher at the top of every screen reads this same list and uses the first two fields,
+which is why the rest are facts rather than a second request: the settings table shows the owner
+team, the count of keys that still authenticate, and when the project was made. */
 #[derive(Debug, Serialize)]
 struct Kept {
     id: Uuid,
     name: String,
+    created_at_ms: u64,
+    team: Option<Owner>,
+    keys: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct Owner {
+    id: Uuid,
+    name: String,
+}
+
+impl From<Project> for Kept {
+    fn from(project: Project) -> Self {
+        Self {
+            id: project.id.as_uuid(),
+            name: project.name.into_string(),
+            created_at_ms: project.created_at_unix_nanos / NANOS_PER_MILLI,
+            team: project.team.map(|team| Owner {
+                id: team.id.as_uuid(),
+                name: team.name.into_string(),
+            }),
+            keys: project.keys,
+        }
+    }
+}
+
+fn held(projects: Vec<Project>) -> Json<Held> {
+    Json(Held {
+        projects: projects.into_iter().map(Kept::from).collect(),
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Naming {
+    name: String,
+}
+
+/* Nothing is the project belonging to no team, which is a thing to ask for rather than a field
+left out by accident, so it is spelt as a null the route reads. */
+#[derive(Debug, Deserialize)]
+pub struct Owning {
+    team: Option<Uuid>,
 }
 
 pub fn catalogue_router<S, G, P>(catalogue: Arc<Catalogue<S, G, P>>) -> Router
@@ -29,7 +80,18 @@ where
     P: Projects + Send + Sync + 'static,
 {
     Router::new()
-        .route("/api/orgs/{org}/projects", get(projects::<S, G, P>))
+        .route(
+            "/api/orgs/{org}/projects",
+            get(projects::<S, G, P>).post(create::<S, G, P>),
+        )
+        .route(
+            "/api/orgs/{org}/projects/{project}",
+            patch(rename::<S, G, P>).delete(forget::<S, G, P>),
+        )
+        .route(
+            "/api/orgs/{org}/projects/{project}/team",
+            put(assign::<S, G, P>),
+        )
         .with_state(catalogue)
 }
 
@@ -37,21 +99,142 @@ async fn projects<S, G, P>(
     State(catalogue): State<Arc<Catalogue<S, G, P>>>,
     Path(org): Path<Uuid>,
     headers: HeaderMap,
-) -> Result<Json<Held>, LookRefused>
+) -> Result<Json<Held>, ProjectRefused>
 where
     S: SessionStore + Send + Sync + 'static,
     G: Memberships + Send + Sync + 'static,
     P: Projects + Send + Sync + 'static,
 {
     let token = carried(&headers)?;
-    let held = catalogue
-        .projects(&token, TenantId::new(org))
-        .await?
-        .into_iter()
-        .map(|project| Kept {
-            id: project.id.as_uuid(),
-            name: project.name.into_string(),
-        })
-        .collect();
-    Ok(Json(Held { projects: held }))
+    Ok(held(catalogue.projects(&token, TenantId::new(org)).await?))
+}
+
+async fn create<S, G, P>(
+    State(catalogue): State<Arc<Catalogue<S, G, P>>>,
+    Path(org): Path<Uuid>,
+    headers: HeaderMap,
+    Json(asked): Json<Naming>,
+) -> Result<(StatusCode, Json<Held>), ProjectRefused>
+where
+    S: SessionStore + Send + Sync + 'static,
+    G: Memberships + Send + Sync + 'static,
+    P: Projects + Send + Sync + 'static,
+{
+    let token = carried(&headers)?;
+    let name = ProjectName::try_from(asked.name.as_str())?;
+    let kept = catalogue.create(&token, TenantId::new(org), &name).await?;
+    tracing::info!(org = %org, "a project was created");
+    Ok((StatusCode::CREATED, held(kept)))
+}
+
+async fn rename<S, G, P>(
+    State(catalogue): State<Arc<Catalogue<S, G, P>>>,
+    Path((org, project)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Json(asked): Json<Naming>,
+) -> Result<Json<Held>, ProjectRefused>
+where
+    S: SessionStore + Send + Sync + 'static,
+    G: Memberships + Send + Sync + 'static,
+    P: Projects + Send + Sync + 'static,
+{
+    let token = carried(&headers)?;
+    let name = ProjectName::try_from(asked.name.as_str())?;
+    let kept = catalogue
+        .rename(&token, TenantId::new(org), ProjectId::new(project), &name)
+        .await?;
+    tracing::info!(org = %org, project = %project, "a project was renamed");
+    Ok(held(kept))
+}
+
+async fn forget<S, G, P>(
+    State(catalogue): State<Arc<Catalogue<S, G, P>>>,
+    Path((org, project)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+) -> Result<Json<Held>, ProjectRefused>
+where
+    S: SessionStore + Send + Sync + 'static,
+    G: Memberships + Send + Sync + 'static,
+    P: Projects + Send + Sync + 'static,
+{
+    let token = carried(&headers)?;
+    let kept = catalogue
+        .forget(&token, TenantId::new(org), ProjectId::new(project))
+        .await?;
+    tracing::info!(org = %org, project = %project, "a project was forgotten");
+    Ok(held(kept))
+}
+
+async fn assign<S, G, P>(
+    State(catalogue): State<Arc<Catalogue<S, G, P>>>,
+    Path((org, project)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Json(asked): Json<Owning>,
+) -> Result<Json<Held>, ProjectRefused>
+where
+    S: SessionStore + Send + Sync + 'static,
+    G: Memberships + Send + Sync + 'static,
+    P: Projects + Send + Sync + 'static,
+{
+    let token = carried(&headers)?;
+    let team = asked.team.map(TeamId::new);
+    let kept = catalogue
+        .assign(&token, TenantId::new(org), ProjectId::new(project), team)
+        .await?;
+    tracing::info!(org = %org, project = %project, owned = team.is_some(), "a project changed hands");
+    Ok(held(kept))
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProjectRefused {
+    #[error(transparent)]
+    Reaching(#[from] NotCarried),
+    #[error(transparent)]
+    Name(#[from] BadProjectName),
+    #[error("no such organisation")]
+    NoSuchOrg,
+    #[error("no such project")]
+    NoSuchProject,
+    #[error("no such team")]
+    NoSuchTeam,
+    #[error("the projects of an organisation are an administrator's to arrange")]
+    NotAnAdministrator,
+    #[error("this organisation already holds a project under that name")]
+    NameTaken,
+    #[error("the projects could not be read")]
+    Unavailable,
+}
+
+/* A session with no membership of the organisation is told there is none, so the ids of other
+organisations stay unguessable. Everybody past that point already knows it exists, so they are
+told the real reason instead. */
+impl From<CatalogueError> for ProjectRefused {
+    fn from(error: CatalogueError) -> Self {
+        match error {
+            CatalogueError::NoSession => Self::Reaching(NotCarried::NoSession),
+            CatalogueError::NotYours => Self::NoSuchOrg,
+            CatalogueError::NotYoursToChange => Self::NotAnAdministrator,
+            CatalogueError::NoSuchProject => Self::NoSuchProject,
+            CatalogueError::NoSuchTeam => Self::NoSuchTeam,
+            CatalogueError::NameTaken => Self::NameTaken,
+            CatalogueError::StoreUnreachable => Self::Unavailable,
+        }
+    }
+}
+
+impl IntoResponse for ProjectRefused {
+    fn into_response(self) -> Response {
+        let status = match self {
+            Self::Reaching(refused) => return refused.into_response(),
+            Self::Name(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::NoSuchOrg | Self::NoSuchProject | Self::NoSuchTeam => StatusCode::NOT_FOUND,
+            Self::NotAnAdministrator => StatusCode::FORBIDDEN,
+            Self::NameTaken => StatusCode::CONFLICT,
+            Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        };
+        if status.is_server_error() {
+            tracing::error!(error = %self, "the projects could not be served");
+        }
+        (status, self.to_string()).into_response()
+    }
 }

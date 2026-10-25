@@ -17,7 +17,7 @@ use comettrace_api::{
 use comettrace_core::{
     AccountId, AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
     FederatedSignIn, Ingest, IngestKey, Mailer, NoProvider, OrgRole, OrgSettings, ProjectId,
-    ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken, Roster, Scope,
+    ProjectName, ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken, Roster, Scope,
     SessionLifetime, SignIn, SinkError, Span, SpanSink, Squad, TenantDirectory, TenantId,
     UnknownKey, UsageMeter, UsageReader, Whoami,
 };
@@ -316,13 +316,14 @@ async fn bootstrap(
         .found(org, email.as_str())
         .await
         .context("creating the organisation")?;
+    let first = ProjectName::try_from("default").expect("a slug");
     let project = PostgresProjects::new(pool.clone())
-        .create(tenant, "Default")
+        .claim(tenant, &first)
         .await
         .context("creating the first project")?;
 
     eprintln!("{} owns {org} ({tenant}).", email.as_str());
-    eprintln!("It holds one project, Default ({project}).");
+    eprintln!("It holds one project, {} ({project}).", first.as_str());
     eprintln!("Draw its first ingest key with:");
     eprintln!("  comettrace issue-key --org {tenant} --project {project}");
 
@@ -383,11 +384,12 @@ async fn reset_password(pool: PgPool, email: &str) -> anyhow::Result<()> {
 }
 
 async fn create_project(pool: PgPool, org: Uuid, name: &str) -> anyhow::Result<()> {
+    let name = ProjectName::try_from(name).context("reading the name")?;
     let project = PostgresProjects::new(pool)
-        .create(TenantId::new(org), name)
+        .claim(TenantId::new(org), &name)
         .await
         .context("creating the project")?;
-    eprintln!("{org} now holds {name}. Draw a key for it with:");
+    eprintln!("{org} now holds {}. Draw a key for it with:", name.as_str());
     eprintln!("  comettrace issue-key --org {org} --project {project}");
     println!("{project}");
     Ok(())

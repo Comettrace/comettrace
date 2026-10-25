@@ -1,7 +1,8 @@
 import { ChevronsUpDown, Folder } from 'lucide-react'
 import { NavLink, Outlet } from '@/lib/router'
 import { NativeSelect } from '@/components/ui/input'
-import { useProjects } from '@/data/organization'
+import { useProjects } from '@/data/projects'
+import { useScope } from '@/lib/scope'
 import { cn } from '@/lib/utils'
 
 const GROUPS: { label: string; items: [string, string][] }[] = [
@@ -12,6 +13,9 @@ const GROUPS: { label: string; items: [string, string][] }[] = [
 
 export function SettingsLayout() {
   const projects = useProjects()
+  /* The same choice the switcher at the top of every screen makes, so configuring a project and
+     reading its traces do not disagree about which one is meant. */
+  const { project, chooseProject } = useScope()
   return (
     <div className="flex flex-wrap items-start gap-8">
       <nav aria-label="Settings sections" className="flex w-[200px] flex-col gap-0.5 pt-1 max-md:w-full">
@@ -22,7 +26,9 @@ export function SettingsLayout() {
             {g.label === 'Project' ? (
               <div className="relative mb-1">
                 <Folder className="pointer-events-none absolute left-2.5 top-2 size-3.5 text-muted-foreground" aria-hidden />
-                <NativeSelect aria-label="Project to configure" defaultValue="storefront" className="h-[30px] appearance-none pl-7 font-semibold">{projects.map((p) => <option key={p.name}>{p.name}</option>)}</NativeSelect>
+                <NativeSelect aria-label="Project to configure" value={projects.find((p) => p.id === project)?.id ?? projects[0]?.id ?? ''} onChange={(e) => chooseProject(e.target.value)} className="h-[30px] appearance-none pl-7 font-semibold">
+                  {projects.length > 0 ? projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>) : <option value="">No project yet</option>}
+                </NativeSelect>
                 <ChevronsUpDown className="pointer-events-none absolute right-2 top-2 size-3.5 text-muted-foreground" aria-hidden />
               </div>
             ) : null}
