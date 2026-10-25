@@ -38,4 +38,14 @@ export const post = carrying('POST')
 export const patch = carrying('PATCH')
 export const del = carrying('DELETE')
 
-export const json = async <T>(response: Response): Promise<T> => (await response.json()) as T
+/* The server serves this application from the same port and answers any path it does not know
+   with index.html, so a request for data that reaches a build older than the application comes
+   back as a page with a 200 on it. That is the one failure the documented development loop
+   invites — the dev server beside a container nobody rebuilt — and it used to surface as the
+   screen saying it could not read something, which sent us looking at the wrong request. */
+export async function json<T>(response: Response): Promise<T> {
+  if (!response.headers.get('content-type')?.includes('json')) {
+    throw new ApiError(response.status, 'the server answered a page rather than data, so it is older than this application and does not serve this path yet')
+  }
+  return (await response.json()) as T
+}

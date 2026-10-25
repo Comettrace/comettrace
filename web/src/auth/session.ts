@@ -6,13 +6,19 @@ export function useAccount() {
   return useQuery(accountQuery).data
 }
 
-export function useOrganizations(): { list: Membership[]; active: Membership | undefined } {
-  const account = useAccount()
+/* `asking` tells an organisation screen apart from a session that belongs to no organisation:
+   both carry no active one, and only the second is worth a sentence. */
+export function useOrganizations(): {
+  list: Membership[]
+  active: Membership | undefined
+  asking: boolean
+} {
+  const { data: account, isPending } = useQuery(accountQuery)
   const list = [...(account?.memberships ?? [])].sort(
     (a, b) => roleRank[a.role] - roleRank[b.role] || a.name.localeCompare(b.name),
   )
   const active = list.find((m) => m.org === account?.active_org) ?? list[0]
-  return { list, active }
+  return { list, active, asking: isPending }
 }
 
 export function useSignOut() {

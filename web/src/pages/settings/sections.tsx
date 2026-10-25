@@ -189,7 +189,7 @@ function Identity({ card }: { card: OrgCard }) {
 
 export function OrgGeneral() {
   const { active } = useOrganizations()
-  const { card, loading } = useOrgCard()
+  const { card, nothing } = useOrgCard()
   const rename = useRenameOrg()
   /* Null means the field is still showing what the server holds, so a rename made elsewhere
      reaches it; anything else is what is being typed. */
@@ -228,7 +228,7 @@ export function OrgGeneral() {
           <ConfirmDelete open={del} onOpenChange={setDel} name={card.name} what="organization" body="Every project, signal, member, team, key and alert is deleted. This cannot be undone." />
         </>
       ) : (
-        <Card className="px-4 py-3 text-control text-muted-foreground">{loading ? 'Reading the organization…' : 'The organization could not be read.'}</Card>
+        <Card className="px-4 py-3 text-control text-muted-foreground">{nothing}</Card>
       )}
     </>
   )
@@ -237,7 +237,7 @@ export function OrgGeneral() {
 export function Members() {
   const { active } = useOrganizations()
   const me = useAccount()
-  const { members, loading } = useMembers()
+  const { members, nothing } = useMembers()
   const grant = useGrantRole()
   const remove = useRemoveMember()
   const client = useQueryClient()
@@ -295,7 +295,7 @@ export function Members() {
             )
           })}</tbody>
         </Table>
-        {roll.length === 0 ? <p className="m-0 px-4 py-3 text-control text-muted-foreground">{loading ? 'Reading the members…' : members ? 'Nobody belongs to this organization.' : 'The members could not be read.'}</p> : null}
+        {roll.length === 0 ? <p className="m-0 px-4 py-3 text-control text-muted-foreground">{members ? 'Nobody belongs to this organization.' : nothing}</p> : null}
       </Card>
       <p className="m-0 text-caption text-muted-foreground">Only an owner hands out the owner role or changes somebody who holds it, and an organization keeps at least one owner — so the last one stays until it has handed the role on. Somebody who has lost their password asks for a link on the sign-in screen.</p>
       <InviteMember open={invite} onOpenChange={setInvite} mine={mine} />
