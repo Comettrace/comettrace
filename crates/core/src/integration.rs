@@ -89,6 +89,8 @@ pub enum ConnectionError {
     ProviderRefused,
     #[error("the provider could not be reached")]
     ProviderUnreachable,
+    #[error("this deployment has registered no application with that provider")]
+    ProviderUnconfigured,
     #[error("this session holds no membership of that organisation")]
     NotYours,
     #[error("connecting a provider is an administrator's to do")]
@@ -186,37 +188,40 @@ pub struct Authorized {
 the two halves of an authorization code flow and nothing else. Each provider implements it its
 own way, and none of them tells this layer how. */
 pub trait Handshake {
-    fn authorize_url(&self, state: &str) -> String;
+    fn authorize_url(&self, provider: Provider, state: &str) -> Result<String, ConnectionError>;
 
     fn finish(
         &self,
+        provider: Provider,
         code: &str,
     ) -> impl Future<Output = Result<Authorized, ConnectionError>> + Send;
 }
 
 impl<T: Handshake + Sync> Handshake for &T {
-    fn authorize_url(&self, state: &str) -> String {
-        (*self).authorize_url(state)
+    fn authorize_url(&self, provider: Provider, state: &str) -> Result<String, ConnectionError> {
+        (*self).authorize_url(provider, state)
     }
 
     fn finish(
         &self,
+        provider: Provider,
         code: &str,
     ) -> impl Future<Output = Result<Authorized, ConnectionError>> + Send {
-        (*self).finish(code)
+        (*self).finish(provider, code)
     }
 }
 
 impl<T: Handshake + Send + Sync> Handshake for std::sync::Arc<T> {
-    fn authorize_url(&self, state: &str) -> String {
-        self.as_ref().authorize_url(state)
+    fn authorize_url(&self, provider: Provider, state: &str) -> Result<String, ConnectionError> {
+        self.as_ref().authorize_url(provider, state)
     }
 
     fn finish(
         &self,
+        provider: Provider,
         code: &str,
     ) -> impl Future<Output = Result<Authorized, ConnectionError>> + Send {
-        self.as_ref().finish(code)
+        self.as_ref().finish(provider, code)
     }
 }
 
@@ -382,8 +387,11 @@ where
     ) -> Result<String, ConnectionError> {
         let who = self.standing(token, org, OrgRole::Admin).await?;
         let attempt = Attempt::fresh(org, who, provider);
+        /* The url is built before the row is written, so a provider this deployment registered no
+        application with leaves no attempt behind to expire. */
+        let url = self.handshake.authorize_url(provider, &attempt.state)?;
         self.attempts.begin(&attempt).await?;
-        Ok(self.handshake.authorize_url(&attempt.state))
+        Ok(url)
     }
 
     /* No session reaches this: the browser arrives from the provider, carrying a state and a
@@ -403,7 +411,7 @@ where
             return Err(ConnectionError::NotYoursToChange);
         }
 
-        let authorized = self.handshake.finish(code).await?;
+        let authorized = self.handshake.finish(provider, code).await?;
         self.connections
             .connect(
                 attempt.org,
@@ -635,11 +643,22 @@ mod tests {
     struct ALinear;
 
     impl Handshake for ALinear {
-        fn authorize_url(&self, state: &str) -> String {
-            format!("https://linear.app/oauth/authorize?state={state}")
+        fn authorize_url(
+            &self,
+            provider: Provider,
+            state: &str,
+        ) -> Result<String, ConnectionError> {
+            if provider != Provider::Linear {
+                return Err(ConnectionError::ProviderUnconfigured);
+            }
+            Ok(format!("https://linear.app/oauth/authorize?state={state}"))
         }
 
-        async fn finish(&self, code: &str) -> Result<Authorized, ConnectionError> {
+        async fn finish(
+            &self,
+            _provider: Provider,
+            code: &str,
+        ) -> Result<Authorized, ConnectionError> {
             if code == "a-good-code" {
                 Ok(Authorized {
                     credential: ProviderToken::new("a-credential"),
@@ -700,6 +719,21 @@ mod tests {
         let begun = held.begun();
         assert_ne!(begun[0].state, begun[1].state);
         assert_eq!(begun[0].state.len(), 64, "thirty-two bytes of hex");
+    }
+
+    /* A provider this deployment registered no application with leaves no attempt behind, which
+    is why the url is built before the row is written: an attempt nobody can finish would sit
+    there until it expired. */
+    #[tokio::test]
+    async fn a_provider_this_deployment_never_registered_writes_no_attempt() {
+        let held = Held::default();
+
+        let refused = linking(Some(OrgRole::Admin), &held)
+            .start(&token(), an_org(MINE), Provider::Jira)
+            .await;
+
+        assert_eq!(refused.err(), Some(ConnectionError::ProviderUnconfigured));
+        assert!(held.begun().is_empty());
     }
 
     #[tokio::test]
