@@ -31,6 +31,8 @@ pub struct Asked {
     #[serde(default)]
     service: Option<String>,
     #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
     errors: bool,
     #[serde(default)]
     at_least_us: Option<u64>,
@@ -227,6 +229,12 @@ where
     let mut filter = TraceFilter::over(window);
     filter.project = asked.project.map(ProjectId::new);
     filter.service = asked.service.map(Into::into);
+    /* A box that somebody typed into and then emptied arrives as an empty string, which is not
+    a search for nothing: it is no search. */
+    filter.name = asked
+        .name
+        .filter(|typed| !typed.trim().is_empty())
+        .map(Into::into);
     filter.only_errors = asked.errors;
     filter.at_least_nanos = asked
         .at_least_us

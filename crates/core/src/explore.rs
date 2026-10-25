@@ -61,6 +61,10 @@ pub struct TraceFilter {
     pub window: Window,
     pub project: Option<ProjectId>,
     pub service: Option<Box<str>>,
+    /* Part of a span name, matched case-insensitively against every span of a trace rather than
+    only its root: somebody looking for `psp.charge` is looking for the traces it went wrong in,
+    and those are named after whatever came in at the top. */
+    pub name: Option<Box<str>>,
     pub only_errors: bool,
     pub at_least_nanos: Option<u64>,
     pub order: TraceOrder,
@@ -73,6 +77,7 @@ impl TraceFilter {
             window,
             project: None,
             service: None,
+            name: None,
             only_errors: false,
             at_least_nanos: None,
             order: TraceOrder::default(),

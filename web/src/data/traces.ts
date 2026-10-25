@@ -68,7 +68,6 @@ function happened(event: Happened): Happening {
   }
 }
 
-const WINDOW_MS = 24 * 60 * 60 * 1000
 const FRESH_MS = 15_000
 
 const clock = (ms: number) => new Date(ms).toTimeString().slice(0, 8) + `.${String(ms % 1000).padStart(3, '0')}`
@@ -123,24 +122,80 @@ export function laidOut(trace: Waterfall): Span[] {
   return out
 }
 
-export function useTraces(): TraceRow[] {
+/* What the Traces screen is asking for. Every field goes to the server, because the alternative
+   is what this screen used to do: fetch the newest fifty traces and sift those. "Errors only"
+   then meant the errors among fifty rather than the errors in the window, which is a different
+   and much smaller claim than the switch appeared to make. */
+export type Order = 'started' | 'duration' | 'spans'
+
+export type Sift = {
+  rangeMs: number
+  /* Empty means any. A service is never named by the absence of one, so there is no third state
+     to carry. */
+  service: string
+  name: string
+  errorsOnly: boolean
+  atLeastMs: number
+  order: Order
+  limit: number
+}
+
+export const RANGES: [string, number][] = [
+  ['15 min', 15 * 60 * 1000],
+  ['1 hour', 60 * 60 * 1000],
+  ['6 hours', 6 * 60 * 60 * 1000],
+  ['24 hours', 24 * 60 * 60 * 1000],
+  ['7 days', 7 * 24 * 60 * 60 * 1000],
+]
+
+/* The limit the server defaults to, and its ceiling, spelled here so the screen can offer the
+   steps rather than inventing numbers the server would clamp. */
+export const COUNTS = [50, 100, 200, 500]
+
+export const AN_HOUR = 60 * 60 * 1000
+
+export const ANY: Sift = {
+  rangeMs: 24 * 60 * 60 * 1000,
+  service: '',
+  name: '',
+  errorsOnly: false,
+  atLeastMs: 0,
+  order: 'started',
+  limit: 50,
+}
+
+/* Only what was asked for. A query carrying `service=` or `at_least_us=0` would be a filter the
+   server has to recognise as no filter, and one more thing to get wrong at both ends. */
+function asked(sift: Sift, project: string | undefined): string {
+  const to = Date.now()
+  const query = new URLSearchParams({ from: String(to - sift.rangeMs), to: String(to) })
+  if (project) query.set('project', project)
+  if (sift.service) query.set('service', sift.service)
+  if (sift.name.trim()) query.set('name', sift.name.trim())
+  if (sift.errorsOnly) query.set('errors', 'true')
+  if (sift.atLeastMs > 0) query.set('at_least_us', String(sift.atLeastMs * 1000))
+  if (sift.order !== 'started') query.set('order', sift.order)
+  if (sift.limit !== ANY.limit) query.set('limit', String(sift.limit))
+  return query.toString()
+}
+
+/* `sift` defaults, so the screens that want the newest traces and no filter — the overview, the
+   command palette — ask for exactly that and are not made to care. */
+export function useTraces(sift: Sift = ANY): { rows: TraceRow[]; loading: boolean; failed: unknown } {
   const { active } = useOrganizations()
   const { project } = useScope()
-  const { data } = useQuery({
-    queryKey: ['traces', active?.org, project],
+  const { data, isFetching, error } = useQuery({
+    queryKey: ['traces', active?.org, project, sift],
     enabled: Boolean(active),
     staleTime: FRESH_MS,
     queryFn: async () => {
-      const to = Date.now()
-      const from = to - WINDOW_MS
-      const within = project ? `&project=${project}` : ''
       const found = await json<{ traces: Listed[] }>(
-        await get(`/api/orgs/${active?.org}/traces?from=${from}&to=${to}${within}`),
+        await get(`/api/orgs/${active?.org}/traces?${asked(sift, project)}`),
       )
       return found.traces.map(listed)
     },
   })
-  return data ?? []
+  return { rows: data ?? [], loading: isFetching, failed: error }
 }
 
 export function useTrace(id: string | undefined): { row: TraceRow | undefined; spans: Span[]; pending: boolean } {

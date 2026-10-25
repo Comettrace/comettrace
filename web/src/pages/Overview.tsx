@@ -8,20 +8,22 @@ import { useLogs } from '@/data/logs'
 import { useSampledProjects } from '@/data/organization'
 import { DEPLOY_MARKERS, useOverviewSeries } from '@/data/series'
 import { useServices } from '@/data/services'
-import { useTraces } from '@/data/traces'
+import { AN_HOUR, ANY, useTraces } from '@/data/traces'
 import { otlpEndpoint } from '@/data/onboarding'
 import { cn } from '@/lib/utils'
 
 export function Overview() {
   const all = useServices()
   const logs = useLogs()
-  const traces = useTraces()
+  /* The slowest of the hour, ordered by the store rather than here: this used to sort the
+     formatted durations, which meant parsing "2.5 s" back into a number to compare it with
+     "980 ms". The window matches what the header claims and what the services beside it read. */
+  const { rows: slow } = useTraces({ ...ANY, rangeMs: AN_HOUR, order: 'duration', limit: 5 })
   const projects = useSampledProjects()
   const series = useOverviewSeries()
   if (!all.length) return <><PageHeader title="Overview" meta="no signals yet" /><EmptyState icon={<Rocket />} title="No signals yet" code={`OTEL_SERVICE_NAME=checkout-api\nOTEL_EXPORTER_OTLP_ENDPOINT=${otlpEndpoint()}\nOTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer <ingest key>"`} actions={<Button asChild size="sm" variant="primary"><Link to="/onboarding">Connect your first service</Link></Button>}>This page fills in as soon as your first span, log record or metric point arrives. Set three environment variables in any OpenTelemetry SDK and restart your service.</EmptyState></>
   const services = [...all].filter((s) => s.err !== null).sort((a, b) => (b.err ?? 0) - (a.err ?? 0)).slice(0, 5)
   const errorLogs = logs.filter((l) => l.sev === 'error' || l.sev === 'fatal').slice(0, 5)
-  const slow = [...traces].sort((a, b) => parseFloat(b.dur) * (b.dur.endsWith(' s') ? 1000 : 1) - parseFloat(a.dur) * (a.dur.endsWith(' s') ? 1000 : 1)).slice(0, 5)
   return (
     <>
       <PageHeader title="Overview" meta="all projects · last hour" />

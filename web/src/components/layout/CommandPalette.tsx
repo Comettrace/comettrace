@@ -16,7 +16,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   const navigate = useNavigate()
   const { setPref, dark } = useTheme()
   const services = useServices()
-  const traces = useTraces()
+  const { rows: traces } = useTraces()
   const go = (to: string) => { onOpenChange(false); navigate(to) }
   return (
     <D.Root open={open} onOpenChange={onOpenChange}>

@@ -59,3 +59,25 @@ export function useServices(): Service[] {
   })
   return data ?? []
 }
+
+/* Just the names, for a filter that needs a list rather than a table. Over the window being
+   browsed, because a service with no traffic in it is not a service worth offering: picking it
+   would narrow the list to nothing and say nothing about why. */
+export function useServiceNames(windowMs: number): { names: string[]; unreachable: unknown } {
+  const { active } = useOrganizations()
+  const { project } = useScope()
+  const { data, error } = useQuery({
+    queryKey: ['service-names', active?.org, project, windowMs],
+    enabled: Boolean(active),
+    staleTime: FRESH_MS,
+    queryFn: async () => {
+      const to = Date.now()
+      const within = project ? `&project=${project}` : ''
+      const found = await json<{ services: Serving[] }>(
+        await get(`/api/orgs/${active?.org}/services?from=${to - windowMs}&to=${to}${within}`),
+      )
+      return found.services.map((service) => service.name).sort()
+    },
+  })
+  return { names: data ?? [], unreachable: error }
+}
