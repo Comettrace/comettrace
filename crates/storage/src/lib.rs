@@ -1,6 +1,7 @@
 mod accounts;
 mod clickhouse;
 mod clock;
+mod connections;
 mod counter;
 mod directory;
 mod flows;
@@ -31,6 +32,7 @@ pub use clickhouse::{
     Migration,
 };
 pub use clock::{FixedClock, SystemClock};
+pub use connections::PostgresConnections;
 pub use counter::{CounterError, RedisMeter};
 pub use directory::StaticDirectory;
 pub use flows::PostgresFlows;
