@@ -11,26 +11,27 @@ use axum::Router;
 use clap::{Parser, Subcommand, ValueEnum};
 use comettrace_api::{
     Repository, SessionCookie, SignInMethods, Site, Wired, auth_router, catalogue_router,
-    connection_router, explore_router, health_router, integrations_router, me_router,
-    methods_router, oidc_router, org_router, password_router, reset_router, roster_router, router,
-    team_router, trace_server, usage_router, web_router,
+    connection_router, explore_router, filing_router, health_router, integrations_router,
+    me_router, methods_router, oidc_router, org_router, password_router, reset_router,
+    roster_router, router, team_router, trace_server, usage_router, web_router,
 };
 use comettrace_core::{
     AccountId, AuthSources, Authorized, Catalogue, ChangePassword, Clock, ConnectionError,
-    DecompressedBytes, Email, Explore, FederatedSignIn, Handshake, Ingest, IngestKey, Linking,
-    Mailer, Metering, NoProvider, OrgRole, OrgSettings, ProjectId, ProjectName, Provider,
-    ProviderToken, ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken, Roster,
-    Scope, SealError, Sealed, SessionLifetime, SignIn, SinkError, Span, SpanSink, Squad,
-    TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Vault, Whoami,
+    DecompressedBytes, Destination, Destinations, Email, Explore, FederatedSignIn, Filing,
+    Handshake, Ingest, IngestKey, Linking, Mailer, Metering, NoProvider, OrgRole, OrgSettings,
+    ProjectId, ProjectName, Provider, ProviderToken, ProvisionPolicy, ResetError, ResetPassword,
+    ResetStore, ResetToken, Roster, Scope, SealError, Sealed, SessionLifetime, SignIn, SinkError,
+    Span, SpanSink, Squad, TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Vault,
+    Whoami,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink, LinearHandshake,
     LinearSettings, LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink, OidcProvider,
     OidcSettings, PostgresAccounts, PostgresAttempts, PostgresConnections, PostgresDirectory,
-    PostgresFlows, PostgresMemberships, PostgresOrgs, PostgresProjects, PostgresResets,
-    PostgresRoster, PostgresSessions, PostgresTeams, PostgresUsage, RedisMeter, SealedVault,
-    SmtpMailer, SpanStoreSettings, StaticDirectory, StaticQuota, SystemClock, load_allowances,
-    open_span_store,
+    PostgresFilings, PostgresFlows, PostgresMemberships, PostgresOrgs, PostgresProjects,
+    PostgresResets, PostgresRoster, PostgresSessions, PostgresTeams, PostgresUsage, RedisMeter,
+    SealedVault, SmtpMailer, SpanStoreSettings, StaticDirectory, StaticQuota, SystemClock,
+    load_allowances, open_span_store,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -1005,6 +1006,21 @@ impl Handshake for Handshaking {
     }
 }
 
+/* Where issues can be filed is asked of the same adapter that did the handshake, because the
+credential it is asked with is the one that adapter minted. */
+impl Destinations for Handshaking {
+    async fn offered(
+        &self,
+        provider: Provider,
+        credential: &ProviderToken,
+    ) -> Result<Vec<Destination>, ConnectionError> {
+        match (self, provider) {
+            (Self::Linear(linear), Provider::Linear) => linear.offered(provider, credential).await,
+            _ => Err(ConnectionError::ProviderUnconfigured),
+        }
+    }
+}
+
 fn keeper_of(config: &Config) -> anyhow::Result<Keeper> {
     let Some(key) = config.secret_key.as_deref() else {
         tracing::warn!(
@@ -1036,11 +1052,23 @@ fn handshaking_of(config: &Config) -> Handshaking {
 type Joining = Linking<
     Arc<Sessions>,
     PostgresMemberships,
-    PostgresConnections<Keeper>,
+    Arc<PostgresConnections<Keeper>>,
     PostgresAttempts<SystemClock>,
-    Handshaking,
+    Arc<Handshaking>,
 >;
 
+type Aiming = Filing<
+    Arc<Sessions>,
+    PostgresMemberships,
+    Arc<PostgresConnections<Keeper>>,
+    PostgresFilings,
+    Arc<Handshaking>,
+>;
+
+/* Connecting a provider and pointing it at somewhere are two use cases over one set of
+adapters, so the adapters are built once and shared: a second keeper would be a second copy of
+the deployment key, and a second handshaking would say "linear can be connected" twice to a log
+somebody is reading to find out whether it can. */
 fn connection_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Result<Router> {
     let Some(pool) = pool else {
         return Ok(Router::new());
@@ -1050,12 +1078,22 @@ fn connection_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Result<R
         SystemClock,
         SessionLifetime::default(),
     ));
+    let connections = Arc::new(PostgresConnections::new(pool.clone(), keeper_of(config)?));
+    let handshaking = Arc::new(handshaking_of(config));
+
     let linking: Arc<Joining> = Arc::new(Linking::new(
+        Arc::clone(&sessions),
+        PostgresMemberships::new(pool.clone()),
+        Arc::clone(&connections),
+        PostgresAttempts::new(pool.clone(), SystemClock),
+        Arc::clone(&handshaking),
+    ));
+    let filing: Arc<Aiming> = Arc::new(Filing::new(
         sessions,
         PostgresMemberships::new(pool.clone()),
-        PostgresConnections::new(pool.clone(), keeper_of(config)?),
-        PostgresAttempts::new(pool.clone(), SystemClock),
-        handshaking_of(config),
+        connections,
+        PostgresFilings::new(pool.clone()),
+        handshaking,
     ));
-    Ok(connection_router(linking))
+    Ok(connection_router(linking).merge(filing_router(filing)))
 }

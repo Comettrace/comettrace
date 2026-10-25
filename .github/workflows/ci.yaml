@@ -116,7 +116,7 @@ jobs:
           shared-key: rust-postgres
           cache-on-failure: true
       - name: the control plane schema and the usage counter
-        run: cargo test -p comettrace-storage --test control_plane --test usage_counter --test usage_history --test auth --test memberships --test roster --test teams --test projects --test connections --locked
+        run: cargo test -p comettrace-storage --test control_plane --test usage_counter --test usage_history --test auth --test memberships --test roster --test teams --test projects --test connections --test filings --locked
 
   clickhouse:
     runs-on: ubuntu-latest

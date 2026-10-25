@@ -5,10 +5,11 @@ use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use comettrace_core::{
-    AccountId, Attempts, Connection, ConnectionError, Connections, Handshake, Linking, Memberships,
-    Provider, SessionStore, TenantId, Whoami, WhoamiError,
+    AccountId, Attempts, Connection, ConnectionError, Connections, Destination, Destinations,
+    Filing, Filings, Handshake, Linking, Memberships, ProjectId, Provider, Routing, SessionStore,
+    TenantId, Whoami, WhoamiError,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -300,6 +301,7 @@ fn why(refused: ConnectionError) -> &'static str {
         ConnectionError::ProviderUnconfigured => "unconfigured",
         ConnectionError::ProviderRefused => "refused",
         ConnectionError::ProviderUnreachable => "unreachable",
+        ConnectionError::NoSuchDestination => "gone",
         ConnectionError::NoSession
         | ConnectionError::NotConnected
         | ConnectionError::StoreUnreachable => "unavailable",
@@ -330,6 +332,8 @@ pub enum ConnectionRefused {
     NotAnAdministrator,
     #[error("nothing is connected to that provider")]
     NotConnected,
+    #[error("that is not somewhere issues can be filed")]
+    NoSuchDestination,
     #[error("this deployment has registered no application with that provider")]
     Unconfigured,
     /* Both of these are the deployment's own state rather than anything the request did, and both
@@ -359,6 +363,7 @@ impl From<ConnectionError> for ConnectionRefused {
             callback finishes a flow, and it answers with a redirect rather than a refusal — but
             it reads the same way if it ever does. */
             ConnectionError::NotConnected | ConnectionError::NoSuchAttempt => Self::NotConnected,
+            ConnectionError::NoSuchDestination => Self::NoSuchDestination,
             ConnectionError::ProviderUnconfigured => Self::Unconfigured,
             ConnectionError::NoKey => Self::NoKey,
             ConnectionError::Unopenable => Self::Unopenable,
@@ -373,7 +378,10 @@ impl IntoResponse for ConnectionRefused {
     fn into_response(self) -> Response {
         let status = match self {
             Self::Reaching(refused) => return refused.into_response(),
-            Self::NoSuchOrg | Self::NoSuchProvider | Self::NotConnected => StatusCode::NOT_FOUND,
+            Self::NoSuchOrg
+            | Self::NoSuchProvider
+            | Self::NotConnected
+            | Self::NoSuchDestination => StatusCode::NOT_FOUND,
             Self::NotAnAdministrator => StatusCode::FORBIDDEN,
             /* Neither is the request's fault: one wants a setting, the other wants reconnecting,
             and both are things an administrator reading the screen can act on. */
@@ -385,5 +393,184 @@ impl IntoResponse for ConnectionRefused {
             tracing::error!(error = %self, "the connections could not be served");
         }
         (status, self.to_string()).into_response()
+    }
+}
+
+/* Where issues are filed. Its own paths rather than more of `/integrations`, because the subject
+is different: `/integrations` says which providers an organisation is connected to, and this says
+what a connected provider is pointed at. */
+#[derive(Debug, Serialize)]
+pub struct Filed {
+    routings: Vec<Aimed>,
+}
+
+#[derive(Debug, Serialize)]
+struct Aimed {
+    provider: &'static str,
+    /* Named `default` because that is what it is to every project that has not chosen: the one
+    the organisation picked. Nothing here when nobody has picked one, which is the state a newly
+    connected provider is in and the state the screen has to ask about. */
+    default: Option<Place>,
+    projects: Vec<Differing>,
+}
+
+#[derive(Debug, Serialize)]
+struct Differing {
+    project: Uuid,
+    destination: Place,
+}
+
+/* The provider's id and the name that was on offer when it was chosen. Both go out, because a
+screen showing the id would be showing nobody anything. */
+#[derive(Debug, Serialize)]
+struct Place {
+    id: String,
+    name: String,
+}
+
+impl From<Destination> for Place {
+    fn from(destination: Destination) -> Self {
+        Self {
+            id: destination.id.into_string(),
+            name: destination.name.into_string(),
+        }
+    }
+}
+
+impl From<Routing> for Aimed {
+    fn from(routing: Routing) -> Self {
+        Self {
+            provider: routing.provider.as_str(),
+            default: routing.default.map(Place::from),
+            projects: routing
+                .projects
+                .into_iter()
+                .map(|(project, destination)| Differing {
+                    project: project.as_uuid(),
+                    destination: destination.into(),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Offering {
+    destinations: Vec<Place>,
+}
+
+/* Nothing for `project` is the organisation's default and nothing for `destination` clears
+whichever was named, so both absent is "the organisation files nowhere by default". An absent
+field and a null read the same, because a screen clearing a choice has nothing to send. */
+#[derive(Debug, Deserialize)]
+pub struct Choosing {
+    #[serde(default)]
+    project: Option<Uuid>,
+    #[serde(default)]
+    destination: Option<String>,
+}
+
+type Aiming<S, G, C, F, D> = Arc<Filing<S, G, C, F, D>>;
+
+pub fn filing_router<S, G, C, F, D>(filing: Aiming<S, G, C, F, D>) -> Router
+where
+    S: SessionStore + Send + Sync + 'static,
+    G: Memberships + Clone + Send + Sync + 'static,
+    C: Connections + Send + Sync + 'static,
+    F: Filings + Send + Sync + 'static,
+    D: Destinations + Send + Sync + 'static,
+{
+    Router::new()
+        .route("/api/orgs/{org}/filings", get(filings::<S, G, C, F, D>))
+        .route(
+            "/api/orgs/{org}/filings/{provider}",
+            put(aim::<S, G, C, F, D>),
+        )
+        /* A read that leaves the building, which is why it is a route of its own and not a field
+        of the one above: a screen listing where issues go should not go out to three providers to
+        render, and only the chooser being opened is worth the call. */
+        .route(
+            "/api/orgs/{org}/filings/{provider}/destinations",
+            get(destinations::<S, G, C, F, D>),
+        )
+        .with_state(filing)
+}
+
+async fn filings<S, G, C, F, D>(
+    State(filing): State<Aiming<S, G, C, F, D>>,
+    Path(org): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Filed>, ConnectionRefused>
+where
+    S: SessionStore + Send + Sync + 'static,
+    G: Memberships + Clone + Send + Sync + 'static,
+    C: Connections + Send + Sync + 'static,
+    F: Filings + Send + Sync + 'static,
+    D: Destinations + Send + Sync + 'static,
+{
+    let token = carried(&headers)?;
+    let routings = filing.routings(&token, TenantId::new(org)).await?;
+    Ok(Json(answered(routings)))
+}
+
+async fn destinations<S, G, C, F, D>(
+    State(filing): State<Aiming<S, G, C, F, D>>,
+    Path((org, provider)): Path<(Uuid, String)>,
+    headers: HeaderMap,
+) -> Result<Json<Offering>, ConnectionRefused>
+where
+    S: SessionStore + Send + Sync + 'static,
+    G: Memberships + Clone + Send + Sync + 'static,
+    C: Connections + Send + Sync + 'static,
+    F: Filings + Send + Sync + 'static,
+    D: Destinations + Send + Sync + 'static,
+{
+    let token = carried(&headers)?;
+    let provider = named(&provider)?;
+    let offered = filing.offered(&token, TenantId::new(org), provider).await?;
+    Ok(Json(Offering {
+        destinations: offered.into_iter().map(Place::from).collect(),
+    }))
+}
+
+/* Answers the whole arrangement rather than the one line that changed, so a screen renders from
+one reply and cannot end up showing a default and an override that never existed together. */
+async fn aim<S, G, C, F, D>(
+    State(filing): State<Aiming<S, G, C, F, D>>,
+    Path((org, provider)): Path<(Uuid, String)>,
+    headers: HeaderMap,
+    Json(choosing): Json<Choosing>,
+) -> Result<Json<Filed>, ConnectionRefused>
+where
+    S: SessionStore + Send + Sync + 'static,
+    G: Memberships + Clone + Send + Sync + 'static,
+    C: Connections + Send + Sync + 'static,
+    F: Filings + Send + Sync + 'static,
+    D: Destinations + Send + Sync + 'static,
+{
+    let token = carried(&headers)?;
+    let provider = named(&provider)?;
+    let routings = filing
+        .aim(
+            &token,
+            TenantId::new(org),
+            provider,
+            choosing.project.map(ProjectId::new),
+            choosing.destination.as_deref(),
+        )
+        .await?;
+    tracing::info!(
+        org = %org,
+        provider = %provider,
+        project = ?choosing.project,
+        aimed = choosing.destination.is_some(),
+        "where issues go was changed",
+    );
+    Ok(Json(answered(routings)))
+}
+
+fn answered(routings: Vec<Routing>) -> Filed {
+    Filed {
+        routings: routings.into_iter().map(Aimed::from).collect(),
     }
 }

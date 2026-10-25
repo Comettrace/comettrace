@@ -26,8 +26,8 @@ pub use grpc::{TraceGateway, trace_server};
 pub use health::health_router;
 pub use http::{MAX_DECOMPRESSED_BYTES, router};
 pub use integration_routes::{
-    ConnectionRefused, IntegrationRefused, Repository, Site, Wired, connection_router,
-    integrations_router,
+    ConnectionRefused, Filed, IntegrationRefused, Offering, Repository, Site, Wired,
+    connection_router, filing_router, integrations_router,
 };
 pub use methods::{SignInMethods, methods_router};
 pub use oidc_routes::{FederatedRefused, oidc_router};

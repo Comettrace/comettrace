@@ -43,8 +43,8 @@ pub use identity::{
 };
 pub use ingest::{Ingest, IngestError, Payload};
 pub use integration::{
-    Attempt, Attempts, Authorized, Connecting, Connection, ConnectionError, Connections, Handshake,
-    Linking, Provider,
+    Attempt, Attempts, Authorized, Connecting, Connection, ConnectionError, Connections,
+    Destination, Destinations, Filing, Filings, Handshake, Linking, Provider, Routing,
 };
 pub use key::IngestKey;
 pub use membership::{Membership, Memberships, OrgRole, Who, Whoami, WhoamiError};

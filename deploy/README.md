@@ -169,10 +169,11 @@ line, which is how you add the first person when nobody can sign in yet.
 
 ## Integrations
 
-A project management tool is wired up here, in the deployment's
-configuration, the way the identity provider and the mail relay already
-are. Settings > Organization > Integrations reads what is wired up and
-names the setting that wired it; there is nothing on that screen to press.
+A project management tool is registered here, in the deployment's
+configuration, the way the identity provider and the mail relay already are.
+Connecting an organisation to one is then an administrator's, on
+Settings > Organization > Integrations: an operator registers the
+application, an administrator presses Connect.
 
 In `.env`, beside the rest:
 
@@ -211,6 +212,29 @@ is configured and the settings that are not secrets — the Jira site and
 project key, the GitHub repository — and never a token. One deployment has
 one set of them; a token per organisation would mean a secret in the
 control plane, and that is a key the deployment could lose.
+
+### Where issues go
+
+A connection says which workspace; it does not say where in it an issue
+lands. That is chosen on the same screen once a provider is connected, and
+it is a Linear team, later a GitHub repository or a Jira project.
+
+The organisation picks one default, and any project can differ from it on
+Settings > Project > General. A project that has chosen nothing follows the
+organisation, and the screen says so rather than leaving the field blank —
+"follows the organization" and "nowhere yet" are two different states and
+reading them as one is how issues end up filed somewhere nobody meant.
+
+The list a chooser offers is asked of the provider at the moment it is
+opened, never cached into the control plane: a team made a minute ago should
+be on offer and one archived a minute ago should not. Only the id is stored
+and sent back; the name travels with it so a table can be rendered without
+calling out, and it is read off that list rather than out of the request, so
+a screen cannot label a destination something it is not.
+
+Disconnecting a provider drops every project's choice for it, by the shape of
+the table rather than by anything remembering to. A team in a workspace
+nobody is connected to any more is not somewhere to file.
 
 **Nothing opens an issue yet.** An exception has nowhere to live until a
 span carries its events, so these settings are read and reported and

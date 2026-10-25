@@ -1,6 +1,7 @@
 use core::fmt;
 use core::future::Future;
 
+use crate::catalogue::ProjectId;
 use crate::explore::ReadError;
 use crate::identity::AccountId;
 use crate::membership::{Memberships, OrgRole, Whoami, WhoamiError};
@@ -97,6 +98,8 @@ pub enum ConnectionError {
     NotYoursToChange,
     #[error("nothing is connected to that provider")]
     NotConnected,
+    #[error("that provider offers no such place to file an issue")]
+    NoSuchDestination,
 }
 
 impl From<FlowError> for ConnectionError {
@@ -474,6 +477,227 @@ where
     }
 }
 
+/* Somewhere an issue can be filed: a Linear team, a GitHub repository, a Jira project. The id is
+the provider's and is the only half ever sent back to it; the name is carried so a screen can say
+"Engineering" without calling the provider to render a table. */
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Destination {
+    pub id: Box<str>,
+    pub name: Box<str>,
+}
+
+/* Where issues go for one provider: what the organisation chose, and the projects that differ.
+Reading the two separately is deliberate — a screen has to show which projects are following the
+default, and a resolved value alone cannot say that. */
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Routing {
+    pub provider: Provider,
+    pub default: Option<Destination>,
+    pub projects: Vec<(ProjectId, Destination)>,
+}
+
+/* Asked of the provider, with the credential the organisation connected. Separate from the
+handshake because it is a different moment: the handshake happens once, this happens every time
+somebody opens the chooser, and teams get created and archived in between. */
+pub trait Destinations {
+    fn offered(
+        &self,
+        provider: Provider,
+        credential: &ProviderToken,
+    ) -> impl Future<Output = Result<Vec<Destination>, ConnectionError>> + Send;
+}
+
+impl<T: Destinations + Sync> Destinations for &T {
+    fn offered(
+        &self,
+        provider: Provider,
+        credential: &ProviderToken,
+    ) -> impl Future<Output = Result<Vec<Destination>, ConnectionError>> + Send {
+        (*self).offered(provider, credential)
+    }
+}
+
+impl<T: Destinations + Send + Sync> Destinations for std::sync::Arc<T> {
+    fn offered(
+        &self,
+        provider: Provider,
+        credential: &ProviderToken,
+    ) -> impl Future<Output = Result<Vec<Destination>, ConnectionError>> + Send {
+        self.as_ref().offered(provider, credential)
+    }
+}
+
+pub trait Filings {
+    fn of(
+        &self,
+        org: TenantId,
+    ) -> impl Future<Output = Result<Vec<Routing>, ConnectionError>> + Send;
+
+    /* `project` of nothing is the organisation's default, and `destination` of nothing clears
+    whichever was named — a project with nothing of its own follows the default again, and an
+    organisation with no default has nowhere to file until somebody picks one. One method, because
+    the two are the same act at two altitudes. */
+    fn aim(
+        &self,
+        org: TenantId,
+        provider: Provider,
+        project: Option<ProjectId>,
+        destination: Option<&Destination>,
+    ) -> impl Future<Output = Result<(), ConnectionError>> + Send;
+}
+
+impl<T: Filings + Sync> Filings for &T {
+    fn of(
+        &self,
+        org: TenantId,
+    ) -> impl Future<Output = Result<Vec<Routing>, ConnectionError>> + Send {
+        (*self).of(org)
+    }
+
+    fn aim(
+        &self,
+        org: TenantId,
+        provider: Provider,
+        project: Option<ProjectId>,
+        destination: Option<&Destination>,
+    ) -> impl Future<Output = Result<(), ConnectionError>> + Send {
+        (*self).aim(org, provider, project, destination)
+    }
+}
+
+impl<T: Filings + Send + Sync> Filings for std::sync::Arc<T> {
+    fn of(
+        &self,
+        org: TenantId,
+    ) -> impl Future<Output = Result<Vec<Routing>, ConnectionError>> + Send {
+        self.as_ref().of(org)
+    }
+
+    fn aim(
+        &self,
+        org: TenantId,
+        provider: Provider,
+        project: Option<ProjectId>,
+        destination: Option<&Destination>,
+    ) -> impl Future<Output = Result<(), ConnectionError>> + Send {
+        self.as_ref().aim(org, provider, project, destination)
+    }
+}
+
+/* Choosing where issues go. Reading is any member's; choosing is an administrator's, like every
+other arrangement of an organisation.
+
+Asking what is on offer needs the credential, so it is an administrator's too — and it is the one
+read here that leaves the building. */
+#[derive(Debug)]
+pub struct Filing<S, G, C, F, D> {
+    whoami: Whoami<S, G>,
+    connections: C,
+    filings: F,
+    destinations: D,
+}
+
+impl<S, G, C, F, D> Filing<S, G, C, F, D>
+where
+    S: SessionStore,
+    G: Memberships,
+    C: Connections,
+    F: Filings,
+    D: Destinations,
+{
+    pub fn new(sessions: S, memberships: G, connections: C, filings: F, destinations: D) -> Self {
+        Self {
+            whoami: Whoami::new(sessions, memberships),
+            connections,
+            filings,
+            destinations,
+        }
+    }
+
+    pub async fn routings(
+        &self,
+        token: &SessionToken,
+        org: TenantId,
+    ) -> Result<Vec<Routing>, ConnectionError> {
+        self.standing(token, org, OrgRole::Member).await?;
+        self.filings.of(org).await
+    }
+
+    /* The chooser's list, asked of the provider every time. A team created a minute ago should be
+    on offer, and one archived a minute ago should not. */
+    pub async fn offered(
+        &self,
+        token: &SessionToken,
+        org: TenantId,
+        provider: Provider,
+    ) -> Result<Vec<Destination>, ConnectionError> {
+        self.standing(token, org, OrgRole::Admin).await?;
+        self.offering(org, provider).await
+    }
+
+    /* The id is the provider's and is taken as given; the name is read off the list rather than
+    out of the request, so a screen cannot label a destination something it is not. Which also
+    means a destination that is no longer on offer cannot be chosen.
+
+    Clearing takes neither branch of that: it asks the provider nothing, which matters on the day
+    the provider is down — somebody who wants to stop filing issues somewhere should not be held
+    up by the place they are trying to stop filing them. */
+    pub async fn aim(
+        &self,
+        token: &SessionToken,
+        org: TenantId,
+        provider: Provider,
+        project: Option<ProjectId>,
+        destination: Option<&str>,
+    ) -> Result<Vec<Routing>, ConnectionError> {
+        self.standing(token, org, OrgRole::Admin).await?;
+
+        let Some(wanted) = destination else {
+            self.filings.aim(org, provider, project, None).await?;
+            return self.filings.of(org).await;
+        };
+
+        let named = self
+            .offering(org, provider)
+            .await?
+            .into_iter()
+            .find(|offered| &*offered.id == wanted)
+            .ok_or(ConnectionError::NoSuchDestination)?;
+        self.filings
+            .aim(org, provider, project, Some(&named))
+            .await?;
+        self.filings.of(org).await
+    }
+
+    /* Standing is checked by the two above rather than here, so that aiming reads the list once
+    and asks who is asking once. */
+    async fn offering(
+        &self,
+        org: TenantId,
+        provider: Provider,
+    ) -> Result<Vec<Destination>, ConnectionError> {
+        let credential = self
+            .connections
+            .credential(org, provider)
+            .await?
+            .ok_or(ConnectionError::NotConnected)?;
+        self.destinations.offered(provider, &credential).await
+    }
+
+    async fn standing(
+        &self,
+        token: &SessionToken,
+        org: TenantId,
+        floor: OrgRole,
+    ) -> Result<(), ConnectionError> {
+        let who = self.whoami.of(token).await?;
+        match who.role_in(org) {
+            None => Err(ConnectionError::NotYours),
+            Some(role) if !role.at_least(floor) => Err(ConnectionError::NotYoursToChange),
+            Some(_) => Ok(()),
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -482,9 +706,10 @@ mod tests {
 
     use super::{
         Attempt, Attempts, Authorized, Connecting, Connection, ConnectionError, Connections,
-        Handshake, Linking, Provider,
+        Destination, Destinations, Filing, Filings, Handshake, Linking, Provider, Routing,
     };
     use crate::WhoamiError;
+    use crate::catalogue::ProjectId;
     use crate::clock::UnixSeconds;
     use crate::credential::Email;
     use crate::identity::AccountId;
@@ -919,5 +1144,288 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["linear", "github", "jira"]
         );
+    }
+
+    /* What the provider offers and what has been aimed, in one place, because the point of most
+    of these tests is that the second is written from the first. */
+    type Choice = (TenantId, Provider, Option<ProjectId>, Option<Destination>);
+
+    #[derive(Debug, Default)]
+    struct Aimed {
+        offers: Vec<(String, String)>,
+        connected: bool,
+        chosen: Mutex<Vec<Choice>>,
+        asked: Mutex<u32>,
+    }
+
+    impl Aimed {
+        fn offering(offers: &[(&str, &str)]) -> Self {
+            Self {
+                offers: offers
+                    .iter()
+                    .map(|(id, name)| ((*id).to_owned(), (*name).to_owned()))
+                    .collect(),
+                connected: true,
+                ..Self::default()
+            }
+        }
+
+        fn aimed(&self) -> Vec<Choice> {
+            self.chosen.lock().expect("the lock").clone()
+        }
+
+        fn asked(&self) -> u32 {
+            *self.asked.lock().expect("the lock")
+        }
+    }
+
+    impl Connections for &Aimed {
+        async fn of(&self, _org: TenantId) -> Result<Vec<Connection>, ConnectionError> {
+            Ok(Vec::new())
+        }
+
+        async fn connect(
+            &self,
+            _org: TenantId,
+            _connecting: Connecting<'_>,
+        ) -> Result<(), ConnectionError> {
+            Ok(())
+        }
+
+        async fn credential(
+            &self,
+            _org: TenantId,
+            _provider: Provider,
+        ) -> Result<Option<ProviderToken>, ConnectionError> {
+            Ok(self.connected.then(|| ProviderToken::new("a-credential")))
+        }
+
+        async fn disconnect(
+            &self,
+            _org: TenantId,
+            _provider: Provider,
+        ) -> Result<bool, ConnectionError> {
+            Ok(true)
+        }
+    }
+
+    impl Filings for &Aimed {
+        async fn of(&self, _org: TenantId) -> Result<Vec<Routing>, ConnectionError> {
+            let aimed = self.chosen.lock().expect("the lock");
+            Ok(vec![Routing {
+                provider: Provider::Linear,
+                default: aimed
+                    .iter()
+                    .rev()
+                    .find(|(_, _, project, _)| project.is_none())
+                    .and_then(|(_, _, _, destination)| destination.clone()),
+                projects: aimed
+                    .iter()
+                    .filter_map(|(_, _, project, destination)| {
+                        Some(((*project)?, destination.clone()?))
+                    })
+                    .collect(),
+            }])
+        }
+
+        async fn aim(
+            &self,
+            org: TenantId,
+            provider: Provider,
+            project: Option<ProjectId>,
+            destination: Option<&Destination>,
+        ) -> Result<(), ConnectionError> {
+            self.chosen.lock().expect("the lock").push((
+                org,
+                provider,
+                project,
+                destination.cloned(),
+            ));
+            Ok(())
+        }
+    }
+
+    impl Destinations for &Aimed {
+        async fn offered(
+            &self,
+            _provider: Provider,
+            _credential: &ProviderToken,
+        ) -> Result<Vec<Destination>, ConnectionError> {
+            *self.asked.lock().expect("the lock") += 1;
+            Ok(self
+                .offers
+                .iter()
+                .map(|(id, name)| Destination {
+                    id: id.clone().into(),
+                    name: name.clone().into(),
+                })
+                .collect())
+        }
+    }
+
+    fn filing(
+        role: Option<OrgRole>,
+        aimed: &Aimed,
+    ) -> Filing<OneSession, MemberOfMine, &Aimed, &Aimed, &Aimed> {
+        Filing::new(OneSession, MemberOfMine(role), aimed, aimed, aimed)
+    }
+
+    fn a_project(seed: u128) -> ProjectId {
+        ProjectId::new(Uuid::from_u128(seed))
+    }
+
+    #[tokio::test]
+    async fn a_member_reads_where_issues_go() {
+        let aimed = Aimed::offering(&[("team-1", "Engineering (ENG)")]);
+
+        let routings = filing(Some(OrgRole::Member), &aimed)
+            .routings(&token(), an_org(MINE))
+            .await
+            .expect("the routings");
+
+        assert_eq!(routings.len(), 1);
+        assert_eq!(routings[0].provider, Provider::Linear);
+        assert_eq!(routings[0].default, None);
+    }
+
+    #[tokio::test]
+    async fn somebody_outside_the_organisation_reads_nothing() {
+        let aimed = Aimed::offering(&[]);
+
+        let refused = filing(Some(OrgRole::Owner), &aimed)
+            .routings(&token(), an_org(THEIRS))
+            .await
+            .expect_err("a refusal");
+
+        assert_eq!(refused, ConnectionError::NotYours);
+    }
+
+    #[tokio::test]
+    async fn a_member_does_not_choose_where_issues_go() {
+        let aimed = Aimed::offering(&[("team-1", "Engineering (ENG)")]);
+
+        let refused = filing(Some(OrgRole::Member), &aimed)
+            .aim(
+                &token(),
+                an_org(MINE),
+                Provider::Linear,
+                None,
+                Some("team-1"),
+            )
+            .await
+            .expect_err("a refusal");
+
+        assert_eq!(refused, ConnectionError::NotYoursToChange);
+        assert!(aimed.aimed().is_empty());
+    }
+
+    /* The reason the name is not in the request: a screen that labelled team-1 "Billing" would
+    otherwise have everybody reading the wrong word off every table afterwards. */
+    #[tokio::test]
+    async fn the_name_comes_off_the_offered_list_and_not_out_of_the_request() {
+        let aimed = Aimed::offering(&[("team-1", "Engineering (ENG)")]);
+
+        filing(Some(OrgRole::Admin), &aimed)
+            .aim(
+                &token(),
+                an_org(MINE),
+                Provider::Linear,
+                Some(a_project(7)),
+                Some("team-1"),
+            )
+            .await
+            .expect("the routings");
+
+        let (org, provider, project, destination) =
+            aimed.aimed().pop().expect("something was aimed");
+        assert_eq!(org, an_org(MINE));
+        assert_eq!(provider, Provider::Linear);
+        assert_eq!(project, Some(a_project(7)));
+        assert_eq!(
+            destination,
+            Some(Destination {
+                id: "team-1".into(),
+                name: "Engineering (ENG)".into(),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_destination_that_is_not_on_offer_is_refused() {
+        let aimed = Aimed::offering(&[("team-1", "Engineering (ENG)")]);
+
+        let refused = filing(Some(OrgRole::Admin), &aimed)
+            .aim(
+                &token(),
+                an_org(MINE),
+                Provider::Linear,
+                None,
+                Some("team-archived"),
+            )
+            .await
+            .expect_err("a refusal");
+
+        assert_eq!(refused, ConnectionError::NoSuchDestination);
+        assert!(aimed.aimed().is_empty());
+    }
+
+    #[tokio::test]
+    async fn no_project_means_the_organisations_default() {
+        let aimed = Aimed::offering(&[("team-2", "Billing (BIL)")]);
+
+        let routings = filing(Some(OrgRole::Admin), &aimed)
+            .aim(
+                &token(),
+                an_org(MINE),
+                Provider::Linear,
+                None,
+                Some("team-2"),
+            )
+            .await
+            .expect("the routings");
+
+        assert_eq!(
+            routings[0].default,
+            Some(Destination {
+                id: "team-2".into(),
+                name: "Billing (BIL)".into(),
+            })
+        );
+        assert!(routings[0].projects.is_empty());
+    }
+
+    /* Clearing a choice does not ask the provider anything, which matters on the day the provider
+    is down: somebody who wants to stop filing issues somewhere should not be held up by the place
+    they are trying to stop filing them. */
+    #[tokio::test]
+    async fn clearing_a_choice_does_not_call_the_provider() {
+        let aimed = Aimed::offering(&[("team-1", "Engineering (ENG)")]);
+
+        filing(Some(OrgRole::Admin), &aimed)
+            .aim(
+                &token(),
+                an_org(MINE),
+                Provider::Linear,
+                Some(a_project(7)),
+                None,
+            )
+            .await
+            .expect("the routings");
+
+        assert_eq!(aimed.asked(), 0);
+        assert_eq!(aimed.aimed().pop().expect("a clearing").3, None);
+    }
+
+    #[tokio::test]
+    async fn nothing_is_on_offer_from_a_provider_nobody_is_connected_to() {
+        let aimed = Aimed::default();
+
+        let refused = filing(Some(OrgRole::Admin), &aimed)
+            .offered(&token(), an_org(MINE), Provider::Linear)
+            .await
+            .expect_err("a refusal");
+
+        assert_eq!(refused, ConnectionError::NotConnected);
+        assert_eq!(aimed.asked(), 0);
     }
 }

@@ -5,6 +5,7 @@ import { useOrganizations } from '@/auth/session'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Field, Input, NativeSelect } from '@/components/ui/input'
+import { useFilings } from '@/data/integrations'
 import {
   projectNameProblem,
   useAssignProject,
@@ -15,12 +16,14 @@ import {
 import { useTeams } from '@/data/teams'
 import { Link } from '@/lib/router'
 import { useScope } from '@/lib/scope'
-import { ConfirmDelete, Danger, H } from './parts'
+import { Aim, PROVIDERS } from './aim'
+import { ConfirmDelete, Danger, H, Row, Sub } from './parts'
 
 export function ProjectGeneral() {
   const { active } = useOrganizations()
   const { projects, nothing } = useCatalogue()
   const { teams } = useTeams()
+  const { routings } = useFilings()
   const { project: chosen, chooseProject } = useScope()
   const rename = useRenameProject()
   const assign = useAssignProject()
@@ -73,6 +76,26 @@ export function ProjectGeneral() {
         <span className="text-control"><span className="text-muted-foreground">Project id</span> <span className="font-mono">{project.id}</span></span>
         <span className="text-control"><span className="text-muted-foreground">Api keys that still authenticate</span> <span className="font-mono">{project.keys}</span></span>
       </Card>
+      {/* Where this project's issues go. A project that has chosen nothing follows the
+          organisation, which the chooser offers as a first option rather than leaving blank: two
+          different nothings would otherwise look like one. A provider nobody is connected to has
+          no row here at all. */}
+      {(routings ?? []).length > 0 ? (
+        <>
+          <Sub>Where issues go</Sub>
+          <Card className="p-0">
+            {(routings ?? []).map((routing) => (
+              <Row
+                key={routing.provider}
+                title={PROVIDERS[routing.provider]?.name ?? routing.provider}
+                sub={`The ${PROVIDERS[routing.provider]?.place ?? 'destination'} an exception from ${project.name} opens an issue in.`}
+              >
+                <span className="flex flex-[2_1_320px] flex-col"><Aim routing={routing} project={project.id} mayChange={mayChange} /></span>
+              </Row>
+            ))}
+          </Card>
+        </>
+      ) : null}
       <p className="m-0 text-caption text-muted-foreground">How long a signal is kept is a property of the deployment rather than of one project: it is <span className="font-mono">spans.retention_days</span>, and the span store applies it on its own schedule.</p>
       {mayChange ? (
         <>
