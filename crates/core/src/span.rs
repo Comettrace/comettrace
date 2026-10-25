@@ -60,6 +60,21 @@ pub enum SpanStatus {
     Error,
 }
 
+/* Something that happened at a moment inside a span. An exception is one of these: OTLP names it
+`exception` and puts `exception.type`, `exception.message` and `exception.stacktrace` in its
+attributes.
+
+Kept as an event rather than as an exception on purpose. Deciding which events matter is not this
+type's job — logs and whatever a service chose to record come through the same door, and a shape
+that only held exceptions would have thrown them away at the point where nothing yet knew it
+would want them. */
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpanEvent {
+    pub time_unix_nanos: u64,
+    pub name: Box<str>,
+    pub attributes: BTreeMap<Box<str>, Box<str>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Span {
     pub trace_id: TraceId,
@@ -72,6 +87,9 @@ pub struct Span {
     pub start_unix_nanos: u64,
     pub end_unix_nanos: u64,
     pub attributes: BTreeMap<Box<str>, Box<str>>,
+    /* In the order the span recorded them, which is the order a reader wants to read them: an
+    exception is usually the last thing that happened before a span failed. */
+    pub events: Vec<SpanEvent>,
 }
 
 #[cfg(test)]

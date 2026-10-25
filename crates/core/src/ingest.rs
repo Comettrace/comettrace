@@ -165,6 +165,7 @@ mod tests {
             start_unix_nanos: 1,
             end_unix_nanos: 2,
             attributes: BTreeMap::new(),
+            events: Vec::new(),
         }
     }
 

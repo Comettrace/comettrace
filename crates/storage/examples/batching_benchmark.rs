@@ -69,6 +69,9 @@ fn batch(call: usize) -> Vec<Span> {
                     ("http.status_code".into(), "200".into()),
                     ("http.route".into(), "/orders".into()),
                 ]),
+                /* The benchmark measures the spans table, which is what the batching limits
+                are tuned against. Events get their own inserter and their own numbers. */
+                events: Vec::new(),
             }
         })
         .collect()

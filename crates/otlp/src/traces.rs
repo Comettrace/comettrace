@@ -1,5 +1,6 @@
-use comettrace_core::{InvalidId, Span, SpanId, SpanKind, SpanStatus, TraceId};
+use comettrace_core::{InvalidId, Span, SpanEvent, SpanId, SpanKind, SpanStatus, TraceId};
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+use opentelemetry_proto::tonic::trace::v1::span::Event as ProtoEvent;
 use opentelemetry_proto::tonic::trace::v1::span::SpanKind as ProtoKind;
 use opentelemetry_proto::tonic::trace::v1::status::StatusCode;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, Span as ProtoSpan};
@@ -62,6 +63,7 @@ fn convert(span: ProtoSpan, service: &str) -> Result<Span, DecodeError> {
         end_time_unix_nano,
         attributes: pairs,
         status,
+        events,
         ..
     } = span;
 
@@ -82,7 +84,28 @@ fn convert(span: ProtoSpan, service: &str) -> Result<Span, DecodeError> {
         start_unix_nanos: start_time_unix_nano,
         end_unix_nanos: end_time_unix_nano,
         attributes: attributes::collect(pairs),
+        events: events_of(events),
     })
+}
+
+/* The OTLP span limits default to 128 events per span, so a conforming sdk never sends more and
+this only answers for one that does not. Rows are what events cost, and nothing upstream bounds
+them: the quota counts decompressed bytes and the meter counts spans, so a single span carrying a
+hundred thousand events would be storage nobody was charged for. Keeping the first is the right
+end to keep — a span records them in order, and what a reader wants is where it started going
+wrong, not where it gave up. */
+const MOST_EVENTS: usize = 128;
+
+fn events_of(events: Vec<ProtoEvent>) -> Vec<SpanEvent> {
+    events
+        .into_iter()
+        .take(MOST_EVENTS)
+        .map(|event| SpanEvent {
+            time_unix_nanos: event.time_unix_nano,
+            name: event.name.into_boxed_str(),
+            attributes: attributes::collect(event.attributes),
+        })
+        .collect()
 }
 
 fn kind_of(code: i32) -> SpanKind {
@@ -113,8 +136,8 @@ mod tests {
     use prost::Message;
 
     use super::{
-        DecodeError, ExportTraceServiceRequest, ProtoSpan, ResourceSpans, UNKNOWN_SERVICE,
-        decode_traces,
+        DecodeError, ExportTraceServiceRequest, MOST_EVENTS, ProtoEvent, ProtoSpan, ResourceSpans,
+        UNKNOWN_SERVICE, decode_traces,
     };
 
     fn pair(key: &str, value: Value) -> KeyValue {
@@ -245,5 +268,124 @@ mod tests {
         let spans = decode_traces(&request.encode_to_vec()).expect("a valid request");
 
         assert_eq!(spans[0].parent.map(|id| *id.as_bytes()), Some([5u8; 8]));
+    }
+
+    fn an_event(name: &str, at: u64, attributes: Vec<KeyValue>) -> ProtoEvent {
+        ProtoEvent {
+            time_unix_nano: at,
+            name: name.to_owned(),
+            attributes,
+            ..ProtoEvent::default()
+        }
+    }
+
+    #[test]
+    fn an_exception_arrives_as_an_event_with_its_attributes() {
+        let mut span = a_proto_span();
+        span.events = vec![an_event(
+            "exception",
+            15,
+            vec![
+                text("exception.type", "PspTimeoutError"),
+                text("exception.message", "deadline exceeded after 960ms"),
+                text("exception.stacktrace", "at charge (psp/client.ts:88)"),
+            ],
+        )];
+        let request = a_request(span, None);
+
+        let spans = decode_traces(&request.encode_to_vec()).expect("a valid request");
+
+        let events = &spans[0].events;
+        assert_eq!(events.len(), 1);
+        assert_eq!(&*events[0].name, "exception");
+        assert_eq!(events[0].time_unix_nanos, 15);
+        assert_eq!(
+            events[0].attributes.get("exception.type").map(|v| &**v),
+            Some("PspTimeoutError")
+        );
+        assert_eq!(
+            events[0]
+                .attributes
+                .get("exception.stacktrace")
+                .map(|v| &**v),
+            Some("at charge (psp/client.ts:88)")
+        );
+    }
+
+    /* The order is the span's, because an exception is usually the last thing that happened and a
+    reader walking down the list is walking forwards in time. */
+    #[test]
+    fn events_keep_the_order_the_span_recorded_them_in() {
+        let mut span = a_proto_span();
+        span.events = vec![
+            an_event("retrying", 11, Vec::new()),
+            an_event("exception", 19, Vec::new()),
+        ];
+        let request = a_request(span, None);
+
+        let spans = decode_traces(&request.encode_to_vec()).expect("a valid request");
+
+        assert_eq!(
+            spans[0]
+                .events
+                .iter()
+                .map(|event| &*event.name)
+                .collect::<Vec<_>>(),
+            vec!["retrying", "exception"]
+        );
+    }
+
+    #[test]
+    fn a_span_with_no_events_carries_none() {
+        let request = a_request(a_proto_span(), None);
+
+        let spans = decode_traces(&request.encode_to_vec()).expect("a valid request");
+
+        assert!(spans[0].events.is_empty());
+    }
+
+    /* Rows are what events cost and nothing upstream bounds them, so the door does. A conforming
+    sdk is under the limit already; this answers for one that is not. */
+    #[test]
+    fn a_span_carrying_more_events_than_the_limit_keeps_the_first_of_them() {
+        let mut span = a_proto_span();
+        span.events = (0..MOST_EVENTS + 40)
+            .map(|at| an_event(&format!("step-{at}"), at as u64, Vec::new()))
+            .collect();
+        let request = a_request(span, None);
+
+        let spans = decode_traces(&request.encode_to_vec()).expect("a valid request");
+
+        assert_eq!(spans[0].events.len(), MOST_EVENTS);
+        assert_eq!(&*spans[0].events[0].name, "step-0");
+        assert_eq!(
+            &*spans[0].events[MOST_EVENTS - 1].name,
+            &*format!("step-{}", MOST_EVENTS - 1)
+        );
+    }
+
+    /* An event's attributes go through the same renderer as a span's, so a stack trace in bytes
+    rather than text is dropped the same way and does not take the event with it. */
+    #[test]
+    fn an_event_attribute_that_does_not_render_is_dropped_and_the_event_stays() {
+        let mut span = a_proto_span();
+        span.events = vec![an_event(
+            "exception",
+            15,
+            vec![
+                text("exception.type", "PspTimeoutError"),
+                pair("exception.stacktrace", Value::BytesValue(vec![1, 2])),
+            ],
+        )];
+        let request = a_request(span, None);
+
+        let spans = decode_traces(&request.encode_to_vec()).expect("a valid request");
+
+        assert_eq!(spans[0].events.len(), 1);
+        assert_eq!(spans[0].events[0].attributes.len(), 1);
+        assert_eq!(
+            spans[0].events[0].attributes.get("exception.stacktrace"),
+            None
+        );
     }
 }

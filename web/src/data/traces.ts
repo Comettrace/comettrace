@@ -4,8 +4,8 @@ import { useOrganizations } from '@/auth/session'
 import { useScope } from '@/lib/scope'
 import { dur } from '@/lib/format'
 
-export type TraceRow = { id: string; root: string; svc: string; start: string; dur: string; spans: number; errors: number }
-export type Span = { id: string; name: string; svc: string; depth: number; offset: number; width: number; dur: string; err: boolean; kind: string; attrs: [string, string][] }
+export type TraceRow = { id: string; root: string; svc: string; start: string; startedAtMs: number; dur: string; spans: number; errors: number }
+export type Span = { id: string; name: string; svc: string; depth: number; offset: number; width: number; dur: string; err: boolean; kind: string; attrs: [string, string][]; events: Happening[] }
 
 type Listed = {
   trace_id: string
@@ -17,6 +17,8 @@ type Listed = {
   errors: number
 }
 
+type Happened = { name: string; offset_us: number; attributes: Record<string, string> }
+
 type Laid = {
   span_id: string
   parent_span_id: string | null
@@ -27,9 +29,44 @@ type Laid = {
   start_offset_us: number
   duration_us: number
   attributes: Record<string, string>
+  /* Absent from a server older than this application, which is a real pairing: the dev server
+     proxies to whatever image the container is running. */
+  events?: Happened[]
 }
 
 type Waterfall = { trace_id: string; started_at_ms: number; duration_us: number; spans: Laid[] }
+
+/* An exception is a span event: OTLP names it `exception` and puts the type, message and stack
+   trace in its attributes. The three are pulled out here because the panel shows them as a block
+   rather than as rows, and whatever else the event carried stays in `attrs` so nothing is lost by
+   being recognised. */
+export type Happening = { name: string; at: string; attrs: [string, string][]; exception: Thrown | null }
+export type Thrown = { type: string; message: string; stack: string | null }
+
+const EXCEPTION = 'exception'
+
+function thrown(name: string, attributes: Record<string, string>): Thrown | null {
+  if (name !== EXCEPTION) return null
+  const type = attributes['exception.type']
+  const message = attributes['exception.message']
+  /* A type or a message is enough to say something useful. An event named `exception` with
+     neither is one this code cannot read, and it is better shown as the event it is than as an
+     empty red box. */
+  if (!type && !message) return null
+  return { type: type ?? 'Exception', message: message ?? '', stack: attributes['exception.stacktrace'] ?? null }
+}
+
+function happened(event: Happened): Happening {
+  const { 'exception.type': _t, 'exception.message': _m, 'exception.stacktrace': _s, ...rest } =
+    event.attributes
+  const exception = thrown(event.name, event.attributes)
+  return {
+    name: event.name,
+    at: dur(event.offset_us / 1000),
+    attrs: Object.entries(exception ? rest : event.attributes),
+    exception,
+  }
+}
 
 const WINDOW_MS = 24 * 60 * 60 * 1000
 const FRESH_MS = 15_000
@@ -41,6 +78,7 @@ export const listed = (trace: Listed): TraceRow => ({
   root: trace.root_name,
   svc: trace.root_service,
   start: clock(trace.started_at_ms),
+  startedAtMs: trace.started_at_ms,
   dur: dur(trace.duration_us / 1000),
   spans: trace.spans,
   errors: trace.errors,
@@ -77,6 +115,7 @@ export function laidOut(trace: Waterfall): Span[] {
       err: span.status === 'error',
       kind: span.kind.toUpperCase(),
       attrs: Object.entries(span.attributes),
+      events: (span.events ?? []).map(happened),
     })
     for (const child of children.get(span.span_id) ?? []) place(child, depth + 1)
   }
@@ -121,6 +160,7 @@ export function useTrace(id: string | undefined): { row: TraceRow | undefined; s
       root: spans[0]?.name ?? '',
       svc: spans[0]?.svc ?? '',
       start: clock(data.started_at_ms),
+      startedAtMs: data.started_at_ms,
       dur: dur(data.duration_us / 1000),
       spans: data.spans.length,
       errors: data.spans.filter((span) => span.status === 'error').length,

@@ -108,6 +108,22 @@ struct Laid {
     start_offset_us: u64,
     duration_us: u64,
     attributes: BTreeMap<String, String>,
+    /* In the span's own order, which is forwards in time. Empty for most spans, so it costs
+    nothing to carry and means a screen never has to ask a second question to find out. */
+    events: Vec<Happened>,
+}
+
+/* An exception is one of these, named `exception` by OTLP with its type, message and stacktrace
+in the attributes. The route does not pick them out: what counts as worth showing is the
+screen's to decide, and a route that filtered here would have thrown away the log line that
+explains the exception. */
+#[derive(Debug, Serialize)]
+struct Happened {
+    name: String,
+    /* Relative to the start of the trace, like the span offsets beside it, so a reader can place
+    an event on the waterfall without arithmetic. */
+    offset_us: u64,
+    attributes: BTreeMap<String, String>,
 }
 
 fn laid_out(trace: TraceId, spans: Vec<Span>) -> Waterfall {
@@ -137,14 +153,26 @@ fn laid_out(trace: TraceId, spans: Vec<Span>) -> Waterfall {
                 start_offset_us: span.start_unix_nanos.saturating_sub(earliest) / NANOS_PER_MICRO,
                 duration_us: span.end_unix_nanos.saturating_sub(span.start_unix_nanos)
                     / NANOS_PER_MICRO,
-                attributes: span
-                    .attributes
+                attributes: paired(span.attributes),
+                events: span
+                    .events
                     .into_iter()
-                    .map(|(key, value)| (key.into_string(), value.into_string()))
+                    .map(|event| Happened {
+                        name: event.name.into_string(),
+                        offset_us: event.time_unix_nanos.saturating_sub(earliest) / NANOS_PER_MICRO,
+                        attributes: paired(event.attributes),
+                    })
                     .collect(),
             })
             .collect(),
     }
+}
+
+fn paired(attributes: BTreeMap<Box<str>, Box<str>>) -> BTreeMap<String, String> {
+    attributes
+        .into_iter()
+        .map(|(key, value)| (key.into_string(), value.into_string()))
+        .collect()
 }
 
 fn named_kind(kind: SpanKind) -> &'static str {

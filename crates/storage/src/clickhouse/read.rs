@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use clickhouse::{Client, Row};
 use comettrace_core::{
-    ProjectId, ReadError, ServiceSummary, Span, SpanId, SpanKind, SpanReader, SpanStatus, TenantId,
-    TraceFilter, TraceId, TraceOrder, TraceSummary, Window,
+    ProjectId, ReadError, ServiceSummary, Span, SpanEvent, SpanId, SpanKind, SpanReader,
+    SpanStatus, TenantId, TraceFilter, TraceId, TraceOrder, TraceSummary, Window,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -60,6 +60,25 @@ const ONE_TRACE: &str = "SELECT \
    WHERE tenant_id = ? AND trace_id = unhex(?) \
    ORDER BY start_time, span_id";
 
+/* The events of one trace, read beside its spans rather than joined to them: the stitching is a
+hash map here and a sort key there, and ClickHouse would have had to shuffle to do it. Ordered by
+time so a reader walks forwards, and by name after it so two events recorded at the same
+nanosecond still come back in a settled order.
+
+The limit is a ceiling on a pathological trace rather than a page: the door keeps 128 events per
+span, so reaching ten thousand takes eighty failing spans in one trace, and a panel that showed
+them all would be unreadable long before that. A trace past it loses its last events, which is
+the end worth losing — the first ones are where it started going wrong. */
+const EVENTS_OF_TRACE: &str = "SELECT \
+     lower(hex(span_id)) AS span_id, \
+     name AS name, \
+     toUnixTimestamp64Nano(time) AS time, \
+     attributes AS attributes \
+   FROM span_events \
+   WHERE tenant_id = ? AND trace_id = unhex(?) \
+   ORDER BY time, name \
+   LIMIT 10000";
+
 #[derive(Debug, Clone)]
 pub struct ClickhouseReader {
     client: Client,
@@ -83,6 +102,14 @@ struct SummaryRow {
     duration: i64,
     spans: u64,
     errors: u64,
+}
+
+#[derive(Debug, Row, Deserialize)]
+struct EventRow {
+    span_id: String,
+    name: String,
+    time: i64,
+    attributes: Vec<(String, String)>,
 }
 
 #[derive(Debug, Row, Deserialize)]
@@ -152,6 +179,9 @@ impl SpanReader for ClickhouseReader {
         rows.into_iter().map(read_summary).collect()
     }
 
+    /* Two reads, and the events one is not allowed to lose the trace. A trace that rendered
+    without its exception would be the most misleading thing this screen could show, so a store
+    that refuses the second read refuses the whole trace rather than answering a quieter one. */
     async fn trace(&self, tenant: TenantId, id: TraceId) -> Result<Vec<Span>, ReadError> {
         let rows: Vec<SpanRow> = self
             .client
@@ -162,7 +192,30 @@ impl SpanReader for ClickhouseReader {
             .await
             .map_err(|error| refused(&error))?;
 
-        rows.into_iter().map(|row| read_span(id, row)).collect()
+        let events: Vec<EventRow> = self
+            .client
+            .query(EVENTS_OF_TRACE)
+            .bind(tenant.as_uuid())
+            .bind(hex::encode(id.as_bytes()))
+            .fetch_all()
+            .await
+            .map_err(|error| refused(&error))?;
+
+        let mut by_span: HashMap<String, Vec<SpanEvent>> = HashMap::new();
+        for row in events {
+            by_span.entry(row.span_id).or_default().push(SpanEvent {
+                time_unix_nanos: unsigned(row.time),
+                name: row.name.into(),
+                attributes: map_of(row.attributes),
+            });
+        }
+
+        rows.into_iter()
+            .map(|row| {
+                let events = by_span.remove(&row.span_id).unwrap_or_default();
+                read_span(id, row, events)
+            })
+            .collect()
     }
 }
 
@@ -209,7 +262,7 @@ fn read_summary(row: SummaryRow) -> Result<TraceSummary, ReadError> {
     })
 }
 
-fn read_span(trace: TraceId, row: SpanRow) -> Result<Span, ReadError> {
+fn read_span(trace: TraceId, row: SpanRow, events: Vec<SpanEvent>) -> Result<Span, ReadError> {
     let parent = match row.parent_span_id.as_deref() {
         None | Some("") => None,
         Some(spelling) => Some(a_span(spelling)?),
@@ -224,12 +277,16 @@ fn read_span(trace: TraceId, row: SpanRow) -> Result<Span, ReadError> {
         status: read_status(&row.status),
         start_unix_nanos: unsigned(row.start_time),
         end_unix_nanos: unsigned(row.end_time),
-        attributes: row
-            .attributes
-            .into_iter()
-            .map(|(key, value)| (key.into(), value.into()))
-            .collect::<BTreeMap<_, _>>(),
+        attributes: map_of(row.attributes),
+        events,
     })
+}
+
+fn map_of(pairs: Vec<(String, String)>) -> BTreeMap<Box<str>, Box<str>> {
+    pairs
+        .into_iter()
+        .map(|(key, value)| (key.into(), value.into()))
+        .collect()
 }
 
 fn a_trace(spelling: &str) -> Result<TraceId, ReadError> {

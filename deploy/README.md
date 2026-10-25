@@ -236,10 +236,11 @@ Disconnecting a provider drops every project's choice for it, by the shape of
 the table rather than by anything remembering to. A team in a workspace
 nobody is connected to any more is not somewhere to file.
 
-**Nothing opens an issue yet.** An exception has nowhere to live until a
-span carries its events, so these settings are read and reported and
-otherwise wait. Wiring them up early costs nothing and tells the screen the
-truth.
+**Nothing opens an issue yet.** Exceptions now arrive and are kept: a span
+carries its events, and the trace view shows them. What is missing is the step
+between. Nothing counts them into a thing an issue can be opened about, and
+no route asks a provider to open one. A connection and a destination are the
+address; the sender is still to come.
 
 ## Sealing a provider token
 
