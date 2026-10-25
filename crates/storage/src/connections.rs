@@ -27,11 +27,15 @@ impl<V> PostgresConnections<V> {
 impl<V: Vault + Send + Sync> Connections for PostgresConnections<V> {
     async fn of(&self, org: TenantId) -> Result<Vec<Connection>, ConnectionError> {
         /* The sealed columns are deliberately not selected. Nothing on a connection card needs
-        them, and a query that does not ask for a secret cannot spill one. */
+        them, and a query that does not ask for a secret cannot spill one.
+
+        The order by is qualified on purpose. A bare `kind` would bind to the output column, which
+        is the text cast, and sort the providers alphabetically; naming the table reaches the enum
+        column, which sorts them in the order the type declares — the order the screen reads. */
         let rows = sqlx::query(
             "SELECT kind::text AS kind, account_label AS account_label, \
              connected_by AS connected_by, created_at AS created_at \
-             FROM integrations WHERE org_id = $1 ORDER BY kind",
+             FROM integrations WHERE org_id = $1 ORDER BY integrations.kind",
         )
         .bind(org.as_uuid())
         .fetch_all(&self.pool)
