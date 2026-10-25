@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use clickhouse::Row;
-use comettrace_core::{ProjectId, Scope, SinkError, Span, SpanKind, SpanStatus, UnixSeconds};
+use comettrace_core::{
+    ProjectId, Scope, SinkError, Span, SpanEvent, SpanKind, SpanStatus, UnixSeconds,
+};
 use serde::Serialize;
 use serde_repr::Serialize_repr;
 use uuid::Uuid;
@@ -93,6 +95,49 @@ impl<'a> SpanRow<'a> {
                 .get(HTTP_STATUS_CODE)
                 .and_then(|value| value.parse().ok()),
             attributes: span
+                .attributes
+                .iter()
+                .map(|(key, value)| (&**key, &**value))
+                .collect(),
+            expire_at: seconds(expire_at)?,
+        })
+    }
+}
+
+/* One row per event of one span. The scope, the service and the trace are copied off the span
+rather than joined back to it: a trace view reads the events of a trace without touching the
+spans table, and anything counting exceptions in a window never has to. */
+#[derive(Debug, Row, Serialize)]
+pub(crate) struct EventRow<'a> {
+    #[serde(with = "clickhouse::serde::uuid")]
+    pub(crate) tenant_id: Uuid,
+    #[serde(with = "clickhouse::serde::uuid")]
+    pub(crate) project_id: Uuid,
+    pub(crate) service_name: &'a str,
+    pub(crate) time: i64,
+    pub(crate) trace_id: [u8; 16],
+    pub(crate) span_id: [u8; 8],
+    pub(crate) name: &'a str,
+    pub(crate) attributes: BTreeMap<&'a str, &'a str>,
+    pub(crate) expire_at: u32,
+}
+
+impl<'a> EventRow<'a> {
+    pub(crate) fn of(
+        scope: Scope,
+        span: &'a Span,
+        event: &'a SpanEvent,
+        expire_at: UnixSeconds,
+    ) -> Result<Self, SinkError> {
+        Ok(Self {
+            tenant_id: scope.tenant.as_uuid(),
+            project_id: scope.project.map(ProjectId::as_uuid).unwrap_or_default(),
+            service_name: &span.service_name,
+            time: nanos(event.time_unix_nanos)?,
+            trace_id: *span.trace_id.as_bytes(),
+            span_id: *span.span_id.as_bytes(),
+            name: &event.name,
+            attributes: event
                 .attributes
                 .iter()
                 .map(|(key, value)| (&**key, &**value))

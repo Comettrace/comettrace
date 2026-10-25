@@ -93,6 +93,7 @@ mod tests {
             start_unix_nanos: 0,
             end_unix_nanos: 1,
             attributes: BTreeMap::new(),
+            events: Vec::new(),
         }
     }
 

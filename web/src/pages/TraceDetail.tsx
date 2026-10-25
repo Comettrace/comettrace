@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ServiceDot, svcBg } from '@/components/cmt/bits'
 import { useTrace } from '@/data/traces'
+import { stamp } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { NotFound } from './NotFound'
 
@@ -31,7 +32,7 @@ export function TraceDetail() {
         <Button asChild size="sm"><Link to="/logs"><ScrollText />Logs for this trace</Link></Button>
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-control text-muted-foreground">
-        <span>Duration <span className="font-mono font-semibold text-foreground">{t.dur}</span></span><span>Spans <span className="font-mono text-foreground">{t.spans}</span></span><span>Services <span className="font-mono text-foreground">{services.length}</span></span><span>Started <span className="font-mono text-foreground">2026-10-20 {t.start}</span></span><span className="font-mono">{t.id}</span>
+        <span>Duration <span className="font-mono font-semibold text-foreground">{t.dur}</span></span><span>Spans <span className="font-mono text-foreground">{t.spans}</span></span><span>Services <span className="font-mono text-foreground">{services.length}</span></span><span>Started <span className="font-mono text-foreground">{stamp(t.startedAtMs)}</span></span><span className="font-mono">{t.id}</span>
       </div>
       <div className="flex flex-wrap gap-3 text-caption text-muted-foreground">{services.map((x) => <span key={x} className="inline-flex items-center gap-1.5"><ServiceDot name={x} />{x}</span>)}</div>
       <div className="flex min-h-[480px] overflow-hidden rounded-lg border">
@@ -71,7 +72,22 @@ export function TraceDetail() {
             </div>
             <div className="flex flex-col gap-3 overflow-y-auto p-4">
               <div className="flex flex-wrap gap-2"><Badge variant="outline" mono>{s.kind}</Badge>{s.err ? <Badge variant="destructive">ERROR</Badge> : <Badge variant="success">OK</Badge>}<Badge variant="outline" mono>{s.dur}</Badge></div>
-              {s.err ? <div className="rounded-md border border-destructive-border bg-destructive-subtle px-3 py-2 font-mono text-caption text-destructive-text">PspTimeoutError: deadline exceeded after 960ms<br />  at charge (psp/client.ts:88)<br />  at Payments.capture (payments/service.ts:142)</div> : null}
+              {/* What a reader opening an error span came for, so it goes above the attributes.
+                  Its type, message and stack trace are shown as a block and left out of the
+                  event's own attribute list below, where they would read as three strings. */}
+              {s.events.map((e, at) =>
+                e.exception ? (
+                  <div key={`exc-${at}`} className="rounded-md border border-destructive-border bg-destructive-subtle px-3 py-2 text-caption text-destructive-text">
+                    <span className="font-mono font-semibold">{e.exception.type}{e.exception.message ? `: ${e.exception.message}` : null}</span>
+                    {e.exception.stack ? <pre className="m-0 mt-1.5 overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px]">{e.exception.stack}</pre> : null}
+                  </div>
+                ) : null,
+              )}
+              {/* A span that failed and recorded nothing is a real state, and saying so is more
+                  use than a panel that looks like it is still loading. */}
+              {s.err && !s.events.some((e) => e.exception) ? (
+                <span className="text-caption text-muted-foreground">This span failed and recorded no exception.</span>
+              ) : null}
               <h3 className="m-0 text-caption font-semibold uppercase tracking-[.05em] text-muted-foreground">Attributes</h3>
               <dl className="m-0 grid grid-cols-[minmax(120px,42%)_1fr] gap-x-3 text-caption">
                 {s.attrs.map(([k, v]) => (
@@ -81,6 +97,35 @@ export function TraceDetail() {
                   </div>
                 ))}
               </dl>
+              {/* Every event, exceptions included, in the order the span recorded them — which is
+                  forwards in time, so the list reads as what happened. The offset is from the
+                  start of the trace, the same origin the waterfall uses. */}
+              {s.events.length ? (
+                <>
+                  <h3 className="m-0 text-caption font-semibold uppercase tracking-[.05em] text-muted-foreground">Events</h3>
+                  <ol className="m-0 flex list-none flex-col gap-2 p-0">
+                    {s.events.map((e, at) => (
+                      <li key={`ev-${at}`} className="flex flex-col gap-1 border-b border-border-subtle pb-2 last:border-b-0 last:pb-0">
+                        <span className="flex items-baseline gap-2 text-caption">
+                          <span className={cn('font-mono font-semibold', e.exception && 'text-destructive-text')}>{e.name}</span>
+                          <span className="flex-1" />
+                          <span className="font-mono text-muted-foreground">+{e.at}</span>
+                        </span>
+                        {e.attrs.length ? (
+                          <dl className="m-0 grid grid-cols-[minmax(120px,42%)_1fr] gap-x-3 text-[11px]">
+                            {e.attrs.map(([k, v]) => (
+                              <div key={k} className="contents">
+                                <dt className="truncate py-0.5 font-mono text-muted-foreground">{k}</dt>
+                                <dd className="m-0 break-all py-0.5 font-mono">{v}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ol>
+                </>
+              ) : null}
               <span className="font-mono text-[11px] text-faint-foreground">span_id {s.id}</span>
             </div>
           </aside>

@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use clickhouse::Client;
 use comettrace_core::{
-    ProjectId, Scope, Span, SpanId, SpanKind, SpanReader, SpanSink, SpanStatus, TenantId,
-    TraceFilter, TraceId, Window,
+    ProjectId, Scope, Span, SpanEvent, SpanId, SpanKind, SpanReader, SpanSink, SpanStatus,
+    TenantId, TraceFilter, TraceId, Window,
 };
 use comettrace_storage::{
     BatchLimits, ClickhouseMigrator, ClickhouseReader, ClickhouseSink, FixedClock, MemorySink,
@@ -26,6 +26,7 @@ pub fn a_span(seed: u8, service: &str) -> Span {
         start_unix_nanos: 1_700_000_000_000_000_000,
         end_unix_nanos: 1_700_000_000_500_000_000,
         attributes: BTreeMap::from([("http.status_code".into(), "200".into())]),
+        events: Vec::new(),
     }
 }
 
@@ -986,5 +987,236 @@ async fn a_project_nobody_wrote_under_answers_nothing_rather_than_everything() {
             .await
             .expect("a read")
             .is_empty()
+    );
+}
+
+fn with_events(span: Span, events: Vec<SpanEvent>) -> Span {
+    Span { events, ..span }
+}
+
+fn an_exception(at: u64, kind: &str) -> SpanEvent {
+    SpanEvent {
+        time_unix_nanos: at,
+        name: "exception".into(),
+        attributes: BTreeMap::from([
+            ("exception.type".into(), kind.into()),
+            (
+                "exception.message".into(),
+                "deadline exceeded after 960ms".into(),
+            ),
+            (
+                "exception.stacktrace".into(),
+                "at charge (psp/client.ts:88)".into(),
+            ),
+        ]),
+    }
+}
+
+#[derive(Debug, clickhouse::Row, serde::Deserialize)]
+struct CountedEvents {
+    value: u64,
+}
+
+async fn events_expire_at(client: &Client) -> u32 {
+    client
+        .query("SELECT min(expire_at) AS value FROM span_events")
+        .fetch_one::<Expiry>()
+        .await
+        .expect("reading the event expiry")
+        .value
+}
+
+async fn stored_events(client: &Client) -> u64 {
+    client
+        .query("SELECT count() AS value FROM span_events")
+        .fetch_one::<CountedEvents>()
+        .await
+        .expect("counting the stored events")
+        .value
+}
+
+/* The whole point of the slice: an exception recorded inside a span arrives at the other end
+attached to the span that recorded it, attributes and all. */
+#[tokio::test]
+async fn an_exception_written_with_a_span_reads_back_on_that_span() {
+    let Some((url, reader)) = a_written_store("read_span_events").await else {
+        return;
+    };
+    let store = open_span_store(&settings_for(&url, "read_span_events"), FixedClock::at(NOW))
+        .await
+        .expect("a sink")
+        .sink;
+    let tenant = TenantId::new(Uuid::from_u128(1));
+    let root = a_span(1, "checkout");
+    let failed = with_events(
+        a_child(
+            2,
+            "payments",
+            &root,
+            root.start_unix_nanos + 1_000,
+            root.end_unix_nanos,
+        ),
+        vec![an_exception(
+            root.start_unix_nanos + 9_000,
+            "PspTimeoutError",
+        )],
+    );
+    let trace = root.trace_id;
+    store
+        .accept(Scope::of(tenant), vec![root.clone(), failed.clone()])
+        .await
+        .expect("a batch is accepted");
+    store.flush().await.expect("the batch commits");
+
+    let found = reader.trace(tenant, trace).await.expect("the trace reads");
+
+    assert_eq!(found.len(), 2);
+    /* On the span that recorded it, and not on the one beside it. */
+    assert!(found[0].events.is_empty(), "the root recorded nothing");
+    assert_eq!(found[1].events.len(), 1);
+    let event = &found[1].events[0];
+    assert_eq!(&*event.name, "exception");
+    assert_eq!(event.time_unix_nanos, root.start_unix_nanos + 9_000);
+    assert_eq!(
+        event.attributes.get("exception.type").map(|v| &**v),
+        Some("PspTimeoutError")
+    );
+    assert_eq!(
+        event.attributes.get("exception.stacktrace").map(|v| &**v),
+        Some("at charge (psp/client.ts:88)")
+    );
+}
+
+/* Forwards in time, because a reader walking down the list is reading what happened. */
+#[tokio::test]
+async fn several_events_on_one_span_read_back_in_time_order() {
+    let Some((url, reader)) = a_written_store("read_events_order").await else {
+        return;
+    };
+    let store = open_span_store(
+        &settings_for(&url, "read_events_order"),
+        FixedClock::at(NOW),
+    )
+    .await
+    .expect("a sink")
+    .sink;
+    let tenant = TenantId::new(Uuid::from_u128(1));
+    let base = a_span(1, "checkout");
+    let span = with_events(
+        base.clone(),
+        vec![
+            an_exception(base.start_unix_nanos + 30_000, "Last"),
+            SpanEvent {
+                time_unix_nanos: base.start_unix_nanos + 10_000,
+                name: "retrying".into(),
+                attributes: BTreeMap::from([("attempt".into(), "2".into())]),
+            },
+        ],
+    );
+    store
+        .accept(Scope::of(tenant), vec![span])
+        .await
+        .expect("a batch is accepted");
+    store.flush().await.expect("the batch commits");
+
+    let found = reader
+        .trace(tenant, base.trace_id)
+        .await
+        .expect("the trace reads");
+
+    assert_eq!(
+        found[0]
+            .events
+            .iter()
+            .map(|event| &*event.name)
+            .collect::<Vec<_>>(),
+        vec!["retrying", "exception"],
+        "the store orders them, not the batch"
+    );
+}
+
+/* Events of another organisation are not reachable through a trace id, the same way its spans
+are not. The trace id is the only thing the caller supplies, so it is the only thing that could
+have carried somebody over the line. */
+#[tokio::test]
+async fn another_organisations_events_are_not_read_with_a_shared_trace_id() {
+    let Some((url, reader)) = a_written_store("read_events_tenant").await else {
+        return;
+    };
+    let store = open_span_store(
+        &settings_for(&url, "read_events_tenant"),
+        FixedClock::at(NOW),
+    )
+    .await
+    .expect("a sink")
+    .sink;
+    let mine = TenantId::new(Uuid::from_u128(1));
+    let theirs = TenantId::new(Uuid::from_u128(2));
+    let base = a_span(1, "checkout");
+    store
+        .accept(
+            Scope::of(theirs),
+            vec![with_events(
+                base.clone(),
+                vec![an_exception(base.start_unix_nanos + 1, "TheirSecret")],
+            )],
+        )
+        .await
+        .expect("a batch is accepted");
+    store.flush().await.expect("the batch commits");
+
+    let found = reader
+        .trace(mine, base.trace_id)
+        .await
+        .expect("the trace reads");
+
+    assert!(found.is_empty(), "no span, and so no event either");
+}
+
+/* Most spans carry no events, and a deployment where none of them do should not be writing to
+the events table at all. */
+#[tokio::test]
+async fn spans_with_no_events_write_no_event_rows() {
+    let Some(client) = prepared("comettrace_no_events").await else {
+        return;
+    };
+    let sink = sink_with(&client, BatchLimits::default());
+
+    sink.accept(
+        Scope::of(TenantId::new(Uuid::from_u128(1))),
+        vec![a_span(1, "checkout"), a_span(2, "checkout")],
+    )
+    .await
+    .expect("a batch is accepted");
+    sink.flush().await.expect("the batch commits");
+
+    assert_eq!(stored_rows(&client).await, 2);
+    assert_eq!(stored_events(&client).await, 0);
+}
+
+/* The events expire on their own clock, set from the same retention the spans got, so a span and
+its exception leave together rather than the exception outliving what explains it. */
+#[tokio::test]
+async fn an_event_expires_with_the_span_that_recorded_it() {
+    let Some(client) = prepared("comettrace_event_expiry").await else {
+        return;
+    };
+    let sink = sink_with(&client, BatchLimits::default());
+    let base = a_span(1, "checkout");
+
+    sink.accept(
+        Scope::of(TenantId::new(Uuid::from_u128(1))),
+        vec![with_events(
+            base.clone(),
+            vec![an_exception(base.start_unix_nanos + 1, "PspTimeoutError")],
+        )],
+    )
+    .await
+    .expect("a batch is accepted");
+    sink.flush().await.expect("the batch commits");
+
+    assert_eq!(
+        events_expire_at(&client).await,
+        stored_expire_at(&client).await,
     );
 }

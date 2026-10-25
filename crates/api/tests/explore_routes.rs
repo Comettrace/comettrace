@@ -7,9 +7,9 @@ use axum::http::{Request, StatusCode};
 use comettrace_api::explore_router;
 use comettrace_core::{
     AccountId, Explore, Membership, Memberships, OrgRole, ProjectId, ReadError, ServiceSummary,
-    Session, SessionError, SessionStore, SessionToken, Span, SpanId, SpanKind, SpanReader,
-    SpanStatus, TenantId, TraceFilter, TraceId, TraceSummary, UnixSeconds, Whoami, WhoamiError,
-    Window,
+    Session, SessionError, SessionStore, SessionToken, Span, SpanEvent, SpanId, SpanKind,
+    SpanReader, SpanStatus, TenantId, TraceFilter, TraceId, TraceSummary, UnixSeconds, Whoami,
+    WhoamiError, Window,
 };
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -78,7 +78,23 @@ fn a_span(seed: u8, parent: Option<u8>, start: u64, end: u64) -> Span {
         start_unix_nanos: start,
         end_unix_nanos: end,
         attributes: BTreeMap::from([("http.status_code".into(), "200".into())]),
+        events: Vec::new(),
     }
+}
+
+fn with_an_exception(mut span: Span, at: u64) -> Span {
+    span.events = vec![SpanEvent {
+        time_unix_nanos: at,
+        name: "exception".into(),
+        attributes: BTreeMap::from([
+            ("exception.type".into(), "PspTimeoutError".into()),
+            (
+                "exception.message".into(),
+                "deadline exceeded after 960ms".into(),
+            ),
+        ]),
+    }];
+    span
 }
 
 impl SpanReader for TwoSpans {
@@ -123,11 +139,14 @@ impl SpanReader for TwoSpans {
                 1_700_000_000_000_000_000,
                 1_700_000_002_000_000_000,
             ),
-            a_span(
-                2,
-                Some(1),
-                1_700_000_000_500_000_000,
-                1_700_000_001_000_000_000,
+            with_an_exception(
+                a_span(
+                    2,
+                    Some(1),
+                    1_700_000_000_500_000_000,
+                    1_700_000_001_000_000_000,
+                ),
+                1_700_000_000_900_000_000,
             ),
         ])
     }
@@ -362,4 +381,28 @@ async fn a_services_window_that_ends_before_it_starts_is_refused() {
     let (status, _) = served(TwoSpans, looking(&uri, Some(&session()), true)).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/* The offset is relative to the start of the trace, like the span offsets beside it, so the
+screen can place an exception on the waterfall without doing arithmetic on nanoseconds. */
+#[tokio::test]
+async fn an_exception_on_a_span_reaches_the_waterfall_with_its_place_in_it() {
+    let uri = format!("/api/orgs/{}/traces/{TRACE}", org(MINE));
+
+    let (status, body) = served(TwoSpans, looking(&uri, Some(&session()), true)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    let trace: serde_json::Value = serde_json::from_str(&body).expect("json");
+    let child = &trace["spans"][1];
+    let events = child["events"].as_array().expect("the events");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["name"], "exception");
+    assert_eq!(events[0]["offset_us"], 900_000);
+    assert_eq!(events[0]["attributes"]["exception.type"], "PspTimeoutError");
+    /* A span that recorded nothing says so with an empty list rather than with a missing field,
+    so the screen has one shape to read. */
+    assert_eq!(
+        trace["spans"][0]["events"].as_array().map(Vec::len),
+        Some(0)
+    );
 }
