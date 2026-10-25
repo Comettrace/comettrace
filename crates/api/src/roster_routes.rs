@@ -206,8 +206,8 @@ pub enum MemberRefused {
     NotAnAdministrator,
     #[error("the owner role is an owner to hand out and an owner to take back")]
     OwnersOnly,
-    #[error("your own standing is not yours to change here")]
-    Yourself,
+    #[error("an organisation keeps at least one owner, so this one stays")]
+    LastOwner,
     #[error("that address already belongs to this organisation")]
     AlreadyAMember,
     #[error("the members could not be read")]
@@ -230,7 +230,7 @@ impl From<RosterError> for MemberRefused {
             RosterError::NotYours => Self::NoSuchOrg,
             RosterError::NotYoursToChange => Self::NotAnAdministrator,
             RosterError::OwnersOnly => Self::OwnersOnly,
-            RosterError::Yourself => Self::Yourself,
+            RosterError::LastOwner => Self::LastOwner,
             RosterError::NoSuchMember => Self::NoSuchMember,
             RosterError::AlreadyAMember => Self::AlreadyAMember,
             RosterError::StoreUnreachable => Self::Unavailable,
@@ -244,8 +244,8 @@ impl IntoResponse for MemberRefused {
             Self::Reaching(refused) => return refused.into_response(),
             Self::Address => StatusCode::UNPROCESSABLE_ENTITY,
             Self::NoSuchOrg | Self::NoSuchMember => StatusCode::NOT_FOUND,
-            Self::NotAnAdministrator | Self::OwnersOnly | Self::Yourself => StatusCode::FORBIDDEN,
-            Self::AlreadyAMember => StatusCode::CONFLICT,
+            Self::NotAnAdministrator | Self::OwnersOnly => StatusCode::FORBIDDEN,
+            Self::AlreadyAMember | Self::LastOwner => StatusCode::CONFLICT,
             Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         };
         if status.is_server_error() {

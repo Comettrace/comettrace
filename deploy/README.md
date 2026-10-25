@@ -135,6 +135,13 @@ An address that already has an account here joins without a link: it signs
 in with the password it already chose. Nothing on that screen can set a
 password for an account somebody else signs in with.
 
+Only an owner hands out the owner role, changes an owner or removes one,
+and an organisation keeps at least one owner. So the sole owner of a fresh
+deployment can rename the organisation, invite anybody and change anybody
+else, but cannot stop being the owner until it has made somebody else one —
+after which it can step down, or leave. An organisation with no owner left
+could only be rescued with `grant-role`, which is why that is refused.
+
 Somebody who has lost their password asks for a link on the sign-in
 screen, which needs the mail relay. Without one, print a link yourself:
 

@@ -1,6 +1,7 @@
 import { AlertTriangle, Copy, KeyRound, Lock, Plus, ShieldCheck, TriangleAlert, Upload } from 'lucide-react'
 import { useState } from 'react'
-import { Link } from '@/lib/router'
+import { useQueryClient } from '@tanstack/react-query'
+import { Link, useNavigate } from '@/lib/router'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,7 +15,7 @@ import { because } from '@/auth/client'
 import { type Role } from '@/auth/api'
 import { useAccount, useOrganizations } from '@/auth/session'
 import { useExceptionAlerts, useIngestKeys, useProfile, useProjects, useReadKeys, useTeams } from '@/data/organization'
-import { initialsOf, mayChange, mayHandOut, useGrantRole, useInvite, useMembers, useRemoveMember, type Member, type Welcomed } from '@/data/members'
+import { initialsOf, mayChange, mayHandOut, theLastOwner, useGrantRole, useInvite, useMembers, useRemoveMember, type Member, type Welcomed } from '@/data/members'
 import { orgNameProblem, useOrgCard, useRenameOrg, type OrgCard } from '@/data/orgs'
 import { stamp } from '@/lib/format'
 import { useTheme, type ThemePref } from '@/lib/theme'
@@ -239,7 +240,10 @@ export function Members() {
   const { members, loading } = useMembers()
   const grant = useGrantRole()
   const remove = useRemoveMember()
+  const client = useQueryClient()
+  const navigate = useNavigate()
   const [invite, setInvite] = useState(false)
+  const [leaving, setLeaving] = useState(false)
   const mine = active?.role
   const roll = members ?? []
   const administered = roll.filter((m) => m.role !== 'member').length
@@ -247,9 +251,19 @@ export function Members() {
   const change = (member: Member, role: Role) =>
     grant.mutate({ account: member.account, role }, { onSuccess: saved, onError: (error) => toast.error(because(error, 'The role was not changed')) })
 
+  /* Removing your own membership is leaving, and every screen behind this one is then reading an
+     organisation you no longer belong to. So the cache goes and the browser starts again. */
   const drop = (member: Member) =>
     remove.mutate(member.account, {
-      onSuccess: () => toast(`${member.email} is no longer a member`),
+      onSuccess: () => {
+        if (member.account !== me?.account) {
+          toast(`${member.email} is no longer a member`)
+          return
+        }
+        setLeaving(false)
+        client.clear()
+        navigate('/', { replace: true })
+      },
       onError: (error) => toast.error(because(error, 'Nobody was removed')),
     })
 
@@ -263,7 +277,8 @@ export function Members() {
           <thead><tr><Th>Member</Th><Th className="w-[160px]">Role</Th><Th className="w-[190px]">Joined</Th><Th className="w-[110px]"><span className="sr-only">Actions</span></Th></tr></thead>
           <tbody>{roll.map((m) => {
             const you = m.account === me?.account
-            const editable = !you && mayChange(mine, m.role)
+            const last = theLastOwner(roll, m)
+            const editable = mayChange(mine, m.role) && !last
             return (
               <Tr key={m.account}>
                 <Td className="h-11"><span className="inline-flex items-center gap-2.5"><Avatar initials={initialsOf(m.email)} /><span className="font-semibold">{m.email}</span>{you ? <Badge variant="outline">you</Badge> : null}</span></Td>
@@ -272,18 +287,23 @@ export function Members() {
                     {mayHandOut(mine).map((role) => <option key={role} value={role}>{role}</option>)}
                   </NativeSelect>
                 ) : (
-                  <span className="inline-flex items-center gap-1.5 text-control text-muted-foreground"><Lock className="size-3" aria-hidden />{m.role}</span>
+                  <span className="inline-flex items-center gap-1.5 text-control text-muted-foreground"><Lock className="size-3" aria-hidden />{m.role}{last ? ' · last owner' : null}</span>
                 )}</Td>
                 <Td className="font-mono text-control">{stamp(m.joined_at_ms)}</Td>
-                <Td numeric>{editable ? <Button variant="ghost" size="sm" className="text-destructive-text" disabled={remove.isPending} onClick={() => drop(m)}>Remove</Button> : null}</Td>
+                <Td numeric>{editable ? <Button variant="ghost" size="sm" className="text-destructive-text" disabled={remove.isPending} onClick={() => (you ? setLeaving(true) : drop(m))}>{you ? 'Leave' : 'Remove'}</Button> : null}</Td>
               </Tr>
             )
           })}</tbody>
         </Table>
         {roll.length === 0 ? <p className="m-0 px-4 py-3 text-control text-muted-foreground">{loading ? 'Reading the members…' : members ? 'Nobody belongs to this organization.' : 'The members could not be read.'}</p> : null}
       </Card>
-      <p className="m-0 text-caption text-muted-foreground">Nobody edits their own row, and only an owner hands out the owner role or changes somebody who holds it. Somebody who has lost their password asks for a link on the sign-in screen.</p>
+      <p className="m-0 text-caption text-muted-foreground">Only an owner hands out the owner role or changes somebody who holds it, and an organization keeps at least one owner — so the last one stays until it has handed the role on. Somebody who has lost their password asks for a link on the sign-in screen.</p>
       <InviteMember open={invite} onOpenChange={setInvite} mine={mine} />
+      <Dialog open={leaving} onOpenChange={setLeaving}>
+        <DialogContent role="alertdialog" title={`Leave ${active?.name ?? 'the organization'}?`} description="You lose every screen of it at once. Somebody who stays has to invite you back.">
+          <DialogFooter><Button onClick={() => setLeaving(false)}>Stay</Button><Button variant="destructive" disabled={remove.isPending} onClick={() => { const mineRow = roll.find((m) => m.account === me?.account); if (mineRow) drop(mineRow) }}>Leave</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }
