@@ -3,11 +3,11 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Field, Input, NativeSelect } from '@/components/ui/input'
-import { useTeams } from '@/data/organization'
+import { useTeams } from '@/data/teams'
 import { ConfirmDelete, Danger, H, Sub, saved } from './parts'
 
 export function ProjectGeneral() {
-  const teams = useTeams()
+  const { teams } = useTeams()
   const [days, setDays] = useState('14')
   const [del, setDel] = useState(false)
   return (
@@ -16,7 +16,7 @@ export function ProjectGeneral() {
       <Card className="flex flex-col gap-3.5 p-4">
         <div className="grid grid-cols-[repeat(auto-fit,minmax(min(260px,100%),1fr))] gap-3">
           <Field label="Project name" htmlFor="pg-n" hint="Renaming keeps keys and signals."><Input id="pg-n" mono defaultValue="storefront" /></Field>
-          <Field label="Owner team" hint="Receives this project's exception alerts by default."><NativeSelect defaultValue="Backend">{teams.map((t) => <option key={t.name}>{t.name}</option>)}</NativeSelect></Field>
+          <Field label="Owner team" hint="Receives this project's exception alerts by default."><NativeSelect defaultValue="Backend">{(teams ?? []).map((t) => <option key={t.id}>{t.name}</option>)}</NativeSelect></Field>
         </div>
         <span className="text-control"><span className="text-muted-foreground">Project id</span> <span className="font-mono">prj_01JAZ4K2W8</span></span>
         <div><Button variant="primary" size="sm" onClick={saved}>Save</Button></div>

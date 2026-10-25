@@ -1,9 +1,9 @@
-import { ALERT_RULES, INGEST_KEYS, ME, MEMBERS, PROJECTS, QUERY_KEYS, TEAMS } from '@/mocks/mock'
+import { ALERT_RULES, INGEST_KEYS, ME, MEMBERS, PROJECTS, QUERY_KEYS } from '@/mocks/mock'
 import { useMock } from './seam'
 
 /* What is left of the sample data. The organisation itself is real (see src/data/orgs), so are
-   its members (src/data/members), and so are memberships and projects (src/auth,
-   src/data/projects); no team or key endpoint exists yet, and no table holds a team at all.
+   its members (src/data/members) and its teams (src/data/teams), and so are memberships and
+   projects (src/auth, src/data/projects); no key endpoint exists yet.
 
    The assignees below are the cast the issue screens pick from. Issues are sample data through
    and through, so the people on them are too: the real members are read by the settings screen
@@ -15,10 +15,6 @@ export function useProjects() {
 
 export function useAssignees() {
   return useMock(['organization', 'assignees'], () => MEMBERS)
-}
-
-export function useTeams() {
-  return useMock(['organization', 'teams'], () => TEAMS)
 }
 
 export function useIngestKeys() {

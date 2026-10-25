@@ -36,6 +36,7 @@ const carrying = (method: string) => (path: string, body?: unknown) =>
 
 export const post = carrying('POST')
 export const patch = carrying('PATCH')
+export const put = carrying('PUT')
 export const del = carrying('DELETE')
 
 /* The server serves this application from the same port and answers any path it does not know

@@ -152,12 +152,6 @@ export const MEMBERS = [
   { email: 'li.wei@acme.dev', name: 'Li Wei', role: 'member', joined: '2026-08-14' },
   { email: 'karim@acme.dev', name: 'Karim Benali', role: 'member', joined: '2026-09-01' },
 ]
-export const TEAMS = [
-  { name: 'Backend', initials: 'BE', members: 5, projects: 'storefront, payments-eu', channel: '#alerts-backend' },
-  { name: 'Payments', initials: 'PA', members: 3, projects: 'payments-eu', channel: '#alerts-payments' },
-  { name: 'Mobile', initials: 'MO', members: 2, projects: 'storefront', channel: 'Email only' },
-  { name: 'Data', initials: 'DA', members: 2, projects: 'data-pipeline', channel: '#data-oncall' },
-]
 export const INGEST_KEYS = [
   { name: 'k8s-prod collector', prefix: 'cmt_ik_7Hq2', created: '2026-03-02', used: 'today 14:32:08', revoked: false },
   { name: 'browser-rum', prefix: 'cmt_ik_Qm4x', created: '2026-05-11', used: 'today 12:28:40', revoked: false },

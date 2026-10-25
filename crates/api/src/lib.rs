@@ -13,6 +13,7 @@ mod reset_routes;
 mod roster_routes;
 mod session_cookie;
 mod sign_in;
+mod team_routes;
 mod web_routes;
 mod whoami_routes;
 
@@ -30,5 +31,6 @@ pub use reset_routes::{ResetRefused, reset_router};
 pub use roster_routes::{MemberRefused, roster_router};
 pub use session_cookie::SessionCookie;
 pub use sign_in::{SignInRefused, auth_router};
+pub use team_routes::{TeamRefused, team_router};
 pub use web_routes::web_router;
 pub use whoami_routes::{StandingRefused, me_router};

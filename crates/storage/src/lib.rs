@@ -20,6 +20,7 @@ mod roster;
 mod sessions;
 mod sink;
 mod spans;
+mod teams;
 mod usage;
 
 pub use accounts::{AccountError, PostgresAccounts};
@@ -47,4 +48,5 @@ pub use roster::PostgresRoster;
 pub use sessions::PostgresSessions;
 pub use sink::MemorySink;
 pub use spans::{SpanStore, SpanStoreSettings, open as open_span_store};
+pub use teams::PostgresTeams;
 pub use usage::MemoryMeter;
