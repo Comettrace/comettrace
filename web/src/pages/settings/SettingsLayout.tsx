@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils'
 
 const GROUPS: { label: string; items: [string, string][] }[] = [
   { label: 'Personal', items: [['profile', 'Profile'], ['security', 'Login & security'], ['preferences', 'Preferences']] },
-  { label: 'Organization', items: [['general', 'General'], ['members', 'Members'], ['teams', 'Teams'], ['projects', 'Projects'], ['integrations', 'Integrations'], ['usage', 'Usage'], ['billing', 'Billing']] },
+  { label: 'Organization', items: [['general', 'General'], ['members', 'Members'], ['teams', 'Teams'], ['projects', 'Projects'], ['usage', 'Usage'], ['billing', 'Billing']] },
   { label: 'Project', items: [['project/general', 'General'], ['project/alerts', 'Exception alerts'], ['project/api-keys', 'Api keys']] },
 ]
 

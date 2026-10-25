@@ -92,7 +92,6 @@ export function ReleaseDetail() {
           {r.prs.map(([n, t]) => (
             <div key={n} className="flex items-center gap-2.5 border-b border-border-subtle px-4 py-2.5 text-control last:border-b-0"><GitPullRequest className="size-3.5 text-muted-foreground" aria-hidden /><span className="font-mono text-muted-foreground">{n}</span><span className="flex-1">{t}</span></div>
           ))}
-          <p className="m-0 px-4 py-2.5 text-caption text-muted-foreground">From the GitHub integration. Connect it in Settings › Integrations.</p>
         </Card>
       </div>
     </>

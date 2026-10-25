@@ -5,7 +5,6 @@ mod explore;
 mod federated;
 mod identity;
 mod ingest;
-mod integration;
 mod key;
 mod membership;
 mod oidc;
@@ -22,7 +21,6 @@ mod span;
 mod teams;
 mod tenant;
 mod usage;
-mod vault;
 
 pub use catalogue::{
     Assigned, BadProjectName, Catalogue, CatalogueError, Created, OwnerTeam, Project, ProjectId,
@@ -42,10 +40,6 @@ pub use identity::{
     SignInProof,
 };
 pub use ingest::{Ingest, IngestError, Payload};
-pub use integration::{
-    Attempt, Attempts, Authorized, Connecting, Connection, ConnectionError, Connections,
-    Destination, Destinations, Filing, Filings, Handshake, Linking, Provider, Routing,
-};
 pub use key::IngestKey;
 pub use membership::{Membership, Memberships, OrgRole, Who, Whoami, WhoamiError};
 pub use oidc::{CodeVerifier, FlowError, OidcFlows, PendingFlow};
@@ -67,4 +61,3 @@ pub use tenant::{Scope, TenantDirectory, TenantId, UnknownKey};
 pub use usage::{
     Consumed, Consumption, DecompressedBytes, Metering, UsageHistory, UsageMeter, UsageReader,
 };
-pub use vault::{NoVault, ProviderToken, SealError, Sealed, Vault};

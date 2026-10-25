@@ -31,7 +31,6 @@ import { OrgGeneral } from '@/pages/settings/OrgGeneral'
 import { Members } from '@/pages/settings/Members'
 import { Teams } from '@/pages/settings/Teams'
 import { Projects } from '@/pages/settings/Projects'
-import { Integrations } from '@/pages/settings/Integrations'
 import { Usage } from '@/pages/settings/Usage'
 import { Billing } from '@/pages/settings/Billing'
 import { ProjectGeneral } from '@/pages/settings/ProjectGeneral'
@@ -102,7 +101,6 @@ const settingsChildren = [
   createRoute({ getParentRoute: () => settingsRoute, path: 'members', component: Members, staticData: real }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'teams', component: Teams, staticData: real }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'projects', component: Projects, staticData: real }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'integrations', component: Integrations, staticData: real }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'usage', component: Usage, staticData: real }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'billing', component: Billing, staticData: mock }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'project/general', component: ProjectGeneral, staticData: real }),
