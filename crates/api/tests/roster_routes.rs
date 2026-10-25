@@ -1,0 +1,506 @@
+use std::sync::{Arc, Mutex};
+
+use axum::body::Body;
+use axum::http::header::COOKIE;
+use axum::http::{Method, Request, StatusCode};
+use comettrace_api::roster_router;
+use comettrace_core::{
+    AccountId, Admitted, Email, Member, Membership, Memberships, OrgRole, RESET_PREFIX, ReadError,
+    Roll, Roster, SecretHash, Session, SessionError, SessionStore, SessionToken, TenantId,
+    UnixSeconds, Whoami, WhoamiError,
+};
+use tower::ServiceExt;
+use uuid::Uuid;
+
+const TOKEN: &str = "ct_ss_0123456789";
+const MINE: u128 = 1;
+const THEIRS: u128 = 2;
+const ME: u128 = 9;
+const SOMEBODY: u128 = 10;
+const JOINED: u64 = 1_700_000_000_123_456_789;
+
+fn an_account(seed: u128) -> AccountId {
+    AccountId::new(Uuid::from_u128(seed))
+}
+
+fn an_address(local: &str) -> Email {
+    Email::try_from(format!("{local}@example.com").as_str()).expect("an address")
+}
+
+fn a_member(seed: u128, role: OrgRole) -> Member {
+    Member {
+        account: an_account(seed),
+        email: an_address(&format!("person{seed}")),
+        role,
+        joined_at_unix_nanos: JOINED,
+    }
+}
+
+struct OneSession;
+
+impl SessionStore for OneSession {
+    async fn issue(
+        &self,
+        _account: AccountId,
+        _org: Option<TenantId>,
+    ) -> Result<SessionToken, SessionError> {
+        Ok(SessionToken::from_plaintext(TOKEN))
+    }
+
+    async fn resolve(&self, token: &SessionToken) -> Result<Session, SessionError> {
+        if token.exposed() == TOKEN {
+            Ok(Session {
+                account: an_account(ME),
+                email: an_address("me"),
+                org: None,
+                expires_at: UnixSeconds::new(0),
+            })
+        } else {
+            Err(SessionError::Unknown)
+        }
+    }
+
+    async fn revoke(&self, _token: &SessionToken) -> Result<(), SessionError> {
+        Ok(())
+    }
+}
+
+struct MemberOfMine(OrgRole);
+
+impl Memberships for MemberOfMine {
+    async fn of(&self, _account: AccountId) -> Result<Vec<Membership>, WhoamiError> {
+        Ok(vec![Membership {
+            org: TenantId::new(Uuid::from_u128(MINE)),
+            name: "Acme".into(),
+            role: self.0,
+        }])
+    }
+}
+
+#[derive(Debug)]
+struct Kept {
+    roll: Mutex<Vec<Member>>,
+    admission: Option<Admitted>,
+    digests: Mutex<Vec<SecretHash>>,
+}
+
+impl Kept {
+    fn of(roll: Vec<Member>) -> Arc<Self> {
+        Arc::new(Self {
+            roll: Mutex::new(roll),
+            admission: None,
+            digests: Mutex::default(),
+        })
+    }
+
+    fn admitting(admission: Admitted) -> Arc<Self> {
+        Arc::new(Self {
+            roll: Mutex::new(Vec::new()),
+            admission: Some(admission),
+            digests: Mutex::default(),
+        })
+    }
+
+    fn roll(&self) -> Vec<Member> {
+        self.roll.lock().expect("the lock").clone()
+    }
+
+    fn digests(&self) -> usize {
+        self.digests.lock().expect("the lock").len()
+    }
+}
+
+impl Roll for Kept {
+    async fn of(&self, _org: TenantId) -> Result<Vec<Member>, ReadError> {
+        Ok(self.roll())
+    }
+
+    async fn grant(
+        &self,
+        _org: TenantId,
+        account: AccountId,
+        role: OrgRole,
+    ) -> Result<Option<Member>, ReadError> {
+        let mut held = self.roll.lock().expect("the lock");
+        Ok(held
+            .iter_mut()
+            .find(|member| member.account == account)
+            .map(|member| {
+                member.role = role;
+                member.clone()
+            }))
+    }
+
+    async fn remove(&self, _org: TenantId, account: AccountId) -> Result<bool, ReadError> {
+        let mut roll = self.roll.lock().expect("the lock");
+        let before = roll.len();
+        roll.retain(|member| member.account != account);
+        Ok(roll.len() < before)
+    }
+
+    async fn admit(
+        &self,
+        _org: TenantId,
+        _email: &Email,
+        _role: OrgRole,
+        way_in: SecretHash,
+    ) -> Result<Admitted, ReadError> {
+        self.digests.lock().expect("the lock").push(way_in);
+        Ok(self.admission.clone().expect("a scripted admission"))
+    }
+}
+
+fn org(seed: u128) -> String {
+    Uuid::from_u128(seed).to_string()
+}
+
+fn asking(method: Method, uri: &str, body: Option<&str>, scripted: bool) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(COOKIE, format!("ct_session={TOKEN}"));
+    if scripted {
+        request = request.header("x-requested-with", "fetch");
+    }
+    if body.is_some() {
+        request = request.header("content-type", "application/json");
+    }
+    request
+        .body(body.map_or_else(Body::empty, |json| Body::from(json.to_owned())))
+        .expect("a request")
+}
+
+async fn served(role: OrgRole, kept: &Arc<Kept>, request: Request<Body>) -> (StatusCode, String) {
+    let roster = Arc::new(Roster::new(
+        Whoami::new(OneSession, MemberOfMine(role)),
+        Arc::clone(kept),
+    ));
+    let response = roster_router(roster)
+        .oneshot(request)
+        .await
+        .expect("a response");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("a body");
+    (status, String::from_utf8(body.to_vec()).expect("text"))
+}
+
+fn read(body: &str) -> serde_json::Value {
+    serde_json::from_str(body).expect("json")
+}
+
+#[tokio::test]
+async fn a_member_reads_the_whole_roll_of_its_own_organisation() {
+    let kept = Kept::of(vec![
+        a_member(ME, OrgRole::Owner),
+        a_member(SOMEBODY, OrgRole::Member),
+    ]);
+
+    let (status, body) = served(
+        OrgRole::Member,
+        &kept,
+        asking(
+            Method::GET,
+            &format!("/api/orgs/{}/members", org(MINE)),
+            None,
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let roll = read(&body);
+    assert_eq!(
+        roll["members"][0]["account"],
+        Uuid::from_u128(ME).to_string()
+    );
+    assert_eq!(roll["members"][0]["email"], "person9@example.com");
+    assert_eq!(roll["members"][0]["role"], "owner");
+    assert_eq!(
+        roll["members"][0]["joined_at_ms"], 1_700_000_000_123u64,
+        "a time a browser can hold without losing digits"
+    );
+    assert_eq!(roll["members"][1]["role"], "member");
+}
+
+#[tokio::test]
+async fn a_request_from_another_origin_never_reaches_the_members() {
+    let kept = Kept::of(vec![a_member(SOMEBODY, OrgRole::Member)]);
+
+    let (status, _) = served(
+        OrgRole::Owner,
+        &kept,
+        asking(
+            Method::GET,
+            &format!("/api/orgs/{}/members", org(MINE)),
+            None,
+            false,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn the_members_of_an_organisation_this_session_does_not_belong_to_are_not_found() {
+    let kept = Kept::of(vec![a_member(SOMEBODY, OrgRole::Member)]);
+
+    let (status, _) = served(
+        OrgRole::Owner,
+        &kept,
+        asking(
+            Method::GET,
+            &format!("/api/orgs/{}/members", org(THEIRS)),
+            None,
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "telling a stranger an organisation exists is itself a leak"
+    );
+}
+
+#[tokio::test]
+async fn an_administrator_changes_a_role_and_is_answered_with_the_member() {
+    let kept = Kept::of(vec![a_member(SOMEBODY, OrgRole::Member)]);
+
+    let (status, body) = served(
+        OrgRole::Admin,
+        &kept,
+        asking(
+            Method::PATCH,
+            &format!("/api/orgs/{}/members/{}", org(MINE), org(SOMEBODY)),
+            Some(r#"{"role":"admin"}"#),
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read(&body)["role"], "admin");
+    assert_eq!(kept.roll()[0].role, OrgRole::Admin);
+}
+
+#[tokio::test]
+async fn a_member_is_told_plainly_that_changing_a_role_is_not_its_to_do() {
+    let kept = Kept::of(vec![a_member(SOMEBODY, OrgRole::Member)]);
+
+    let (status, body) = served(
+        OrgRole::Member,
+        &kept,
+        asking(
+            Method::PATCH,
+            &format!("/api/orgs/{}/members/{}", org(MINE), org(SOMEBODY)),
+            Some(r#"{"role":"admin"}"#),
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(body.contains("administrator"), "{body}");
+    assert_eq!(kept.roll()[0].role, OrgRole::Member);
+}
+
+#[tokio::test]
+async fn an_administrator_is_refused_the_owner_role_in_either_direction() {
+    let kept = Kept::of(vec![a_member(SOMEBODY, OrgRole::Owner)]);
+
+    let (status, body) = served(
+        OrgRole::Admin,
+        &kept,
+        asking(
+            Method::PATCH,
+            &format!("/api/orgs/{}/members/{}", org(MINE), org(SOMEBODY)),
+            Some(r#"{"role":"member"}"#),
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(body.contains("owner"), "{body}");
+    assert_eq!(kept.roll()[0].role, OrgRole::Owner);
+}
+
+#[tokio::test]
+async fn your_own_row_is_refused_whatever_you_are() {
+    let kept = Kept::of(vec![a_member(ME, OrgRole::Owner)]);
+
+    let (status, _) = served(
+        OrgRole::Owner,
+        &kept,
+        asking(
+            Method::PATCH,
+            &format!("/api/orgs/{}/members/{}", org(MINE), org(ME)),
+            Some(r#"{"role":"member"}"#),
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(kept.roll()[0].role, OrgRole::Owner);
+}
+
+#[tokio::test]
+async fn an_administrator_shows_a_member_the_door_and_the_answer_carries_no_body() {
+    let kept = Kept::of(vec![a_member(SOMEBODY, OrgRole::Member)]);
+
+    let (status, body) = served(
+        OrgRole::Admin,
+        &kept,
+        asking(
+            Method::DELETE,
+            &format!("/api/orgs/{}/members/{}", org(MINE), org(SOMEBODY)),
+            None,
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(body.is_empty());
+    assert!(kept.roll().is_empty());
+}
+
+#[tokio::test]
+async fn an_account_this_organisation_never_held_is_no_member_to_remove() {
+    let kept = Kept::of(vec![a_member(SOMEBODY, OrgRole::Member)]);
+
+    let (status, _) = served(
+        OrgRole::Owner,
+        &kept,
+        asking(
+            Method::DELETE,
+            &format!("/api/orgs/{}/members/{}", org(MINE), org(404)),
+            None,
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(kept.roll().len(), 1);
+}
+
+#[tokio::test]
+async fn an_unknown_address_is_admitted_with_the_one_token_that_sets_its_password() {
+    let kept = Kept::admitting(Admitted::Awaiting(a_member(SOMEBODY, OrgRole::Member)));
+
+    let (status, body) = served(
+        OrgRole::Admin,
+        &kept,
+        asking(
+            Method::POST,
+            &format!("/api/orgs/{}/members", org(MINE)),
+            Some(r#"{"email":"new@example.com","role":"member"}"#),
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    let welcomed = read(&body);
+    assert_eq!(welcomed["member"]["role"], "member");
+    let token = welcomed["invite_token"]
+        .as_str()
+        .expect("a new account cannot sign in without one");
+    assert!(token.starts_with(RESET_PREFIX), "{token}");
+    assert_eq!(
+        kept.digests(),
+        1,
+        "the control plane is handed the digest, never the token"
+    );
+}
+
+/* Choosing a password for an address somebody already signs in with is that account handed over,
+so an invitation to one carries no token at all. */
+#[tokio::test]
+async fn an_address_that_already_has_an_account_joins_without_a_token() {
+    let kept = Kept::admitting(Admitted::Standing(a_member(SOMEBODY, OrgRole::Admin)));
+
+    let (status, body) = served(
+        OrgRole::Owner,
+        &kept,
+        asking(
+            Method::POST,
+            &format!("/api/orgs/{}/members", org(MINE)),
+            Some(r#"{"email":"known@example.com","role":"admin"}"#),
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    let welcomed = read(&body);
+    assert_eq!(welcomed["member"]["role"], "admin");
+    assert!(welcomed["invite_token"].is_null());
+}
+
+#[tokio::test]
+async fn an_address_already_on_the_roll_is_a_conflict_rather_than_a_second_invitation() {
+    let kept = Kept::admitting(Admitted::AlreadyIn);
+
+    let (status, body) = served(
+        OrgRole::Owner,
+        &kept,
+        asking(
+            Method::POST,
+            &format!("/api/orgs/{}/members", org(MINE)),
+            Some(r#"{"email":"already@example.com","role":"member"}"#),
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(body.contains("already belongs"), "{body}");
+}
+
+#[tokio::test]
+async fn an_administrator_cannot_invite_an_owner_and_no_account_is_made_for_one() {
+    let kept = Kept::admitting(Admitted::Awaiting(a_member(SOMEBODY, OrgRole::Owner)));
+
+    let (status, _) = served(
+        OrgRole::Admin,
+        &kept,
+        asking(
+            Method::POST,
+            &format!("/api/orgs/{}/members", org(MINE)),
+            Some(r#"{"email":"new@example.com","role":"owner"}"#),
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(kept.digests(), 0);
+}
+
+#[tokio::test]
+async fn something_that_is_not_an_address_is_refused_before_anybody_is_admitted() {
+    let kept = Kept::admitting(Admitted::Awaiting(a_member(SOMEBODY, OrgRole::Member)));
+
+    let (status, body) = served(
+        OrgRole::Owner,
+        &kept,
+        asking(
+            Method::POST,
+            &format!("/api/orgs/{}/members", org(MINE)),
+            Some(r#"{"email":"nobody","role":"member"}"#),
+            true,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body.contains("address"), "{body}");
+    assert_eq!(kept.digests(), 0);
+}

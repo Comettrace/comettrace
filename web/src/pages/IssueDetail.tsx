@@ -10,7 +10,7 @@ import { Avatar, Table, Td, Th, Tr } from '@/components/ui/misc'
 import { Kpi, ServiceDot } from '@/components/cmt/bits'
 import { LineChart } from '@/components/cmt/charts'
 import { useIssueDetail, useIssues } from '@/data/issues'
-import { useMembers } from '@/data/organization'
+import { useAssignees } from '@/data/organization'
 import { NotFound } from './NotFound'
 import { initials } from './Issues'
 import { cn } from '@/lib/utils'
@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils'
 export function IssueDetail() {
   const { id } = useParams()
   const { issues, update } = useIssues()
-  const members = useMembers()
+  const members = useAssignees()
   const issue = issues.find((i) => i.id === id)
   const detail = useIssueDetail(issue ?? issues[0])
   const [tab, setTab] = useState<'details' | 'events' | 'activity'>('details')

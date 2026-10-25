@@ -36,5 +36,6 @@ const carrying = (method: string) => (path: string, body?: unknown) =>
 
 export const post = carrying('POST')
 export const patch = carrying('PATCH')
+export const del = carrying('DELETE')
 
 export const json = async <T>(response: Response): Promise<T> => (await response.json()) as T

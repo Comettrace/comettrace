@@ -16,6 +16,7 @@ mod postgres;
 mod projects;
 mod quota;
 mod resets;
+mod roster;
 mod sessions;
 mod sink;
 mod spans;
@@ -42,6 +43,7 @@ pub use postgres::{CONTROL_PLANE, OVERAGE_FEATURE, SELF_HOSTED_PLAN, load_allowa
 pub use projects::{PostgresProjects, ProjectError};
 pub use quota::{Allowance, StaticQuota};
 pub use resets::PostgresResets;
+pub use roster::PostgresRoster;
 pub use sessions::PostgresSessions;
 pub use sink::MemorySink;
 pub use spans::{SpanStore, SpanStoreSettings, open as open_span_store};

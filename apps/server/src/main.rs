@@ -11,22 +11,22 @@ use axum::Router;
 use clap::{Parser, Subcommand, ValueEnum};
 use comettrace_api::{
     SessionCookie, SignInMethods, auth_router, catalogue_router, explore_router, health_router,
-    me_router, methods_router, oidc_router, org_router, password_router, reset_router, router,
-    trace_server, web_router,
+    me_router, methods_router, oidc_router, org_router, password_router, reset_router,
+    roster_router, router, trace_server, web_router,
 };
 use comettrace_core::{
     AccountId, AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
     FederatedSignIn, Ingest, IngestKey, Mailer, NoProvider, OrgRole, OrgSettings, ProjectId,
-    ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken, Scope, SessionLifetime,
-    SignIn, SinkError, Span, SpanSink, TenantDirectory, TenantId, UnknownKey, UsageMeter,
-    UsageReader, Whoami,
+    ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken, Roster, Scope,
+    SessionLifetime, SignIn, SinkError, Span, SpanSink, TenantDirectory, TenantId, UnknownKey,
+    UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink,
     LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink, OidcProvider, OidcSettings,
     PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresMemberships, PostgresOrgs,
-    PostgresProjects, PostgresResets, PostgresSessions, RedisMeter, SmtpMailer, SpanStoreSettings,
-    StaticDirectory, StaticQuota, SystemClock, load_allowances, open_span_store,
+    PostgresProjects, PostgresResets, PostgresRoster, PostgresSessions, RedisMeter, SmtpMailer,
+    SpanStoreSettings, StaticDirectory, StaticQuota, SystemClock, load_allowances, open_span_store,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -438,7 +438,8 @@ async fn main() -> anyhow::Result<()> {
         .await?
         .merge(explore_routes(pool.as_ref(), reader))
         .merge(catalogue_routes(pool.as_ref()))
-        .merge(org_routes(pool.as_ref()));
+        .merge(org_routes(pool.as_ref()))
+        .merge(roster_routes(pool.as_ref())?);
     let gateway = Arc::new(gateway_of(
         directory_of(pool.as_ref()),
         allowances,
@@ -562,6 +563,26 @@ fn gateway_of(
 type Looking = Explore<Arc<Sessions>, PostgresMemberships, ClickhouseReader>;
 type Holding = Catalogue<Arc<Sessions>, PostgresMemberships, PostgresProjects>;
 type Settling = OrgSettings<Arc<Sessions>, PostgresMemberships, PostgresOrgs>;
+type Enrolling = Roster<Arc<Sessions>, PostgresMemberships, PostgresRoster<SystemClock>>;
+
+/* The hasher is here because admitting an address can create the account it names, and an account
+with no reachable password is still an account that carries a hash. */
+fn roster_routes(pool: Option<&PgPool>) -> anyhow::Result<Router> {
+    let Some(pool) = pool else {
+        return Ok(Router::new());
+    };
+    let sessions = Arc::new(PostgresSessions::new(
+        pool.clone(),
+        SystemClock,
+        SessionLifetime::default(),
+    ));
+    let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
+    let roster: Arc<Enrolling> = Arc::new(Roster::new(
+        Whoami::new(sessions, PostgresMemberships::new(pool.clone())),
+        PostgresRoster::new(pool.clone(), hasher, SystemClock),
+    ));
+    Ok(roster_router(roster))
+}
 
 fn org_routes(pool: Option<&PgPool>) -> Router {
     let Some(pool) = pool else {

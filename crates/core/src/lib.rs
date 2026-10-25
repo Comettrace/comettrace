@@ -12,6 +12,7 @@ mod organisation;
 mod password;
 mod quota;
 mod reset;
+mod roster;
 mod secret;
 mod session;
 mod signin;
@@ -42,6 +43,7 @@ pub use organisation::{BadName, OrgName, OrgSettings, Organisation, Orgs, Settin
 pub use password::{ChangeError, ChangePassword};
 pub use quota::{Admission, QuotaPolicy, Unmetered};
 pub use reset::{Mailer, ResetError, ResetPassword, ResetStore};
+pub use roster::{Admitted, Invitation, Member, Roll, Roster, RosterError};
 pub use secret::{RESET_PREFIX, ResetToken, SESSION_PREFIX, SecretHash, SessionToken};
 pub use session::{
     HashError, PasswordCheck, PasswordHash, PasswordHasher, Session, SessionError, SessionLifetime,

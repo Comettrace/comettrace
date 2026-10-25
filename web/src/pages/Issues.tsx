@@ -9,7 +9,7 @@ import { Segmented } from '@/components/ui/segmented'
 import { Avatar, Table, Td, Th } from '@/components/ui/misc'
 import { EmptyState, PageHeader } from '@/components/cmt/bits'
 import { Sparkline } from '@/components/cmt/charts'
-import { useMembers } from '@/data/organization'
+import { useAssignees } from '@/data/organization'
 import { useIssues, type IssueStatus } from '@/data/issues'
 import { cn } from '@/lib/utils'
 
@@ -17,7 +17,7 @@ export const initials = (n: string) => n.split(' ').map((x) => x[0]).join('').sl
 
 export function Issues() {
   const { issues, update } = useIssues()
-  const members = useMembers()
+  const members = useAssignees()
   const navigate = useNavigate()
   const [tab, setTab] = useState<IssueStatus | 'review'>('unresolved')
   const [q, setQ] = useState('')
