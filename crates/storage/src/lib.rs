@@ -23,6 +23,7 @@ mod sink;
 mod spans;
 mod teams;
 mod usage;
+mod vault;
 
 pub use accounts::{AccountError, PostgresAccounts};
 pub use clickhouse::{
@@ -52,3 +53,4 @@ pub use sink::MemorySink;
 pub use spans::{SpanStore, SpanStoreSettings, open as open_span_store};
 pub use teams::PostgresTeams;
 pub use usage::MemoryMeter;
+pub use vault::{BadKey, SealedVault};

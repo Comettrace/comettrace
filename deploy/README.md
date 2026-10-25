@@ -204,6 +204,26 @@ span carries its events, so these settings are read and reported and
 otherwise wait. Wiring them up early costs nothing and tells the screen the
 truth.
 
+## Sealing a provider token
+
+A token this deployment holds on somebody else's behalf is sealed before it
+reaches a row, under a key the deployment keeps:
+
+```sh
+docker compose exec server comettrace secret-key
+```
+
+It prints sixty-four hex characters on stdout. Set them as
+`COMETTRACE_SECRET_KEY` and keep them: the sealing is
+XChaCha20-Poly1305, so a sealed token is unreadable without the key and
+nothing can recover one. It is also authenticated — a row edited by hand,
+or moved from another deployment, is refused rather than decrypted into
+something that would go out as a bearer token.
+
+A deployment that sets no key works exactly as it did. What it cannot do is
+hold a token on somebody else's behalf, and the integrations screen says so
+rather than the server refusing to start.
+
 ## Projects
 
 Telemetry arrives under a project, and `bootstrap` makes the first one,

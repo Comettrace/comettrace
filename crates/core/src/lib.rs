@@ -21,6 +21,7 @@ mod span;
 mod teams;
 mod tenant;
 mod usage;
+mod vault;
 
 pub use catalogue::{
     Assigned, BadProjectName, Catalogue, CatalogueError, Created, OwnerTeam, Project, ProjectId,
@@ -61,3 +62,4 @@ pub use tenant::{Scope, TenantDirectory, TenantId, UnknownKey};
 pub use usage::{
     Consumed, Consumption, DecompressedBytes, Metering, UsageHistory, UsageMeter, UsageReader,
 };
+pub use vault::{NoVault, ProviderToken, SealError, Sealed, Vault};
