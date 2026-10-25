@@ -1,0 +1,201 @@
+use std::sync::Arc;
+
+use axum::body::Body;
+use axum::http::header::COOKIE;
+use axum::http::{Request, StatusCode};
+use comettrace_api::usage_router;
+use comettrace_core::{
+    AccountId, Consumed, DecompressedBytes, Membership, Memberships, Metering, OrgRole, ReadError,
+    Session, SessionError, SessionStore, SessionToken, TenantId, UnixSeconds, UsageHistory,
+    UsageReader, Whoami, WhoamiError, Window,
+};
+use tower::ServiceExt;
+use uuid::Uuid;
+
+const TOKEN: &str = "ct_ss_0123456789";
+const MINE: u128 = 1;
+const THEIRS: u128 = 2;
+/* An hour that is a round number of milliseconds, so the conversion the route does is visible in
+the assertion rather than hidden by rounding. */
+const AN_HOUR_MS: u64 = 3_600_000;
+
+fn id(seed: u128) -> String {
+    Uuid::from_u128(seed).to_string()
+}
+
+struct OneSession;
+
+impl SessionStore for OneSession {
+    async fn issue(
+        &self,
+        _account: AccountId,
+        _org: Option<TenantId>,
+    ) -> Result<SessionToken, SessionError> {
+        Ok(SessionToken::from_plaintext(TOKEN))
+    }
+
+    async fn resolve(&self, token: &SessionToken) -> Result<Session, SessionError> {
+        if token.exposed() == TOKEN {
+            Ok(Session {
+                account: AccountId::new(Uuid::from_u128(9)),
+                email: "person@example.com".try_into().expect("an address"),
+                org: None,
+                expires_at: UnixSeconds::new(0),
+            })
+        } else {
+            Err(SessionError::Unknown)
+        }
+    }
+
+    async fn revoke(&self, _token: &SessionToken) -> Result<(), SessionError> {
+        Ok(())
+    }
+}
+
+struct MemberOfMine;
+
+impl Memberships for MemberOfMine {
+    async fn of(&self, _account: AccountId) -> Result<Vec<Membership>, WhoamiError> {
+        Ok(vec![Membership {
+            org: TenantId::new(Uuid::from_u128(MINE)),
+            name: "Acme".into(),
+            role: OrgRole::Member,
+        }])
+    }
+}
+
+struct Live(u64);
+
+impl UsageReader for Live {
+    async fn used(&self, _tenant: TenantId) -> DecompressedBytes {
+        DecompressedBytes::new(self.0)
+    }
+}
+
+#[derive(Debug)]
+struct Rolled {
+    included: Option<u64>,
+}
+
+impl UsageHistory for Rolled {
+    async fn hours(&self, _org: TenantId, window: Window) -> Result<Vec<Consumed>, ReadError> {
+        /* The window the route built, handed back as a row, so a test can see the milliseconds it
+        was asked for reach the store as nanoseconds. */
+        Ok(vec![Consumed {
+            started_at_unix_nanos: window.from_unix_nanos(),
+            ingested_bytes: 4_096,
+        }])
+    }
+
+    async fn included(&self, _org: TenantId) -> Result<Option<DecompressedBytes>, ReadError> {
+        Ok(self.included.map(DecompressedBytes::new))
+    }
+}
+
+fn asking(org: u128, query: &str, session: Option<&str>, scripted: bool) -> Request<Body> {
+    let mut request = Request::builder().uri(format!("/api/orgs/{}/usage?{query}", id(org)));
+    if let Some(token) = session {
+        request = request.header(COOKIE, format!("ct_session={token}"));
+    }
+    if scripted {
+        request = request.header("x-requested-with", "fetch");
+    }
+    request.body(Body::empty()).expect("a request")
+}
+
+async fn served(live: u64, included: Option<u64>, request: Request<Body>) -> (StatusCode, String) {
+    let metering = Arc::new(Metering::new(
+        Whoami::new(OneSession, MemberOfMine),
+        Live(live),
+        Rolled { included },
+    ));
+    let response = usage_router(metering)
+        .oneshot(request)
+        .await
+        .expect("a response");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("a body");
+    (status, String::from_utf8(body.to_vec()).expect("text"))
+}
+
+fn read(body: &str) -> serde_json::Value {
+    serde_json::from_str(body).expect("json")
+}
+
+fn a_month() -> String {
+    format!("from={AN_HOUR_MS}&to={}", AN_HOUR_MS * 800)
+}
+
+#[tokio::test]
+async fn a_member_reads_what_its_organisation_ingested() {
+    let (status, body) = served(
+        9_999,
+        Some(1_073_741_824),
+        asking(MINE, &a_month(), Some(TOKEN), true),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let metered = read(&body);
+    assert_eq!(metered["ingested_bytes"], 9_999);
+    assert_eq!(metered["included_bytes"], 1_073_741_824u64);
+    assert_eq!(metered["hours"][0]["ingested_bytes"], 4_096);
+    assert_eq!(
+        metered["hours"][0]["started_at_ms"], AN_HOUR_MS,
+        "a window asked for in milliseconds comes back in milliseconds"
+    );
+}
+
+/* Null, not zero: a zero ceiling would read as one already passed, and the plan every
+self-hosted deployment is seeded with sets none at all. */
+#[tokio::test]
+async fn a_plan_with_no_ceiling_answers_null_rather_than_zero() {
+    let (status, body) = served(9_999, None, asking(MINE, &a_month(), Some(TOKEN), true)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(read(&body)["included_bytes"].is_null());
+}
+
+#[tokio::test]
+async fn an_organisation_this_session_does_not_belong_to_is_not_found() {
+    let (status, _) = served(0, None, asking(THEIRS, &a_month(), Some(TOKEN), true)).await;
+
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "telling a stranger an organisation exists is itself a leak"
+    );
+}
+
+#[tokio::test]
+async fn a_window_that_ends_before_it_starts_is_refused() {
+    let (status, body) = served(
+        0,
+        None,
+        asking(MINE, "from=2000&to=1000", Some(TOKEN), true),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a malformed query string, which is what the trace routes answer for the same window"
+    );
+    assert!(body.contains("window"), "{body}");
+}
+
+#[tokio::test]
+async fn a_request_carrying_no_session_is_told_to_sign_in() {
+    let (status, _) = served(0, None, asking(MINE, &a_month(), None, true)).await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_request_from_another_origin_never_reaches_the_usage() {
+    let (status, _) = served(0, None, asking(MINE, &a_month(), Some(TOKEN), false)).await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}

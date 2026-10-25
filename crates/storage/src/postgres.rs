@@ -41,7 +41,7 @@ pub async fn load_allowances(pool: &PgPool) -> Result<BTreeMap<TenantId, Allowan
         .collect())
 }
 
-fn gigabytes_to_bytes(gigabytes: i32) -> Option<DecompressedBytes> {
+pub(crate) fn gigabytes_to_bytes(gigabytes: i32) -> Option<DecompressedBytes> {
     u64::try_from(gigabytes)
         .ok()?
         .checked_mul(BYTES_PER_GIGABYTE)

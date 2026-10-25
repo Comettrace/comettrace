@@ -13,6 +13,11 @@
   --accent:var(--muted); --accent-foreground:var(--foreground);
   --border:#e4e4e7; --border-subtle:#efeff1; --input:#d4d4d8;
   --primary:#4f46e5; --primary-hover:#4338ca; --primary-foreground:#ffffff;
+  /* The fill a data mark wears. Its own token rather than --primary, because a chart must not
+     repaint when somebody picks a different accent in Preferences, and because the accent step
+     that suits a button sits outside the lightness band a mark needs on a dark surface. Both
+     values are steps of the one hue, checked against --card in their own mode. */
+  --series:#4f46e5;
   --accent-subtle:#eef2ff; --accent-text:#4338ca; --ring:#4f46e5;
   --destructive:#dc2626; --destructive-hover:#b91c1c; --destructive-foreground:#ffffff;
   --destructive-text:#b91c1c; --destructive-subtle:#fef2f2; --destructive-border:#fecaca;
@@ -41,6 +46,7 @@
   --foreground:#fafafa; --muted-foreground:#a1a1aa; --faint-foreground:#8b8b94;
   --border:#26262b; --border-subtle:#1b1b1f; --input:#3a3a41;
   --primary:#8b93ff; --primary-hover:#a5abff; --primary-foreground:#0a0a23;
+  --series:#7d85f8;
   --accent-subtle:#1b1c36; --accent-text:#a5b4fc; --ring:#8b93ff;
   --destructive:#dc2626; --destructive-hover:#ef4444; --destructive-foreground:#ffffff;
   --destructive-text:#fca5a5; --destructive-subtle:#2a1215; --destructive-border:#5c1d22;
@@ -106,6 +112,7 @@
   --color-border-subtle: var(--border-subtle);
   --color-input: var(--input);
   --color-primary: var(--primary);
+  --color-series: var(--series);
   --color-primary-hover: var(--primary-hover);
   --color-primary-foreground: var(--primary-foreground);
   --color-accent-subtle: var(--accent-subtle);

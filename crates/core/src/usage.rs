@@ -1,5 +1,9 @@
 use core::future::Future;
 
+use crate::explore::{ExploreError, ReadError, Window};
+use crate::membership::{Memberships, OrgRole, Whoami};
+use crate::secret::SessionToken;
+use crate::session::SessionStore;
 use crate::tenant::TenantId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -56,5 +60,307 @@ impl<T: UsageReader + Sync> UsageReader for &T {
 impl<T: UsageReader + Send + Sync> UsageReader for std::sync::Arc<T> {
     fn used(&self, tenant: TenantId) -> impl Future<Output = DecompressedBytes> + Send {
         self.as_ref().used(tenant)
+    }
+}
+
+/* One finished hour of ingestion. The hour is the grain the counters are rolled up at, so it is
+the grain this reads at too; a screen that wants days adds them up, which is cheaper than asking
+the store for a second shape of the same numbers. */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Consumed {
+    pub started_at_unix_nanos: u64,
+    pub ingested_bytes: u64,
+}
+
+/* What the usage screen is. The running total is read from the live counter rather than added up
+from the hours, because the hour in progress has not been rolled up yet and a month-to-date figure
+that lags by up to an hour is the one number here nobody would forgive.
+
+`included_bytes` is what the organisation's plan allows, and nothing when the plan sets no
+ceiling. A self-hosted deployment is on the seeded plan, which sets none. */
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Consumption {
+    pub ingested_bytes: u64,
+    pub included_bytes: Option<u64>,
+    pub hours: Vec<Consumed>,
+}
+
+pub trait UsageHistory {
+    fn hours(
+        &self,
+        org: TenantId,
+        window: Window,
+    ) -> impl Future<Output = Result<Vec<Consumed>, ReadError>> + Send;
+
+    /// What the plan allows, or nothing when it sets no ceiling.
+    fn included(
+        &self,
+        org: TenantId,
+    ) -> impl Future<Output = Result<Option<DecompressedBytes>, ReadError>> + Send;
+}
+
+impl<T: UsageHistory + Sync> UsageHistory for &T {
+    fn hours(
+        &self,
+        org: TenantId,
+        window: Window,
+    ) -> impl Future<Output = Result<Vec<Consumed>, ReadError>> + Send {
+        (*self).hours(org, window)
+    }
+
+    fn included(
+        &self,
+        org: TenantId,
+    ) -> impl Future<Output = Result<Option<DecompressedBytes>, ReadError>> + Send {
+        (*self).included(org)
+    }
+}
+
+impl<T: UsageHistory + Send + Sync> UsageHistory for std::sync::Arc<T> {
+    fn hours(
+        &self,
+        org: TenantId,
+        window: Window,
+    ) -> impl Future<Output = Result<Vec<Consumed>, ReadError>> + Send {
+        self.as_ref().hours(org, window)
+    }
+
+    fn included(
+        &self,
+        org: TenantId,
+    ) -> impl Future<Output = Result<Option<DecompressedBytes>, ReadError>> + Send {
+        self.as_ref().included(org)
+    }
+}
+
+/* The three answers this gives are the ones Explore gives — no session, not your organisation, a
+store out of reach — so it carries that error rather than a second enum spelling them again.
+
+Reading is any member's. What an organisation has ingested is not a secret kept from the people
+who put it there, and the screen that shows it sits beside the rest of the organisation settings
+that a member may read. */
+#[derive(Debug)]
+pub struct Metering<S, G, R, H> {
+    whoami: Whoami<S, G>,
+    live: R,
+    history: H,
+}
+
+impl<S, G, R, H> Metering<S, G, R, H>
+where
+    S: SessionStore,
+    G: Memberships,
+    R: UsageReader,
+    H: UsageHistory,
+{
+    pub fn new(whoami: Whoami<S, G>, live: R, history: H) -> Self {
+        Self {
+            whoami,
+            live,
+            history,
+        }
+    }
+
+    pub async fn consumption(
+        &self,
+        token: &SessionToken,
+        org: TenantId,
+        window: Window,
+    ) -> Result<Consumption, ExploreError> {
+        let who = self.whoami.of(token).await?;
+        if !who.may_act_in(org, OrgRole::Member) {
+            return Err(ExploreError::NotYours);
+        }
+        Ok(Consumption {
+            ingested_bytes: self.live.used(org).await.get(),
+            included_bytes: self
+                .history
+                .included(org)
+                .await?
+                .map(DecompressedBytes::get),
+            hours: self.history.hours(org, window).await?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use uuid::Uuid;
+
+    use super::{Consumed, DecompressedBytes, Metering, UsageHistory, UsageReader, Window};
+    use crate::clock::UnixSeconds;
+    use crate::credential::Email;
+    use crate::explore::{ExploreError, ReadError};
+    use crate::identity::AccountId;
+    use crate::membership::{Membership, Memberships, OrgRole, Whoami, WhoamiError};
+    use crate::secret::SessionToken;
+    use crate::session::{Session, SessionError, SessionStore};
+    use crate::tenant::TenantId;
+
+    const TOKEN: &str = "ct_ss_live";
+    const MINE: u128 = 1;
+    const THEIRS: u128 = 2;
+    const AN_HOUR: u64 = 3_600_000_000_000;
+
+    fn an_org(seed: u128) -> TenantId {
+        TenantId::new(Uuid::from_u128(seed))
+    }
+
+    fn a_month() -> Window {
+        Window::new(AN_HOUR, AN_HOUR * 800).expect("a window")
+    }
+
+    struct OneSession;
+
+    impl SessionStore for OneSession {
+        async fn issue(
+            &self,
+            _account: AccountId,
+            _org: Option<TenantId>,
+        ) -> Result<SessionToken, SessionError> {
+            Ok(SessionToken::from_plaintext(TOKEN))
+        }
+
+        async fn resolve(&self, token: &SessionToken) -> Result<Session, SessionError> {
+            if token.exposed() == TOKEN {
+                Ok(Session {
+                    account: AccountId::new(Uuid::from_u128(9)),
+                    email: Email::try_from("person@example.com").expect("an address"),
+                    org: None,
+                    expires_at: UnixSeconds::new(0),
+                })
+            } else {
+                Err(SessionError::Unknown)
+            }
+        }
+
+        async fn revoke(&self, _token: &SessionToken) -> Result<(), SessionError> {
+            Ok(())
+        }
+    }
+
+    struct MemberOfMine;
+
+    impl Memberships for MemberOfMine {
+        async fn of(&self, _account: AccountId) -> Result<Vec<Membership>, WhoamiError> {
+            Ok(vec![Membership {
+                org: an_org(MINE),
+                name: "Acme".into(),
+                role: OrgRole::Member,
+            }])
+        }
+    }
+
+    struct Live(u64);
+
+    impl UsageReader for Live {
+        async fn used(&self, _tenant: TenantId) -> DecompressedBytes {
+            DecompressedBytes::new(self.0)
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct Rolled {
+        asked: Mutex<Vec<TenantId>>,
+        included: Option<u64>,
+    }
+
+    impl UsageHistory for &Rolled {
+        async fn hours(&self, org: TenantId, _window: Window) -> Result<Vec<Consumed>, ReadError> {
+            self.asked.lock().expect("the lock").push(org);
+            Ok(vec![
+                Consumed {
+                    started_at_unix_nanos: AN_HOUR,
+                    ingested_bytes: 10,
+                },
+                Consumed {
+                    started_at_unix_nanos: AN_HOUR * 2,
+                    ingested_bytes: 20,
+                },
+            ])
+        }
+
+        async fn included(&self, _org: TenantId) -> Result<Option<DecompressedBytes>, ReadError> {
+            Ok(self.included.map(DecompressedBytes::new))
+        }
+    }
+
+    fn metering(live: u64, rolled: &Rolled) -> Metering<OneSession, MemberOfMine, Live, &Rolled> {
+        Metering::new(Whoami::new(OneSession, MemberOfMine), Live(live), rolled)
+    }
+
+    fn token() -> SessionToken {
+        SessionToken::from_plaintext(TOKEN)
+    }
+
+    /* The running total is the counter's, not the sum of the hours: the hour in progress has not
+    been rolled up, so adding the rows would read short by up to an hour. */
+    #[tokio::test]
+    async fn the_month_to_date_total_comes_from_the_live_counter() {
+        let rolled = Rolled {
+            included: Some(1_000),
+            ..Rolled::default()
+        };
+
+        let consumption = metering(999, &rolled)
+            .consumption(&token(), an_org(MINE), a_month())
+            .await
+            .expect("a member may read");
+
+        assert_eq!(consumption.ingested_bytes, 999);
+        assert_eq!(
+            consumption
+                .hours
+                .iter()
+                .map(|h| h.ingested_bytes)
+                .sum::<u64>(),
+            30,
+            "and the hours are the shape over time, which is a different number"
+        );
+        assert_eq!(consumption.included_bytes, Some(1_000));
+    }
+
+    #[tokio::test]
+    async fn a_plan_with_no_ceiling_includes_nothing_rather_than_zero() {
+        let rolled = Rolled::default();
+
+        let consumption = metering(999, &rolled)
+            .consumption(&token(), an_org(MINE), a_month())
+            .await
+            .expect("a member may read");
+
+        assert_eq!(
+            consumption.included_bytes, None,
+            "zero would read as a ceiling already passed"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_usage_of_another_organisation_is_refused_before_the_store_is_asked() {
+        let rolled = Rolled::default();
+
+        let refused = metering(999, &rolled)
+            .consumption(&token(), an_org(THEIRS), a_month())
+            .await;
+
+        assert_eq!(refused.err(), Some(ExploreError::NotYours));
+        assert!(rolled.asked.lock().expect("the lock").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_token_no_session_carries_reads_nothing() {
+        let rolled = Rolled::default();
+
+        let refused = metering(999, &rolled)
+            .consumption(
+                &SessionToken::from_plaintext("ct_ss_nope"),
+                an_org(MINE),
+                a_month(),
+            )
+            .await;
+
+        assert_eq!(refused.err(), Some(ExploreError::NoSession));
     }
 }
