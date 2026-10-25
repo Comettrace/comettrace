@@ -10,9 +10,10 @@ use anyhow::Context;
 use axum::Router;
 use clap::{Parser, Subcommand, ValueEnum};
 use comettrace_api::{
-    SessionCookie, SignInMethods, auth_router, catalogue_router, explore_router, health_router,
-    me_router, methods_router, oidc_router, org_router, password_router, reset_router,
-    roster_router, router, team_router, trace_server, web_router,
+    Repository, SessionCookie, SignInMethods, Site, Wired, auth_router, catalogue_router,
+    explore_router, health_router, integrations_router, me_router, methods_router, oidc_router,
+    org_router, password_router, reset_router, roster_router, router, team_router, trace_server,
+    web_router,
 };
 use comettrace_core::{
     AccountId, AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
@@ -744,7 +745,9 @@ async fn identity_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Resu
         Arc::clone(&sessions),
         PostgresMemberships::new(pool.clone()),
     ));
-    let mut routes = offered.merge(me_router(whoami));
+    let mut routes = offered
+        .merge(me_router(Arc::clone(&whoami)))
+        .merge(integrations_router(whoami, wired_up(config)));
 
     if config.local_password {
         let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
@@ -887,4 +890,22 @@ async fn roll_up_hourly(meter: Arc<Meter>, pool: PgPool) {
 fn until_the_next_hour(clock: SystemClock) -> Duration {
     let elapsed = clock.now().get() % SECONDS_PER_HOUR;
     Duration::from_secs(SECONDS_PER_HOUR - elapsed)
+}
+
+/* Read straight off the configuration, because that is where a token for somebody else's service
+belongs: the identity provider and the mail relay are already set there, and the control plane
+holds no secret it could leak. What reaches the screen is whether a thing is wired up, plus the
+settings that are not secrets — the Jira site and project, the GitHub repository. */
+fn wired_up(config: &Config) -> Wired {
+    Wired {
+        linear: config.linear.is_some(),
+        github: config.github.as_ref().map(|github| Repository {
+            repository: github.repository.clone(),
+        }),
+        jira: config.jira.as_ref().map(|jira| Site {
+            base_url: jira.base_url.clone(),
+            project_key: jira.project_key.clone(),
+        }),
+        mail: config.mail.is_some(),
+    }
 }

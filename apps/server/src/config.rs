@@ -28,6 +28,12 @@ pub struct Config {
     pub oidc: Option<OidcConfig>,
     #[serde(default)]
     pub mail: Option<MailConfig>,
+    #[serde(default)]
+    pub linear: Option<LinearConfig>,
+    #[serde(default)]
+    pub github: Option<GithubConfig>,
+    #[serde(default)]
+    pub jira: Option<JiraConfig>,
     #[serde(default = "yes")]
     pub local_password: bool,
     #[serde(default = "yes")]
@@ -90,6 +96,38 @@ pub struct OidcConfig {
     pub redirect_uri: String,
 }
 
+/* A project management tool is wired up by the deployment rather than by an organisation, which
+is where the identity provider and the mail relay already live. The alternative was a token
+encrypted at rest in the control plane, and that buys one thing — connecting from the screen —
+for the price of a key the deployment must never lose. Nothing here holds a secret the database
+could leak, and every field is a setting an operator can see in one file.
+
+Each block asks for the least that makes it usable, which is not the same amount for all three:
+a Linear key stands alone, a Jira token means nothing without the site it belongs to and the
+address that drew it, and a GitHub token wants to know which repository it is for. */
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinearConfig {
+    pub token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GithubConfig {
+    pub token: String,
+    /// `owner/name`, the repository an issue is opened in when nobody names another.
+    pub repository: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JiraConfig {
+    /// The site, such as `https://acme.atlassian.net`.
+    pub base_url: String,
+    /// The address the api token was drawn for; Jira Cloud authenticates the pair.
+    pub email: String,
+    pub token: String,
+    /// The project key an issue is opened under, such as `OPS`.
+    pub project_key: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TenantKey {
     pub id: Uuid,
@@ -128,6 +166,9 @@ impl Default for Config {
             tenants: Vec::new(),
             oidc: None,
             mail: None,
+            linear: None,
+            github: None,
+            jira: None,
             local_password: true,
             cookie_secure: true,
             after_sign_in: landing(),
@@ -295,6 +336,73 @@ mod tests {
 
             assert_eq!(mail.relay, "mail.example.com");
             assert_eq!(mail.base_url, "https://app.example.com");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn a_deployment_wired_to_no_tracker_declares_none_of_the_three() {
+        figment::Jail::expect_with(|_jail| {
+            let config: Config = figment().extract()?;
+
+            assert_eq!(config.linear, None);
+            assert_eq!(config.github, None);
+            assert_eq!(config.jira, None);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn a_tracker_asks_for_the_least_that_makes_it_usable() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                FILE,
+                r#"
+                [linear]
+                token = "lin_api_secret"
+
+                [github]
+                token = "ghp_secret"
+                repository = "acme/storefront"
+
+                [jira]
+                base_url = "https://acme.atlassian.net"
+                email = "operator@example.com"
+                token = "jira_secret"
+                project_key = "OPS"
+                "#,
+            )?;
+
+            let config: Config = figment().extract()?;
+
+            assert_eq!(config.linear.expect("a key").token, "lin_api_secret");
+            assert_eq!(
+                config.github.expect("a repository").repository,
+                "acme/storefront"
+            );
+            let jira = config.jira.expect("a site");
+            assert_eq!(jira.base_url, "https://acme.atlassian.net");
+            assert_eq!(jira.project_key, "OPS");
+            Ok(())
+        });
+    }
+
+    /* The spelling the deployment README promises, which is the part somebody types by hand and
+    the part a typo is silent in: a block and its field, split on the double underscore. */
+    #[test]
+    fn a_tracker_is_declared_by_environment_variable_too() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("COMETTRACE_JIRA__BASE_URL", "https://acme.atlassian.net");
+            jail.set_env("COMETTRACE_JIRA__EMAIL", "operator@example.com");
+            jail.set_env("COMETTRACE_JIRA__TOKEN", "jira_secret");
+            jail.set_env("COMETTRACE_JIRA__PROJECT_KEY", "OPS");
+            jail.set_env("COMETTRACE_LINEAR__TOKEN", "lin_api_secret");
+
+            let config: Config = figment().extract()?;
+
+            assert_eq!(config.jira.expect("a site").project_key, "OPS");
+            assert_eq!(config.linear.expect("a key").token, "lin_api_secret");
+            assert_eq!(config.github, None);
             Ok(())
         });
     }
