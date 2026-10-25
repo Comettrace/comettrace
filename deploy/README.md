@@ -123,6 +123,28 @@ organisation to own. It prints no reset token in that case: there is no
 password to set, and `/auth/reset/*` is not mounted when local passwords
 are off.
 
+## Adding somebody
+
+Settings > Organization > Members does it: an owner or an administrator
+invites an address, and gets back one link that sets that account's
+password. The link lasts 24 hours and can be spent once, and it is shown
+once — nothing can read it back, because the control plane keeps only its
+digest. Send it through whatever channel you already trust.
+
+An address that already has an account here joins without a link: it signs
+in with the password it already chose. Nothing on that screen can set a
+password for an account somebody else signs in with.
+
+Somebody who has lost their password asks for a link on the sign-in
+screen, which needs the mail relay. Without one, print a link yourself:
+
+```sh
+docker compose exec server comettrace reset-password --email somebody@example.com
+```
+
+`create-account` and `grant-role` still do the same job from the command
+line, which is how you add the first person when nobody can sign in yet.
+
 ## Multi-tenancy
 
 Organisations exist and every span carries one, but a self-hosted

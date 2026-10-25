@@ -135,7 +135,7 @@ where
     .map(|_| ())
 }
 
-fn read_role(spelling: &str) -> Option<OrgRole> {
+pub(crate) fn read_role(spelling: &str) -> Option<OrgRole> {
     match spelling {
         "owner" => Some(OrgRole::Owner),
         "admin" => Some(OrgRole::Admin),

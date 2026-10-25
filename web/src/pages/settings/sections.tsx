@@ -11,8 +11,10 @@ import { Segmented } from '@/components/ui/segmented'
 import { Switch } from '@/components/ui/switch'
 import { Alert, Avatar, Table, Td, Th, Tr } from '@/components/ui/misc'
 import { because } from '@/auth/client'
-import { useOrganizations } from '@/auth/session'
-import { useExceptionAlerts, useIngestKeys, useMembers, useProfile, useProjects, useReadKeys, useTeams } from '@/data/organization'
+import { type Role } from '@/auth/api'
+import { useAccount, useOrganizations } from '@/auth/session'
+import { useExceptionAlerts, useIngestKeys, useProfile, useProjects, useReadKeys, useTeams } from '@/data/organization'
+import { initialsOf, mayChange, mayHandOut, useGrantRole, useInvite, useMembers, useRemoveMember, type Member, type Welcomed } from '@/data/members'
 import { orgNameProblem, useOrgCard, useRenameOrg, type OrgCard } from '@/data/orgs'
 import { stamp } from '@/lib/format'
 import { useTheme, type ThemePref } from '@/lib/theme'
@@ -232,47 +234,107 @@ export function OrgGeneral() {
 }
 
 export function Members() {
-  const [list, setList] = useState(useMembers())
-  const [open, setOpen] = useState(false)
-  const [email, setEmail] = useState('nadia@acme.dev')
-  const [role, setRole] = useState('member')
-  const [link, setLink] = useState<string | null>(null)
+  const { active } = useOrganizations()
+  const me = useAccount()
+  const { members, loading } = useMembers()
+  const grant = useGrantRole()
+  const remove = useRemoveMember()
+  const [invite, setInvite] = useState(false)
+  const mine = active?.role
+  const roll = members ?? []
+  const administered = roll.filter((m) => m.role !== 'member').length
+
+  const change = (member: Member, role: Role) =>
+    grant.mutate({ account: member.account, role }, { onSuccess: saved, onError: (error) => toast.error(because(error, 'The role was not changed')) })
+
+  const drop = (member: Member) =>
+    remove.mutate(member.account, {
+      onSuccess: () => toast(`${member.email} is no longer a member`),
+      onError: (error) => toast.error(because(error, 'Nobody was removed')),
+    })
+
   return (
     <>
-      <H title="Members" sub={`${list.length} members · 1 admin`}><Button variant="primary" onClick={() => setOpen(true)}><Plus />Invite member</Button></H>
+      <H title="Members" sub={members ? `${roll.length} ${roll.length === 1 ? 'member' : 'members'} · ${administered} can administer it` : 'Who belongs to the organization.'}>
+        {mine === 'owner' || mine === 'admin' ? <Button variant="primary" onClick={() => setInvite(true)}><Plus />Invite member</Button> : null}
+      </H>
       <Card className="overflow-x-auto">
         <Table aria-label="Members">
-          <thead><tr><Th>Member</Th><Th className="w-[160px]">Role</Th><Th className="w-[130px]">Joined</Th><Th className="w-[200px]"><span className="sr-only">Actions</span></Th></tr></thead>
-          <tbody>{list.map((m) => (
-            <Tr key={m.email}>
-              <Td className="h-11"><span className="inline-flex items-center gap-2.5"><Avatar initials={m.name.split(' ').map((x) => x[0]).join('').slice(0, 2)} /><span className="flex flex-col leading-4"><span className="font-semibold">{m.name}{m.you ? <Badge variant="outline" className="ml-2">you</Badge> : null}</span><span className="text-caption text-muted-foreground">{m.email}</span></span></span></Td>
-              <Td>{m.you ? <span className="inline-flex items-center gap-1.5 text-control text-muted-foreground"><Lock className="size-3" aria-hidden />admin · last admin</span> : <NativeSelect aria-label={`Role for ${m.email}`} className="h-7 w-[130px]" value={m.role} onChange={(e) => setList((l) => l.map((x) => (x.email === m.email ? { ...x, role: e.target.value } : x)))}><option>member</option><option>admin</option></NativeSelect>}</Td>
-              <Td className="font-mono text-control">{m.joined}</Td>
-              <Td numeric>{m.you ? null : <span className="inline-flex gap-1"><Button variant="ghost" size="sm" onClick={() => toast.success('Reset link created', { description: 'Shown once in a real install.' })}>Reset password</Button><Button variant="ghost" size="sm" className="text-destructive-text" onClick={() => { setList((l) => l.filter((x) => x.email !== m.email)); toast(`${m.email} removed`) }}>Remove</Button></span>}</Td>
-            </Tr>
-          ))}</tbody>
+          <thead><tr><Th>Member</Th><Th className="w-[160px]">Role</Th><Th className="w-[190px]">Joined</Th><Th className="w-[110px]"><span className="sr-only">Actions</span></Th></tr></thead>
+          <tbody>{roll.map((m) => {
+            const you = m.account === me?.account
+            const editable = !you && mayChange(mine, m.role)
+            return (
+              <Tr key={m.account}>
+                <Td className="h-11"><span className="inline-flex items-center gap-2.5"><Avatar initials={initialsOf(m.email)} /><span className="font-semibold">{m.email}</span>{you ? <Badge variant="outline">you</Badge> : null}</span></Td>
+                <Td>{editable ? (
+                  <NativeSelect aria-label={`Role for ${m.email}`} className="h-7 w-[130px]" value={m.role} disabled={grant.isPending} onChange={(e) => change(m, e.target.value as Role)}>
+                    {mayHandOut(mine).map((role) => <option key={role} value={role}>{role}</option>)}
+                  </NativeSelect>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-control text-muted-foreground"><Lock className="size-3" aria-hidden />{m.role}</span>
+                )}</Td>
+                <Td className="font-mono text-control">{stamp(m.joined_at_ms)}</Td>
+                <Td numeric>{editable ? <Button variant="ghost" size="sm" className="text-destructive-text" disabled={remove.isPending} onClick={() => drop(m)}>Remove</Button> : null}</Td>
+              </Tr>
+            )
+          })}</tbody>
         </Table>
+        {roll.length === 0 ? <p className="m-0 px-4 py-3 text-control text-muted-foreground">{loading ? 'Reading the members…' : members ? 'Nobody belongs to this organization.' : 'The members could not be read.'}</p> : null}
       </Card>
-      <p className="m-0 text-caption text-muted-foreground">Self-hosted: invitations are links you send yourself. Cloud sends the email for you.</p>
-      <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setLink(null) }}>
-        <DialogContent title={link ? `Invitation link for ${email}` : 'Invite member'} description={link ? `Role: ${role}. Send it through your own channel.` : 'You get a link that works once.'}>
-          {link ? (
-            <>
-              <Alert variant="warning" icon={<AlertTriangle />}>This link is shown once. Copy it before closing.</Alert>
-              <div className="flex gap-2"><Input readOnly mono value={link} className="bg-muted text-[12px]" aria-label="Invitation link" /><Button variant="primary" onClick={() => { void navigator.clipboard?.writeText(link); toast.success('Copied') }}><Copy />Copy</Button></div>
-              <DialogFooter><Button onClick={() => { setOpen(false); setLink(null) }}>Done</Button></DialogFooter>
-            </>
-          ) : (
-            <form className="flex flex-col gap-4" onSubmit={(e) => { e.preventDefault(); setList((l) => [...l, { email, name: email.split('@')[0], role, joined: 'invited' }]); setLink(`https://comettrace.acme.dev/invite/cmt_inv_${Math.random().toString(36).slice(2, 14)}`) }}>
-              <Field label="Email" htmlFor="iv-e"><Input id="iv-e" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus /></Field>
-              <Field label="Role"><div><Segmented label="Role" value={role} onChange={setRole} options={[{ value: 'member', label: 'member' }, { value: 'admin', label: 'admin' }]} /></div></Field>
-              <span className="text-caption text-muted-foreground">{role === 'admin' ? 'Also manages members, projects, keys and billing.' : 'Reads traces, logs and metrics, and posts incidents.'}</span>
-              <DialogFooter><Button type="button" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Create invitation link</Button></DialogFooter>
-            </form>
-          )}
-        </DialogContent>
-      </Dialog>
+      <p className="m-0 text-caption text-muted-foreground">Nobody edits their own row, and only an owner hands out the owner role or changes somebody who holds it. Somebody who has lost their password asks for a link on the sign-in screen.</p>
+      <InviteMember open={invite} onOpenChange={setInvite} mine={mine} />
     </>
+  )
+}
+
+function InviteMember({ open, onOpenChange, mine }: { open: boolean; onOpenChange: (o: boolean) => void; mine: Role | undefined }) {
+  const invite = useInvite()
+  const [email, setEmail] = useState('')
+  const [role, setRole] = useState<Role>('member')
+  const [welcomed, setWelcomed] = useState<Welcomed | null>(null)
+  /* The server hands back a token, not a link: the path that spends it belongs to this app, and
+     the server does not know what address the browser reached it on. */
+  const link = welcomed?.invite_token ? `${window.location.origin}/reset?token=${welcomed.invite_token}` : null
+
+  const close = (o: boolean) => {
+    onOpenChange(o)
+    if (!o) { setWelcomed(null); setEmail(''); setRole('member') }
+  }
+
+  const send = (e: React.FormEvent) => {
+    e.preventDefault()
+    invite.mutate({ email, role }, { onSuccess: setWelcomed, onError: (error) => toast.error(because(error, 'Nobody was invited')) })
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={close}>
+      <DialogContent
+        title={welcomed ? `${welcomed.member.email} belongs to the organization` : 'Invite member'}
+        description={welcomed ? (link ? `Role: ${welcomed.member.role}. Send the link through your own channel.` : `Role: ${welcomed.member.role}. It signs in with the password it already has.`) : 'An address that has no account here gets one, and a link that sets its password once.'}
+      >
+        {welcomed ? (
+          <>
+            {link ? (
+              <>
+                <Alert variant="warning" icon={<AlertTriangle />}>This link is shown once and can be spent once. Copy it before closing.</Alert>
+                <div className="flex gap-2"><Input readOnly mono value={link} className="bg-muted text-[12px]" aria-label="Invitation link" /><Button variant="primary" onClick={() => { void navigator.clipboard?.writeText(link); toast.success('Copied') }}><Copy />Copy</Button></div>
+              </>
+            ) : (
+              <Alert variant="info" icon={<ShieldCheck />}>An account already carried this address, so nothing here can set a password for it.</Alert>
+            )}
+            <DialogFooter><Button onClick={() => close(false)}>Done</Button></DialogFooter>
+          </>
+        ) : (
+          <form className="flex flex-col gap-4" onSubmit={send}>
+            <Field label="Email" htmlFor="iv-e"><Input id="iv-e" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="somebody@example.com" autoFocus /></Field>
+            <Field label="Role"><div><Segmented label="Role" value={role} onChange={(chosen) => setRole(chosen as Role)} options={mayHandOut(mine).map((one) => ({ value: one, label: one }))} /></div></Field>
+            <span className="text-caption text-muted-foreground">{role === 'owner' ? 'Answers for the organization: everything an administrator does, and the owner role itself.' : role === 'admin' ? 'Also manages members, projects, keys and billing.' : 'Reads traces, logs and metrics, and posts incidents.'}</span>
+            <DialogFooter><Button type="button" onClick={() => close(false)}>Cancel</Button><Button variant="primary" type="submit" disabled={email.trim().length === 0 || invite.isPending}>Invite</Button></DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   )
 }
 
