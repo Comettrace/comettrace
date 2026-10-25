@@ -41,6 +41,7 @@ const SUMMARIES: &str = "SELECT \
      AND (? = 0 OR project_id = ?) \
    GROUP BY trace_id \
    HAVING (? = '' OR countIf(service_name = ?) > 0) \
+     AND (? = '' OR countIf(positionCaseInsensitive(name, ?) > 0) > 0) \
      AND (? = 0 OR errors > 0) \
      AND duration >= ? \
    ORDER BY {order} DESC \
@@ -158,7 +159,11 @@ impl SpanReader for ClickhouseReader {
         tenant: TenantId,
         filter: &TraceFilter,
     ) -> Result<Vec<TraceSummary>, ReadError> {
+        /* Both filters are switched off by an empty string rather than by a flag, because an
+        empty name is not something anybody can be looking for. A service, likewise: the spans
+        carry one always, so no span can be named by the absence of it. */
         let service = filter.service.as_deref().unwrap_or_default();
+        let name = filter.name.as_deref().unwrap_or_default();
         let rows: Vec<SummaryRow> = self
             .client
             .query(&SUMMARIES.replace("{order}", ordering(filter.order)))
@@ -169,6 +174,8 @@ impl SpanReader for ClickhouseReader {
             .bind(uuid_of(filter.project))
             .bind(service)
             .bind(service)
+            .bind(name)
+            .bind(name)
             .bind(u8::from(filter.only_errors))
             .bind(nanos(filter.at_least_nanos.unwrap_or_default()))
             .bind(filter.limit())

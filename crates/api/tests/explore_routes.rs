@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::http::header::COOKIE;
@@ -8,8 +8,8 @@ use comettrace_api::explore_router;
 use comettrace_core::{
     AccountId, Explore, Membership, Memberships, OrgRole, ProjectId, ReadError, ServiceSummary,
     Session, SessionError, SessionStore, SessionToken, Span, SpanEvent, SpanId, SpanKind,
-    SpanReader, SpanStatus, TenantId, TraceFilter, TraceId, TraceSummary, UnixSeconds, Whoami,
-    WhoamiError, Window,
+    SpanReader, SpanStatus, TenantId, TraceFilter, TraceId, TraceOrder, TraceSummary, UnixSeconds,
+    Whoami, WhoamiError, Window,
 };
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -405,4 +405,105 @@ async fn an_exception_on_a_span_reaches_the_waterfall_with_its_place_in_it() {
         trace["spans"][0]["events"].as_array().map(Vec::len),
         Some(0)
     );
+}
+
+/* A reader that keeps what it was asked, so the test can say what reached the store rather than
+what the route appeared to accept. The screen's controls are only real if they arrive here. */
+#[derive(Debug, Default)]
+struct Remembering(Mutex<Option<TraceFilter>>);
+
+impl SpanReader for Remembering {
+    async fn services(
+        &self,
+        _tenant: TenantId,
+        _window: Window,
+        _project: Option<ProjectId>,
+    ) -> Result<Vec<ServiceSummary>, ReadError> {
+        Ok(Vec::new())
+    }
+
+    async fn traces(
+        &self,
+        _tenant: TenantId,
+        filter: &TraceFilter,
+    ) -> Result<Vec<TraceSummary>, ReadError> {
+        *self.0.lock().expect("the lock") = Some(filter.clone());
+        Ok(Vec::new())
+    }
+
+    async fn trace(&self, _tenant: TenantId, _id: TraceId) -> Result<Vec<Span>, ReadError> {
+        Ok(Vec::new())
+    }
+}
+
+/* The screen used to filter the rows it had already fetched, which meant "errors only" showed
+the errors among fifty traces rather than the errors in the window. This is the test that says
+every control reaches the store instead. */
+#[tokio::test]
+async fn every_filter_the_screen_offers_reaches_the_store() {
+    let asked = Arc::new(Remembering::default());
+    let uri = format!(
+        "/api/orgs/{}/traces?from=1000&to=2000&service=payments&name=psp.charge\
+         &errors=true&at_least_us=1500&order=duration&limit=120&project={}",
+        org(MINE),
+        org(7)
+    );
+
+    let (status, _) = served(Arc::clone(&asked), looking(&uri, Some(&session()), true)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    let filter = asked.0.lock().expect("the lock").clone().expect("a filter");
+    assert_eq!(filter.window.from_unix_nanos(), 1_000_000_000);
+    assert_eq!(filter.window.to_unix_nanos(), 2_000_000_000);
+    assert_eq!(filter.service.as_deref(), Some("payments"));
+    assert_eq!(filter.name.as_deref(), Some("psp.charge"));
+    assert!(filter.only_errors);
+    assert_eq!(filter.at_least_nanos, Some(1_500_000));
+    assert_eq!(filter.order, TraceOrder::Duration);
+    assert_eq!(filter.limit(), 120);
+    assert_eq!(filter.project, Some(ProjectId::new(Uuid::from_u128(7))));
+}
+
+/* A box somebody typed into and then emptied is no search. Sent as an empty string, it must not
+become a filter that matches every span name — or nothing at all. */
+#[tokio::test]
+async fn a_name_that_was_typed_and_cleared_is_not_a_filter() {
+    let asked = Arc::new(Remembering::default());
+    let uri = format!(
+        "/api/orgs/{}/traces?from=1000&to=2000&name=%20%20",
+        org(MINE)
+    );
+
+    let (status, _) = served(Arc::clone(&asked), looking(&uri, Some(&session()), true)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        asked
+            .0
+            .lock()
+            .expect("the lock")
+            .clone()
+            .expect("a filter")
+            .name,
+        None
+    );
+}
+
+/* Nothing asked for is the default, so a screen that sends only a window gets the newest traces
+of that window rather than a refusal or an arbitrary order. */
+#[tokio::test]
+async fn a_window_on_its_own_filters_nothing_and_orders_by_when_it_started() {
+    let asked = Arc::new(Remembering::default());
+    let uri = format!("/api/orgs/{}/traces?from=1000&to=2000", org(MINE));
+
+    let (status, _) = served(Arc::clone(&asked), looking(&uri, Some(&session()), true)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    let filter = asked.0.lock().expect("the lock").clone().expect("a filter");
+    assert_eq!(filter.service, None);
+    assert_eq!(filter.name, None);
+    assert!(!filter.only_errors);
+    assert_eq!(filter.at_least_nanos, None);
+    assert_eq!(filter.order, TraceOrder::Started);
+    assert_eq!(filter.project, None);
 }

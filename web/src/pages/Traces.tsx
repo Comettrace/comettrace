@@ -8,20 +8,34 @@ import { Segmented } from '@/components/ui/segmented'
 import { Switch } from '@/components/ui/switch'
 import { Kbd, Table, Td, Th } from '@/components/ui/misc'
 import { EmptyState, PageHeader, ServiceDot } from '@/components/cmt/bits'
-import { useTraces } from '@/data/traces'
+import { ANY, COUNTS, RANGES, useTraces, type Order, type Sift } from '@/data/traces'
+import { useServiceNames } from '@/data/services'
+import { because } from '@/auth/client'
 import { shortId } from '@/lib/format'
+import { useSettled } from '@/lib/settle'
 import { cn } from '@/lib/utils'
 
+/* Everything here is asked of the server. The screen used to fetch the newest fifty traces and
+   sift those, which made every control narrower than it looked: "errors only" showed the errors
+   among fifty, and the service list offered only the services those fifty happened to mention. */
 export function Traces() {
   const navigate = useNavigate()
-  const [q, setQ] = useState('')
-  const [svc, setSvc] = useState('any')
-  const [errOnly, setErrOnly] = useState(false)
+  const [sift, setSift] = useState<Sift>(ANY)
+  const [typed, setTyped] = useState('')
   const [density, setDensity] = useState<'compact' | 'comfy'>('compact')
   const [cursor, setCursor] = useState(0)
-  const traces = useTraces()
-  const services = [...new Set(traces.map((t) => t.svc))]
-  const rows = useMemo(() => traces.filter((t) => (!errOnly || t.errors > 0) && (svc === 'any' || t.svc === svc) && t.root.toLowerCase().includes(q.toLowerCase())), [traces, q, svc, errOnly])
+  /* The name goes to the server, so it waits for typing to stop. Held separately from the rest
+     of the sift because the box has to stay responsive while the query does not. */
+  const name = useSettled(typed)
+  const asked = useMemo(() => ({ ...sift, name }), [sift, name])
+  const { rows, loading, failed } = useTraces(asked)
+  /* Over the window being browsed, so the list offers the services that actually have traffic
+     in it rather than the ones the current page mentions. */
+  const { names, unreachable } = useServiceNames(sift.rangeMs)
+  const change = (part: Partial<Sift>) => { setSift((was) => ({ ...was, ...part })); setCursor(0) }
+  const clear = () => { setTyped(''); setSift((was) => ({ ...ANY, rangeMs: was.rangeMs, order: was.order, limit: was.limit })) }
+  const sifting = Boolean(sift.service || typed || sift.errorsOnly || sift.atLeastMs)
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement
@@ -33,24 +47,46 @@ export function Traces() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [rows, cursor, navigate])
+
   const copy = (id: string) => { void navigator.clipboard?.writeText(id); toast.success('Trace id copied', { description: shortId(id) }) }
+  const range = RANGES.find(([, ms]) => ms === sift.rangeMs)?.[0] ?? 'a window'
+
   return (
     <>
-      <PageHeader title="Traces" meta="Newest first">
+      <PageHeader title="Traces" meta={sift.order === 'started' ? `Newest first · last ${range}` : `Last ${range}`}>
         <Segmented label="Row density" value={density} onChange={setDensity} options={[{ value: 'compact', label: 'Compact' }, { value: 'comfy', label: 'Comfortable' }]} />
         <span className="hidden items-center gap-1 text-caption text-muted-foreground lg:inline-flex"><Kbd>J</Kbd><Kbd>K</Kbd>move<Kbd>↵</Kbd>open</span>
       </PageHeader>
       <div className="flex flex-wrap items-center gap-2" role="search">
-        <NativeSelect aria-label="Service" value={svc} onChange={(e) => setSvc(e.target.value)} className="w-[200px]">
-          <option value="any">Service: any</option>
-          {services.map((s) => <option key={s} value={s}>{s}</option>)}
+        <NativeSelect aria-label="Time range" value={sift.rangeMs} onChange={(e) => change({ rangeMs: Number(e.target.value) })} className="w-[150px]">
+          {RANGES.map(([label, ms]) => <option key={ms} value={ms}>Last {label}</option>)}
         </NativeSelect>
-        <InputGroup className="w-[300px] max-w-full"><Search aria-hidden /><input aria-label="Span name" placeholder="Span name, e.g. POST /api/checkout" value={q} onChange={(e) => setQ(e.target.value)} /></InputGroup>
-        <Switch checked={errOnly} onCheckedChange={setErrOnly} label="Errors only" />
-        <Button variant="ghost" size="sm" disabled={!q && svc === 'any' && !errOnly} onClick={() => { setQ(''); setSvc('any'); setErrOnly(false) }}>Clear</Button>
+        <NativeSelect aria-label="Service" value={sift.service} onChange={(e) => change({ service: e.target.value })} className="w-[190px]">
+          <option value="">Service: any</option>
+          {names.map((s) => <option key={s} value={s}>{s}</option>)}
+        </NativeSelect>
+        <InputGroup className="w-[280px] max-w-full"><Search aria-hidden /><input aria-label="Span name" placeholder="Span name, e.g. psp.charge" value={typed} onChange={(e) => { setTyped(e.target.value); setCursor(0) }} /></InputGroup>
+        <NativeSelect aria-label="Minimum duration" value={sift.atLeastMs} onChange={(e) => change({ atLeastMs: Number(e.target.value) })} className="w-[160px]">
+          <option value={0}>Any duration</option>
+          {[100, 500, 1000, 5000].map((ms) => <option key={ms} value={ms}>Slower than {ms < 1000 ? `${ms} ms` : `${ms / 1000} s`}</option>)}
+        </NativeSelect>
+        <NativeSelect aria-label="Order" value={sift.order} onChange={(e) => change({ order: e.target.value as Order })} className="w-[160px]">
+          <option value="started">Newest first</option>
+          <option value="duration">Slowest first</option>
+          <option value="spans">Most spans first</option>
+        </NativeSelect>
+        <Switch checked={sift.errorsOnly} onCheckedChange={(on) => change({ errorsOnly: on })} label="Errors only" />
+        <Button variant="ghost" size="sm" disabled={!sifting} onClick={clear}>Clear</Button>
       </div>
-      {rows.length === 0 ? (
-        <EmptyState title="No traces match" actions={<Button size="sm" onClick={() => { setQ(''); setSvc('any'); setErrOnly(false) }}>Clear filters</Button>}>Try a shorter span name, or widen the time range.</EmptyState>
+      {/* The service list and the traces come from two reads, and one can fail without the
+          other: saying so beats a dropdown that silently offers nothing. */}
+      {unreachable ? <p className="m-0 text-caption text-muted-foreground">{because(unreachable, 'The services could not be listed, so that filter is empty')}</p> : null}
+      {failed ? (
+        <EmptyState title="The traces could not be read">{because(failed, 'The span store did not answer')}</EmptyState>
+      ) : rows.length === 0 ? (
+        <EmptyState title={loading ? 'Reading the traces…' : sifting ? 'No traces match' : 'No traces in this window'} actions={sifting ? <Button size="sm" onClick={clear}>Clear filters</Button> : null}>
+          {loading ? 'Asking the span store.' : sifting ? 'Try a shorter span name, a wider window, or no service.' : 'Nothing arrived in the window you are looking at. Try a wider one.'}
+        </EmptyState>
       ) : (
         <div className="-mx-4 overflow-x-auto border-t md:-mx-5">
           <Table aria-label="Traces">
@@ -69,7 +105,17 @@ export function Traces() {
               ))}
             </tbody>
           </Table>
-          <div className="px-5 py-3"><Button size="sm">Load older</Button></div>
+          {/* How many the server was asked for, rather than a "Load older" that paged nowhere.
+              Reaching the number means there are probably more, and the next step is a narrower
+              window or a bigger count — both of which are here. */}
+          <div className="flex flex-wrap items-center gap-3 px-5 py-3">
+            <span className="text-caption text-muted-foreground">
+              {rows.length === sift.limit ? `The newest ${sift.limit} of this window.` : `${rows.length} trace${rows.length === 1 ? '' : 's'} in this window.`}
+            </span>
+            <NativeSelect aria-label="How many to read" value={sift.limit} onChange={(e) => change({ limit: Number(e.target.value) })} className="h-7 w-[130px]">
+              {COUNTS.map((n) => <option key={n} value={n}>Read {n}</option>)}
+            </NativeSelect>
+          </div>
         </div>
       )}
     </>

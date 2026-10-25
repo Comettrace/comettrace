@@ -740,6 +740,153 @@ async fn the_trace_list_never_crosses_tenants() {
     assert_eq!(&*ours[0].root_service, "checkout");
 }
 
+/* The box on the Traces screen. It matches any span of a trace, not only its root: somebody
+hunting `psp.charge` wants the traces it failed inside, and those are named after whatever
+request came in at the top. */
+#[tokio::test]
+async fn the_trace_list_can_be_narrowed_to_a_span_name_anywhere_in_it() {
+    let Some((url, reader)) = a_written_store("read_trace_names").await else {
+        return;
+    };
+    let store = open_span_store(&settings_for(&url, "read_trace_names"), FixedClock::at(NOW))
+        .await
+        .expect("a sink")
+        .sink;
+    let tenant = TenantId::new(Uuid::from_u128(1));
+    let charging = a_span(1, "checkout");
+    let deep = Span {
+        name: "psp.charge".into(),
+        ..a_child(
+            2,
+            "payments",
+            &charging,
+            charging.start_unix_nanos + 1,
+            charging.end_unix_nanos,
+        )
+    };
+    let unrelated = a_span(5, "checkout");
+    store
+        .accept(
+            Scope::of(tenant),
+            vec![charging.clone(), deep, unrelated.clone()],
+        )
+        .await
+        .expect("a batch is accepted");
+    store.flush().await.expect("the batch commits");
+
+    let mut named = a_wide_filter();
+    named.name = Some("psp.charge".into());
+    let found = reader.traces(tenant, &named).await.expect("the list reads");
+
+    assert_eq!(found.len(), 1, "only the trace that contains that span");
+    assert_eq!(found[0].trace_id, charging.trace_id);
+    assert_eq!(
+        &*found[0].root_name, "work",
+        "the trace is still named by its root, not by what was searched for"
+    );
+}
+
+/* Part of a name, and the case does not matter. A reader typing `PSP` into a box is not spelling
+an exact span name, and one typing half of one should still find it. */
+#[tokio::test]
+async fn a_span_name_matches_on_part_of_it_and_ignores_case() {
+    let Some((url, reader)) = a_written_store("read_trace_part_name").await else {
+        return;
+    };
+    let store = open_span_store(
+        &settings_for(&url, "read_trace_part_name"),
+        FixedClock::at(NOW),
+    )
+    .await
+    .expect("a sink")
+    .sink;
+    let tenant = TenantId::new(Uuid::from_u128(1));
+    let span = Span {
+        name: "PSP.Charge".into(),
+        ..a_span(1, "checkout")
+    };
+    store
+        .accept(Scope::of(tenant), vec![span.clone()])
+        .await
+        .expect("a batch is accepted");
+    store.flush().await.expect("the batch commits");
+
+    for typed in ["psp", "CHARGE", "p.ch"] {
+        let mut named = a_wide_filter();
+        named.name = Some(typed.into());
+        let found = reader.traces(tenant, &named).await.expect("the list reads");
+        assert_eq!(found.len(), 1, "{typed} should have found it");
+    }
+
+    let mut missing = a_wide_filter();
+    missing.name = Some("stripe".into());
+    assert!(
+        reader
+            .traces(tenant, &missing)
+            .await
+            .expect("the list reads")
+            .is_empty(),
+        "a name nothing carries finds nothing"
+    );
+}
+
+/* A name and a service together narrow, rather than one quietly replacing the other. */
+#[tokio::test]
+async fn a_name_and_a_service_both_have_to_match() {
+    let Some((url, reader)) = a_written_store("read_trace_name_and_service").await else {
+        return;
+    };
+    let store = open_span_store(
+        &settings_for(&url, "read_trace_name_and_service"),
+        FixedClock::at(NOW),
+    )
+    .await
+    .expect("a sink")
+    .sink;
+    let tenant = TenantId::new(Uuid::from_u128(1));
+    let root = a_span(1, "checkout");
+    let charge = Span {
+        name: "psp.charge".into(),
+        ..a_child(
+            2,
+            "payments",
+            &root,
+            root.start_unix_nanos + 1,
+            root.end_unix_nanos,
+        )
+    };
+    store
+        .accept(Scope::of(tenant), vec![root.clone(), charge])
+        .await
+        .expect("a batch is accepted");
+    store.flush().await.expect("the batch commits");
+
+    let both = |service: &str, name: &str| {
+        let mut filter = a_wide_filter();
+        filter.service = Some(service.into());
+        filter.name = Some(name.into());
+        filter
+    };
+
+    assert_eq!(
+        reader
+            .traces(tenant, &both("payments", "psp.charge"))
+            .await
+            .expect("the list reads")
+            .len(),
+        1,
+        "the trace has both"
+    );
+    assert!(
+        reader
+            .traces(tenant, &both("payments", "nothing.here"))
+            .await
+            .expect("the list reads")
+            .is_empty(),
+        "the service matches and the name does not, so neither does the trace"
+    );
+}
+
 fn a_wide_filter() -> TraceFilter {
     TraceFilter::over(
         Window::new(1_600_000_000_000_000_000, 1_800_000_000_000_000_000).expect("a window"),
