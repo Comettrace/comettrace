@@ -1,7 +1,11 @@
 use comettrace_core::{
-    AccountId, Connecting, ConnectionError, Connections, NoVault, Provider, ProviderToken, TenantId,
+    AccountId, Attempt, Attempts, Connecting, ConnectionError, Connections, FlowError, NoVault,
+    Provider, ProviderToken, TenantId,
 };
-use comettrace_storage::{CONTROL_PLANE, PostgresConnections, PostgresMemberships, SealedVault};
+use comettrace_storage::{
+    CONTROL_PLANE, FixedClock, PostgresAttempts, PostgresConnections, PostgresMemberships,
+    SealedVault, SystemClock,
+};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 use uuid::Uuid;
@@ -454,4 +458,113 @@ async fn deleting_the_account_that_connected_it_leaves_the_connection_standing()
             .is_some(),
         "and it still works"
     );
+}
+
+async fn an_attempt(pool: &PgPool, org: TenantId, by: AccountId, provider: Provider) -> String {
+    let attempt = Attempt::fresh(org, by, provider);
+    PostgresAttempts::new(pool.clone(), SystemClock)
+        .begin(&attempt)
+        .await
+        .expect("the attempt is written");
+    attempt.state
+}
+
+#[tokio::test]
+async fn an_attempt_is_spent_on_the_way_out() {
+    let Some(pool) = control_plane("attempts_once").await else {
+        return;
+    };
+    let (org, by) = an_org(&pool, "owner@example.com").await;
+    let state = an_attempt(&pool, org, by, Provider::Linear).await;
+    let attempts = PostgresAttempts::new(pool.clone(), SystemClock);
+
+    let taken = attempts.take(&state).await.expect("the first take");
+    let again = attempts.take(&state).await;
+
+    assert_eq!(taken.org, org);
+    assert_eq!(taken.by, by);
+    assert_eq!(taken.provider, Provider::Linear);
+    assert_eq!(again.err(), Some(FlowError::Unknown), "and only once");
+}
+
+/* An expired attempt reads as one nobody ever minted. A caller cannot tell a stale state from an
+invented one, and has no use for the difference. */
+#[tokio::test]
+async fn an_attempt_past_its_window_reads_as_unknown() {
+    let Some(pool) = control_plane("attempts_stale").await else {
+        return;
+    };
+    let (org, by) = an_org(&pool, "owner@example.com").await;
+    let attempt = Attempt::fresh(org, by, Provider::Linear);
+    PostgresAttempts::new(pool.clone(), FixedClock::at(1_700_000_000))
+        .begin(&attempt)
+        .await
+        .expect("the attempt is written");
+
+    let refused = PostgresAttempts::new(pool.clone(), FixedClock::at(1_700_000_601))
+        .take(&attempt.state)
+        .await;
+
+    assert_eq!(refused.err(), Some(FlowError::Unknown));
+}
+
+#[tokio::test]
+async fn a_state_nobody_minted_is_unknown() {
+    let Some(pool) = control_plane("attempts_invented").await else {
+        return;
+    };
+
+    let refused = PostgresAttempts::new(pool, SystemClock)
+        .take("not-a-state")
+        .await;
+
+    assert_eq!(refused.err(), Some(FlowError::Unknown));
+}
+
+#[tokio::test]
+async fn pruning_clears_the_abandoned_attempts_and_leaves_the_live_ones() {
+    let Some(pool) = control_plane("attempts_prune").await else {
+        return;
+    };
+    let (org, by) = an_org(&pool, "owner@example.com").await;
+    PostgresAttempts::new(pool.clone(), FixedClock::at(1_700_000_000))
+        .begin(&Attempt::fresh(org, by, Provider::Linear))
+        .await
+        .expect("the stale one");
+    let live = an_attempt(&pool, org, by, Provider::Github).await;
+
+    let cleared = PostgresAttempts::new(pool.clone(), FixedClock::at(1_700_000_601))
+        .prune()
+        .await
+        .expect("the pruning");
+
+    assert_eq!(cleared, 1);
+    assert!(
+        PostgresAttempts::new(pool, SystemClock)
+            .take(&live)
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn deleting_an_organisation_takes_its_attempts_with_it() {
+    let Some(pool) = control_plane("attempts_cascade").await else {
+        return;
+    };
+    let (org, by) = an_org(&pool, "owner@example.com").await;
+    an_attempt(&pool, org, by, Provider::Linear).await;
+
+    sqlx::query("DELETE FROM orgs WHERE id = $1")
+        .bind(org.as_uuid())
+        .execute(&pool)
+        .await
+        .expect("deleting the organisation");
+
+    let left: i64 = sqlx::query("SELECT count(*) AS value FROM integration_attempts")
+        .fetch_one(&pool)
+        .await
+        .expect("counting")
+        .get("value");
+    assert_eq!(left, 0);
 }

@@ -42,7 +42,10 @@ pub use identity::{
     SignInProof,
 };
 pub use ingest::{Ingest, IngestError, Payload};
-pub use integration::{Connecting, Connection, ConnectionError, Connections, Provider};
+pub use integration::{
+    Attempt, Attempts, Authorized, Connecting, Connection, ConnectionError, Connections, Handshake,
+    Linking, Provider,
+};
 pub use key::IngestKey;
 pub use membership::{Membership, Memberships, OrgRole, Who, Whoami, WhoamiError};
 pub use oidc::{CodeVerifier, FlowError, OidcFlows, PendingFlow};

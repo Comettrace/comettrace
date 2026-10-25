@@ -103,18 +103,26 @@ pub struct OidcConfig {
     pub redirect_uri: String,
 }
 
-/* A project management tool is wired up by the deployment rather than by an organisation, which
-is where the identity provider and the mail relay already live. The alternative was a token
-encrypted at rest in the control plane, and that buys one thing — connecting from the screen —
-for the price of a key the deployment must never lose. Nothing here holds a secret the database
-could leak, and every field is a setting an operator can see in one file.
+/* The three project management blocks, which are halfway through changing shape and say so.
 
-Each block asks for the least that makes it usable, which is not the same amount for all three:
-a Linear key stands alone, a Jira token means nothing without the site it belongs to and the
-address that drew it, and a GitHub token wants to know which repository it is for. */
+Linear is an OAuth application: what lives here are the client credentials the deployment
+registered, and the connection itself belongs to an organisation and is sealed in the control
+plane under `secret_key`. That is the shape all three are going to.
+
+GitHub and Jira still hold a token, which is one person's rather than an organisation's and the
+same one for every organisation on the deployment. They keep it until their flows land. Each asks
+for the least that makes it usable, which differs: a Jira token means nothing without the site it
+belongs to and the address that drew it, and a GitHub token wants to know which repository. */
+
+/* All three fields go together. A deployment that sets one and forgets the others is refused at
+startup, which is the right moment — the alternative is finding out halfway through a handshake,
+in front of somebody who clicked Connect. */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinearConfig {
-    pub token: String,
+    pub client_id: String,
+    pub client_secret: String,
+    /// Registered with Linear verbatim; it has to match on the way back or the code is refused.
+    pub redirect_uri: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -398,7 +406,9 @@ mod tests {
                 FILE,
                 r#"
                 [linear]
-                token = "lin_api_secret"
+                client_id = "an-application"
+                client_secret = "a-secret"
+                redirect_uri = "http://localhost:4318/api/integrations/linear/callback"
 
                 [github]
                 token = "ghp_secret"
@@ -414,7 +424,12 @@ mod tests {
 
             let config: Config = figment().extract()?;
 
-            assert_eq!(config.linear.expect("a key").token, "lin_api_secret");
+            let linear = config.linear.expect("an application");
+            assert_eq!(linear.client_id, "an-application");
+            assert_eq!(
+                linear.redirect_uri,
+                "http://localhost:4318/api/integrations/linear/callback"
+            );
             assert_eq!(
                 config.github.expect("a repository").repository,
                 "acme/storefront"
@@ -435,12 +450,20 @@ mod tests {
             jail.set_env("COMETTRACE_JIRA__EMAIL", "operator@example.com");
             jail.set_env("COMETTRACE_JIRA__TOKEN", "jira_secret");
             jail.set_env("COMETTRACE_JIRA__PROJECT_KEY", "OPS");
-            jail.set_env("COMETTRACE_LINEAR__TOKEN", "lin_api_secret");
+            jail.set_env("COMETTRACE_LINEAR__CLIENT_ID", "an-application");
+            jail.set_env("COMETTRACE_LINEAR__CLIENT_SECRET", "a-secret");
+            jail.set_env(
+                "COMETTRACE_LINEAR__REDIRECT_URI",
+                "http://localhost:4318/cb",
+            );
 
             let config: Config = figment().extract()?;
 
             assert_eq!(config.jira.expect("a site").project_key, "OPS");
-            assert_eq!(config.linear.expect("a key").token, "lin_api_secret");
+            assert_eq!(
+                config.linear.expect("an application").client_id,
+                "an-application"
+            );
             assert_eq!(config.github, None);
             Ok(())
         });
