@@ -482,12 +482,14 @@ async fn main() -> anyhow::Result<()> {
     let (sink, reader) = spans_of(&config).await?;
     let sink = Arc::new(sink);
     tokio::spawn(flush_spans(Arc::clone(&sink)));
+    /* One gallery for both services: the object store is the same bucket and only the owner of a
+    key differs, and S3Photos holds an http client there is no reason to keep two of. */
     let gallery = Arc::new(gallery_of(&config)?);
-    let identity = identity_routes(&config, pool.as_ref(), gallery)
+    let identity = identity_routes(&config, pool.as_ref(), Arc::clone(&gallery))
         .await?
         .merge(explore_routes(pool.as_ref(), reader))
         .merge(catalogue_routes(pool.as_ref()))
-        .merge(org_routes(pool.as_ref()))
+        .merge(org_routes(pool.as_ref(), gallery))
         .merge(roster_routes(pool.as_ref())?)
         .merge(team_routes(pool.as_ref()))
         .merge(usage_routes(pool.as_ref(), Arc::clone(&meter)));
@@ -613,7 +615,7 @@ fn gateway_of(
 
 type Looking = Explore<Arc<Sessions>, PostgresMemberships, ClickhouseReader>;
 type Holding = Catalogue<Arc<Sessions>, PostgresMemberships, PostgresProjects>;
-type Settling = OrgSettings<Arc<Sessions>, PostgresMemberships, PostgresOrgs>;
+type Settling = OrgSettings<Arc<Sessions>, PostgresMemberships, PostgresOrgs, Arc<Gallery>>;
 type Enrolling = Roster<Arc<Sessions>, PostgresMemberships, PostgresRoster<SystemClock>>;
 type Arranging = Squad<Arc<Sessions>, PostgresMemberships, PostgresTeams>;
 type Measuring = Metering<Arc<Sessions>, PostgresMemberships, Arc<Meter>, PostgresUsage>;
@@ -673,7 +675,7 @@ fn team_routes(pool: Option<&PgPool>) -> Router {
     team_router(squad)
 }
 
-fn org_routes(pool: Option<&PgPool>) -> Router {
+fn org_routes(pool: Option<&PgPool>, gallery: Arc<Gallery>) -> Router {
     let Some(pool) = pool else {
         return Router::new();
     };
@@ -685,6 +687,7 @@ fn org_routes(pool: Option<&PgPool>) -> Router {
     let settings: Arc<Settling> = Arc::new(OrgSettings::new(
         Whoami::new(sessions, PostgresMemberships::new(pool.clone())),
         PostgresOrgs::new(pool.clone()),
+        gallery,
     ));
     org_router(settings)
 }

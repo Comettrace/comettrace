@@ -2,6 +2,7 @@ use core::future::Future;
 
 use crate::explore::ReadError;
 use crate::membership::{Memberships, OrgRole, Whoami, WhoamiError};
+use crate::photo::{Photo, PhotoError, PhotoKind, Photos, Pictured, Portrait};
 use crate::secret::SessionToken;
 use crate::session::SessionStore;
 use crate::tenant::TenantId;
@@ -52,6 +53,9 @@ pub struct Organisation {
     pub name: Box<str>,
     pub plan: Box<str>,
     pub created_at_unix_nanos: u64,
+    /* Absent until an administrator keeps one. What is held is the token the store named the
+    object after rather than the bytes, so the card can carry a url built from it. */
+    pub logo: Option<Portrait>,
 }
 
 pub trait Orgs {
@@ -64,6 +68,14 @@ pub trait Orgs {
         &self,
         org: TenantId,
         name: &OrgName,
+    ) -> impl Future<Output = Result<(), ReadError>> + Send;
+
+    /* `None` says the organisation keeps no logo. The bytes are the store's to forget, not this
+    one's: all that is written here is whether there is anything to find. */
+    fn set_logo(
+        &self,
+        org: TenantId,
+        logo: Option<&Portrait>,
     ) -> impl Future<Output = Result<(), ReadError>> + Send;
 }
 
@@ -82,6 +94,14 @@ impl<T: Orgs + Sync> Orgs for &T {
     ) -> impl Future<Output = Result<(), ReadError>> + Send {
         (*self).rename(org, name)
     }
+
+    fn set_logo(
+        &self,
+        org: TenantId,
+        logo: Option<&Portrait>,
+    ) -> impl Future<Output = Result<(), ReadError>> + Send {
+        (*self).set_logo(org, logo)
+    }
 }
 
 impl<T: Orgs + Send + Sync> Orgs for std::sync::Arc<T> {
@@ -99,6 +119,14 @@ impl<T: Orgs + Send + Sync> Orgs for std::sync::Arc<T> {
     ) -> impl Future<Output = Result<(), ReadError>> + Send {
         self.as_ref().rename(org, name)
     }
+
+    fn set_logo(
+        &self,
+        org: TenantId,
+        logo: Option<&Portrait>,
+    ) -> impl Future<Output = Result<(), ReadError>> + Send {
+        self.as_ref().set_logo(org, logo)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -111,6 +139,10 @@ pub enum SettingError {
     NotYoursToChange,
     #[error("no organisation carries that id any more")]
     Gone,
+    #[error("that organisation keeps no logo")]
+    NoLogo,
+    #[error(transparent)]
+    Photos(PhotoError),
     #[error("a store could not be reached")]
     StoreUnreachable,
 }
@@ -132,20 +164,37 @@ impl From<ReadError> for SettingError {
     }
 }
 
-#[derive(Debug)]
-pub struct OrgSettings<S, G, O> {
-    whoami: Whoami<S, G>,
-    orgs: O,
+/* A store that cannot be reached is the same failure whichever store it was, but one that was
+never configured is a sentence somebody has to read, so it stays whole. */
+impl From<PhotoError> for SettingError {
+    fn from(error: PhotoError) -> Self {
+        match error {
+            PhotoError::NotOffered => Self::Photos(PhotoError::NotOffered),
+            PhotoError::Unreachable => Self::StoreUnreachable,
+        }
+    }
 }
 
-impl<S, G, O> OrgSettings<S, G, O>
+#[derive(Debug)]
+pub struct OrgSettings<S, G, O, P> {
+    whoami: Whoami<S, G>,
+    orgs: O,
+    photos: P,
+}
+
+impl<S, G, O, P> OrgSettings<S, G, O, P>
 where
     S: SessionStore,
     G: Memberships,
     O: Orgs,
+    P: Photos,
 {
-    pub fn new(whoami: Whoami<S, G>, orgs: O) -> Self {
-        Self { whoami, orgs }
+    pub fn new(whoami: Whoami<S, G>, orgs: O, photos: P) -> Self {
+        Self {
+            whoami,
+            orgs,
+            photos,
+        }
     }
 
     pub async fn read(
@@ -169,6 +218,62 @@ where
         self.standing(token, org, OrgRole::Admin).await?;
         self.orgs.rename(org, name).await?;
         self.card(org).await
+    }
+
+    /* The bytes reach the store before the column points at them: a store that refuses leaves the
+    organisation as it was rather than naming an object nobody can fetch. The mark this one
+    replaces is forgotten afterwards, and only as well as it can be -- a leftover object costs a
+    few kilobytes, and the store has already written its own log if it refused, so it is no reason
+    to tell an administrator their new logo did not arrive. */
+    pub async fn put_logo(
+        &self,
+        token: &SessionToken,
+        org: TenantId,
+        logo: &Photo,
+    ) -> Result<Organisation, SettingError> {
+        self.standing(token, org, OrgRole::Admin).await?;
+        let before = self.card(org).await?.logo;
+        let kept = self.photos.put(Pictured::Org(org), logo).await?;
+        self.orgs.set_logo(org, Some(&kept)).await?;
+        if let Some(before) = before.filter(|before| before.token != kept.token) {
+            let _ = self.photos.remove(Pictured::Org(org), &before).await;
+        }
+        self.card(org).await
+    }
+
+    /* The other way round from keeping one: the column is cleared first, because what was asked
+    for is an organisation with no logo, and bytes nobody can reach any more are a tidier failure
+    than a mark that will not go away. Asking twice is not an error. */
+    pub async fn remove_logo(
+        &self,
+        token: &SessionToken,
+        org: TenantId,
+    ) -> Result<Organisation, SettingError> {
+        self.standing(token, org, OrgRole::Admin).await?;
+        let Some(kept) = self.card(org).await?.logo else {
+            return self.card(org).await;
+        };
+        self.orgs.set_logo(org, None).await?;
+        let _ = self.photos.remove(Pictured::Org(org), &kept).await;
+        self.card(org).await
+    }
+
+    /* A plain member reads it, because this is what an <img> on every screen that names the
+    organisation fetches. A session holding no membership is told there is no such organisation,
+    the way the card tells it, so the ids of other organisations stay unguessable. */
+    pub async fn logo(
+        &self,
+        token: &SessionToken,
+        org: TenantId,
+    ) -> Result<(PhotoKind, Vec<u8>), SettingError> {
+        self.standing(token, org, OrgRole::Member).await?;
+        let kept = self.card(org).await?.logo.ok_or(SettingError::NoLogo)?;
+        let bytes = self
+            .photos
+            .fetch(Pictured::Org(org), &kept)
+            .await?
+            .ok_or(SettingError::NoLogo)?;
+        Ok((kept.kind, bytes))
     }
 
     async fn standing(
@@ -202,6 +307,7 @@ mod tests {
     use crate::explore::ReadError;
     use crate::identity::AccountId;
     use crate::membership::{Membership, Memberships, OrgRole, Whoami, WhoamiError};
+    use crate::photo::{NoPhotos, Photo, PhotoError, PhotoKind, Photos, Pictured, Portrait};
     use crate::secret::SessionToken;
     use crate::session::{Session, SessionError, SessionStore};
     use crate::tenant::TenantId;
@@ -266,6 +372,7 @@ mod tests {
     struct Kept {
         name: Mutex<Option<String>>,
         renames: Mutex<Vec<String>>,
+        logo: Mutex<Option<Portrait>>,
     }
 
     impl Kept {
@@ -273,6 +380,7 @@ mod tests {
             Self {
                 name: Mutex::new(Some(name.to_owned())),
                 renames: Mutex::default(),
+                logo: Mutex::default(),
             }
         }
 
@@ -280,6 +388,7 @@ mod tests {
             Self {
                 name: Mutex::new(None),
                 renames: Mutex::default(),
+                logo: Mutex::default(),
             }
         }
 
@@ -300,6 +409,7 @@ mod tests {
                     name: name.into(),
                     plan: "Self-hosted".into(),
                     created_at_unix_nanos: FOUNDED,
+                    logo: self.logo.lock().expect("the lock").clone(),
                 }))
         }
 
@@ -311,10 +421,102 @@ mod tests {
             *self.name.lock().expect("the lock") = Some(name.as_str().to_owned());
             Ok(())
         }
+
+        async fn set_logo(
+            &self,
+            _org: TenantId,
+            logo: Option<&Portrait>,
+        ) -> Result<(), ReadError> {
+            *self.logo.lock().expect("the lock") = logo.cloned();
+            Ok(())
+        }
     }
 
-    fn settings(role: OrgRole, kept: &Kept) -> OrgSettings<OneSession, MemberOfMine, &Kept> {
-        OrgSettings::new(Whoami::new(OneSession, MemberOfMine(role)), kept)
+    fn settings(
+        role: OrgRole,
+        kept: &Kept,
+    ) -> OrgSettings<OneSession, MemberOfMine, &Kept, NoPhotos> {
+        OrgSettings::new(Whoami::new(OneSession, MemberOfMine(role)), kept, NoPhotos)
+    }
+
+    /* The store the logo tests put bytes in. It records the owner each call named, because the
+    one thing the service must not get wrong is keeping an organisation's mark under an account's
+    key. */
+    #[derive(Debug, Default)]
+    struct Shelf {
+        minted: Mutex<u32>,
+        objects: Mutex<Vec<(String, Vec<u8>)>>,
+        forgotten: Mutex<Vec<String>>,
+        owners: Mutex<Vec<Pictured>>,
+    }
+
+    impl Shelf {
+        fn forgotten(&self) -> Vec<String> {
+            self.forgotten.lock().expect("the lock").clone()
+        }
+
+        fn owners(&self) -> Vec<Pictured> {
+            self.owners.lock().expect("the lock").clone()
+        }
+    }
+
+    impl Photos for &Shelf {
+        async fn put(&self, of: Pictured, photo: &Photo) -> Result<Portrait, PhotoError> {
+            self.owners.lock().expect("the lock").push(of);
+            let mut minted = self.minted.lock().expect("the lock");
+            *minted += 1;
+            let token = format!("token{minted}");
+            self.objects
+                .lock()
+                .expect("the lock")
+                .push((token.clone(), photo.bytes().to_vec()));
+            Ok(Portrait {
+                token: token.into(),
+                kind: photo.kind(),
+            })
+        }
+
+        async fn fetch(
+            &self,
+            of: Pictured,
+            portrait: &Portrait,
+        ) -> Result<Option<Vec<u8>>, PhotoError> {
+            self.owners.lock().expect("the lock").push(of);
+            Ok(self
+                .objects
+                .lock()
+                .expect("the lock")
+                .iter()
+                .find(|(token, _)| token.as_str() == &*portrait.token)
+                .map(|(_, bytes)| bytes.clone()))
+        }
+
+        async fn remove(&self, of: Pictured, portrait: &Portrait) -> Result<(), PhotoError> {
+            self.owners.lock().expect("the lock").push(of);
+            self.forgotten
+                .lock()
+                .expect("the lock")
+                .push(portrait.token.to_string());
+            self.objects
+                .lock()
+                .expect("the lock")
+                .retain(|(token, _)| token.as_str() != &*portrait.token);
+            Ok(())
+        }
+    }
+
+    fn marked<'a>(
+        role: OrgRole,
+        kept: &'a Kept,
+        shelf: &'a Shelf,
+    ) -> OrgSettings<OneSession, MemberOfMine, &'a Kept, &'a Shelf> {
+        OrgSettings::new(Whoami::new(OneSession, MemberOfMine(role)), kept, shelf)
+    }
+
+    fn a_png() -> Photo {
+        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        bytes.extend_from_slice(b"and then whatever an encoder wrote");
+        Photo::examined(bytes).expect("a png")
     }
 
     fn token() -> SessionToken {
@@ -337,6 +539,7 @@ mod tests {
                 name: "Acme".into(),
                 plan: "Self-hosted".into(),
                 created_at_unix_nanos: FOUNDED,
+                logo: None,
             }
         );
     }
@@ -444,5 +647,137 @@ mod tests {
             OrgName::try_from(wide.as_str()),
             Err(BadName::TooLong(MAX_NAME_BYTES))
         );
+    }
+
+    /* The card is read back rather than assembled, so the token the store minted is what the
+    screen is handed -- and the owner it was kept under is the organisation, never the account
+    that happened to be signed in. */
+    #[tokio::test]
+    async fn an_administrator_keeps_a_logo_and_the_card_carries_it() {
+        let kept = Kept::holding("Acme");
+        let shelf = Shelf::default();
+
+        let card = marked(OrgRole::Admin, &kept, &shelf)
+            .put_logo(&token(), an_org(MINE), &a_png())
+            .await
+            .expect("an administrator may keep one");
+
+        let logo = card.logo.expect("a logo");
+        assert_eq!(&*logo.token, "token1");
+        assert_eq!(logo.kind, PhotoKind::Png);
+        assert_eq!(shelf.owners(), vec![Pictured::Org(an_org(MINE))]);
+    }
+
+    /* A replacement is a different object, which is what lets the url be cached for ever. The
+    one before it is forgotten, so a bucket does not fill with marks nobody asks for. */
+    #[tokio::test]
+    async fn a_replacement_changes_the_token_and_forgets_the_one_before_it() {
+        let kept = Kept::holding("Acme");
+        let shelf = Shelf::default();
+
+        marked(OrgRole::Admin, &kept, &shelf)
+            .put_logo(&token(), an_org(MINE), &a_png())
+            .await
+            .expect("a first logo");
+        let card = marked(OrgRole::Admin, &kept, &shelf)
+            .put_logo(&token(), an_org(MINE), &a_png())
+            .await
+            .expect("a replacement");
+
+        assert_eq!(&*card.logo.expect("a logo").token, "token2");
+        assert_eq!(shelf.forgotten(), vec!["token1".to_owned()]);
+    }
+
+    /* The same floor the rename sits behind: a member who is not an administrator is told the
+    truth, because it already knows the organisation exists. */
+    #[tokio::test]
+    async fn a_plain_member_may_not_keep_a_logo() {
+        let kept = Kept::holding("Acme");
+        let shelf = Shelf::default();
+
+        let refused = marked(OrgRole::Member, &kept, &shelf)
+            .put_logo(&token(), an_org(MINE), &a_png())
+            .await
+            .expect_err("a member may not");
+
+        assert_eq!(refused, SettingError::NotYoursToChange);
+        assert_eq!(shelf.owners(), Vec::new(), "nothing reached the store");
+    }
+
+    #[tokio::test]
+    async fn removing_a_logo_twice_is_not_an_error() {
+        let kept = Kept::holding("Acme");
+        let shelf = Shelf::default();
+        let put = marked(OrgRole::Admin, &kept, &shelf);
+        put.put_logo(&token(), an_org(MINE), &a_png())
+            .await
+            .expect("a logo");
+
+        let once = put
+            .remove_logo(&token(), an_org(MINE))
+            .await
+            .expect("the first removal");
+        let twice = put
+            .remove_logo(&token(), an_org(MINE))
+            .await
+            .expect("the second is no error");
+
+        assert!(once.logo.is_none());
+        assert!(twice.logo.is_none());
+        assert_eq!(shelf.forgotten(), vec!["token1".to_owned()]);
+    }
+
+    /* A member reads the bytes, because that is what an <img> on its own screens fetches. A
+    session holding no membership is told there is no such organisation rather than that it may
+    not look, so the ids of other organisations stay unguessable. */
+    #[tokio::test]
+    async fn a_member_reads_the_logo_and_a_stranger_is_told_there_is_no_such_organisation() {
+        let kept = Kept::holding("Acme");
+        let shelf = Shelf::default();
+        marked(OrgRole::Admin, &kept, &shelf)
+            .put_logo(&token(), an_org(MINE), &a_png())
+            .await
+            .expect("a logo");
+
+        let (kind, bytes) = marked(OrgRole::Member, &kept, &shelf)
+            .logo(&token(), an_org(MINE))
+            .await
+            .expect("a member may read");
+        let refused = marked(OrgRole::Owner, &kept, &shelf)
+            .logo(&token(), an_org(THEIRS))
+            .await
+            .expect_err("a stranger may not");
+
+        assert_eq!(kind, PhotoKind::Png);
+        assert_eq!(bytes, a_png().bytes());
+        assert_eq!(refused, SettingError::NotYours);
+    }
+
+    /* An organisation that keeps none is not a failure to explain, it is a card with no logo on
+    it. The screen shows the initial instead. */
+    #[tokio::test]
+    async fn an_organisation_that_keeps_no_logo_is_not_an_error_on_its_card() {
+        let kept = Kept::holding("Acme");
+
+        let card = settings(OrgRole::Member, &kept)
+            .read(&token(), an_org(MINE))
+            .await
+            .expect("a card");
+
+        assert!(card.logo.is_none());
+    }
+
+    /* A deployment that was never given a bucket is missing a part, and that is an operator's to
+    fix. The refusal stays whole so the sentence can say which part. */
+    #[tokio::test]
+    async fn a_deployment_with_no_object_store_says_which_part_is_missing() {
+        let kept = Kept::holding("Acme");
+
+        let refused = settings(OrgRole::Admin, &kept)
+            .put_logo(&token(), an_org(MINE), &a_png())
+            .await
+            .expect_err("there is no store");
+
+        assert_eq!(refused, SettingError::Photos(PhotoError::NotOffered));
     }
 }

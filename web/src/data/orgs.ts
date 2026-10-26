@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { accountQuery } from '@/auth/api'
-import { because, get, json, patch } from '@/auth/client'
+import { because, del, get, json, offer, patch } from '@/auth/client'
 import { useOrganizations } from '@/auth/session'
 
-export type OrgCard = { id: string; name: string; plan: string; created_at_ms: number; version: string }
+export type OrgCard = { id: string; name: string; plan: string; created_at_ms: number; version: string; logo?: string | null }
 
 const key = (org: string | undefined) => ['org', org]
 
@@ -49,6 +49,37 @@ export function useRenameOrg() {
       client.setQueryData(key(card.id), card)
       void client.invalidateQueries({ queryKey: accountQuery.queryKey })
     },
+  })
+}
+
+export const MAX_LOGO_BYTES = 1024 * 1024
+
+/* The ceiling the server enforces, checked here so a file that is plainly too big is refused
+   before a megabyte of it goes up the wire. What the file *is* stays the server's to judge: it
+   reads the first bytes, where a browser only reports what the extension suggested. */
+export function logoProblem(file: File): string | null {
+  if (file.size > MAX_LOGO_BYTES) return 'a logo can be at most 1 MB'
+  return null
+}
+
+/* Both answer with the card the server kept, so the screen reads the new mark -- or the initials
+   again -- from the same cache the name does. The standing is not thrown away: /auth/me carries
+   the organisation's name, never its logo. */
+export function usePutOrgLogo() {
+  const { active } = useOrganizations()
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: async (file: File) => json<OrgCard>(await offer(`/api/orgs/${active?.org}/logo`, file)),
+    onSuccess: (card) => client.setQueryData(key(card.id), card),
+  })
+}
+
+export function useRemoveOrgLogo() {
+  const { active } = useOrganizations()
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: async () => json<OrgCard>(await del(`/api/orgs/${active?.org}/logo`)),
+    onSuccess: (card) => client.setQueryData(key(card.id), card),
   })
 }
 
