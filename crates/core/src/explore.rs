@@ -330,6 +330,8 @@ mod tests {
                 Ok(Session {
                     account: AccountId::new(Uuid::from_u128(9)),
                     email: an_email(),
+                    name: None,
+                    photo: None,
                     org: None,
                     expires_at: UnixSeconds::new(0),
                 })

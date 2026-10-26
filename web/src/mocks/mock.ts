@@ -3,7 +3,6 @@
 import type { Sev } from '@/lib/otel'
 import { makeSeries } from './series'
 
-export const ME = { name: 'Inès Martin', email: 'ines@acme.dev', initials: 'IM', role: 'admin' as const }
 export const PROJECTS = [
   { name: 'storefront', team: 'Backend', keys: 2, created: '2026-03-02' },
   { name: 'payments-eu', team: 'Payments', keys: 3, created: '2026-03-02' },

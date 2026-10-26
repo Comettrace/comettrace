@@ -3,6 +3,7 @@ use core::future::Future;
 
 use crate::credential::Email;
 use crate::identity::AccountId;
+use crate::photo::Portrait;
 use crate::secret::SessionToken;
 use crate::session::{SessionError, SessionStore};
 use crate::tenant::TenantId;
@@ -87,6 +88,8 @@ impl<T: Memberships + Send + Sync> Memberships for std::sync::Arc<T> {
 pub struct Who {
     pub account: AccountId,
     pub email: Email,
+    pub name: Option<Box<str>>,
+    pub photo: Option<Portrait>,
     pub active_org: Option<TenantId>,
     pub memberships: Vec<Membership>,
 }
@@ -128,6 +131,8 @@ where
         Ok(Who {
             account: session.account,
             email: session.email,
+            name: session.name,
+            photo: session.photo,
             active_org: session.org,
             memberships,
         })
@@ -159,6 +164,8 @@ mod tests {
         Who {
             account: AccountId::new(Uuid::from_u128(1)),
             email: Email::try_from("person@example.com").expect("an address"),
+            name: None,
+            photo: None,
             active_org: None,
             memberships,
         }

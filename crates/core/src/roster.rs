@@ -4,17 +4,21 @@ use crate::credential::Email;
 use crate::explore::ReadError;
 use crate::identity::AccountId;
 use crate::membership::{Memberships, OrgRole, Who, Whoami, WhoamiError};
+use crate::photo::Portrait;
 use crate::secret::{ResetToken, SecretHash, SessionToken};
 use crate::session::SessionStore;
 use crate::tenant::TenantId;
 
-/* One row of the members screen: the account, the address it signs in with, what it may do here,
-and when it joined. The address is also the name it is shown under, because no column holds
-anything else and a name built from the local part would be a guess. */
+/* One row of the members screen: the account, the address it signs in with, the name and face it
+goes by if somebody filled those in, what it may do here, and when it joined. Both are absent on
+every row of a deployment nobody has filled a profile in on, and then the address is what names
+them and their initials stand in for the face. */
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
     pub account: AccountId,
     pub email: Email,
+    pub name: Option<Box<str>>,
+    pub photo: Option<Portrait>,
     pub role: OrgRole,
     pub joined_at_unix_nanos: u64,
 }
@@ -365,6 +369,8 @@ mod tests {
         Member {
             account: an_account(seed),
             email: an_address(&format!("person{seed}")),
+            name: None,
+            photo: None,
             role,
             joined_at_unix_nanos: JOINED,
         }
@@ -386,6 +392,8 @@ mod tests {
                 Ok(Session {
                     account: an_account(ME),
                     email: an_address("me"),
+                    name: None,
+                    photo: None,
                     org: None,
                     expires_at: UnixSeconds::new(0),
                 })

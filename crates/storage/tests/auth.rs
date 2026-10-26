@@ -1,8 +1,9 @@
 use comettrace_core::{
-    AccountId, AuthError, AuthProvider, AuthSources, CodeVerifier, Email, FlowError, Issuer,
-    Mailer, NoProvider, OidcFlows, Password, PasswordCheck, PasswordHasher, PendingFlow,
-    ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken, ResolvedIdentity,
-    SessionError, SessionLifetime, SessionStore, SignIn, SignInProof, Subject,
+    AccountId, AccountName, Accounts, AuthError, AuthProvider, AuthSources, CodeVerifier, Email,
+    FlowError, Issuer, Mailer, NoProvider, OidcFlows, Password, PasswordCheck, PasswordHasher,
+    PendingFlow, PhotoKind, Portrait, ProvisionPolicy, ResetError, ResetPassword, ResetStore,
+    ResetToken, ResolvedIdentity, SessionError, SessionLifetime, SessionStore, SignIn, SignInProof,
+    Subject,
 };
 use comettrace_storage::{
     AccountError, Argon2Hasher, CONTROL_PLANE, FixedClock, LocalPasswordProvider, PostgresAccounts,
@@ -731,4 +732,197 @@ async fn a_local_identity_naming_no_account_is_not_provisioned() {
         0,
         "a local identity is never a reason to create an account"
     );
+}
+
+/* The name is the one thing a person may change about their own account, so these three pin the
+column itself: that it starts empty, that a chosen one travels on the session the screens read,
+and that emptying it writes a null rather than a blank. */
+#[tokio::test]
+async fn an_account_carries_no_name_until_somebody_writes_one() {
+    let Some(pool) = control_plane("auth_unnamed").await else {
+        return;
+    };
+    let account = an_account(&pool, "person@example.com", Some("secret")).await;
+    let sessions = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
+
+    let token = sessions.issue(account, None).await.expect("a session");
+    let session = sessions.resolve(&token).await.expect("it resolves");
+
+    assert_eq!(session.name, None);
+    assert_eq!(session.email.as_str(), "person@example.com");
+}
+
+#[tokio::test]
+async fn a_chosen_name_travels_on_the_session() {
+    let Some(pool) = control_plane("auth_named").await else {
+        return;
+    };
+    let account = an_account(&pool, "person@example.com", Some("secret")).await;
+    let accounts = PostgresAccounts::new(pool.clone());
+    let sessions = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
+    let name = AccountName::try_from("Ines Martin").expect("an admitted name");
+
+    accounts
+        .rename(account, Some(&name))
+        .await
+        .expect("it renames");
+    let token = sessions.issue(account, None).await.expect("a session");
+    let session = sessions.resolve(&token).await.expect("it resolves");
+
+    assert_eq!(session.name.as_deref(), Some("Ines Martin"));
+}
+
+#[tokio::test]
+async fn emptying_the_name_writes_a_null_rather_than_a_blank() {
+    let Some(pool) = control_plane("auth_unnamed_again").await else {
+        return;
+    };
+    let account = an_account(&pool, "person@example.com", Some("secret")).await;
+    let accounts = PostgresAccounts::new(pool.clone());
+    let name = AccountName::try_from("Ines Martin").expect("an admitted name");
+    accounts
+        .rename(account, Some(&name))
+        .await
+        .expect("it renames");
+
+    accounts.rename(account, None).await.expect("it empties");
+
+    let held: Option<String> = sqlx::query("SELECT name AS name FROM accounts WHERE id = $1")
+        .bind(account.as_uuid())
+        .fetch_one(&pool)
+        .await
+        .expect("the account")
+        .get("name");
+    assert_eq!(
+        held, None,
+        "an account with no name holds one null, not two spellings of none"
+    );
+}
+
+/* The check on the column says in the schema what AccountName says in core. Without it a
+hand-written update could leave a row the code calls named and the screens print as a blank. */
+#[tokio::test]
+async fn the_column_refuses_a_name_that_is_only_space() {
+    let Some(pool) = control_plane("auth_blank_name").await else {
+        return;
+    };
+    let account = an_account(&pool, "person@example.com", Some("secret")).await;
+
+    let refused = sqlx::query("UPDATE accounts SET name = $2 WHERE id = $1")
+        .bind(account.as_uuid())
+        .bind("   ")
+        .execute(&pool)
+        .await;
+
+    assert!(refused.is_err(), "the column admitted a blank name");
+}
+
+/* The bytes live in an object store; what the control plane keeps is where to find them and what
+they are. These pin the pair of columns: that they travel on the session the screens read, that
+half of one cannot be written, and that a type this build does not know reads as no photo rather
+than as a row nothing can serve. */
+#[tokio::test]
+async fn a_portrait_travels_on_the_session() {
+    let Some(pool) = control_plane("auth_portrait").await else {
+        return;
+    };
+    let account = an_account(&pool, "person@example.com", Some("secret")).await;
+    let accounts = PostgresAccounts::new(pool.clone());
+    let sessions = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
+    let portrait = Portrait {
+        token: "deadbeefdeadbeef".into(),
+        kind: PhotoKind::Png,
+    };
+
+    accounts
+        .set_portrait(account, Some(&portrait))
+        .await
+        .expect("it is kept");
+    let token = sessions.issue(account, None).await.expect("a session");
+    let session = sessions.resolve(&token).await.expect("it resolves");
+
+    assert_eq!(session.photo.as_ref(), Some(&portrait));
+    assert_eq!(
+        accounts.portrait_of(account).await.expect("it is read"),
+        Some(portrait)
+    );
+}
+
+#[tokio::test]
+async fn a_dropped_portrait_leaves_both_columns_null() {
+    let Some(pool) = control_plane("auth_portrait_gone").await else {
+        return;
+    };
+    let account = an_account(&pool, "person@example.com", Some("secret")).await;
+    let accounts = PostgresAccounts::new(pool.clone());
+    accounts
+        .set_portrait(
+            account,
+            Some(&Portrait {
+                token: "deadbeefdeadbeef".into(),
+                kind: PhotoKind::Jpeg,
+            }),
+        )
+        .await
+        .expect("it is kept");
+
+    accounts.set_portrait(account, None).await.expect("it goes");
+
+    assert_eq!(
+        accounts.portrait_of(account).await.expect("it is read"),
+        None
+    );
+    let held: (Option<String>, Option<String>) = sqlx::query(
+        "SELECT photo_token AS photo_token, photo_type AS photo_type FROM accounts WHERE id = $1",
+    )
+    .bind(account.as_uuid())
+    .fetch_one(&pool)
+    .await
+    .map(|row| (row.get("photo_token"), row.get("photo_type")))
+    .expect("the account");
+    assert_eq!(held, (None, None));
+}
+
+/* The two columns are one fact and the schema says so, because half of one is a row that cannot
+be served. */
+#[tokio::test]
+async fn the_columns_refuse_half_a_photo() {
+    let Some(pool) = control_plane("auth_portrait_half").await else {
+        return;
+    };
+    let account = an_account(&pool, "person@example.com", Some("secret")).await;
+
+    let refused = sqlx::query("UPDATE accounts SET photo_token = 'deadbeef' WHERE id = $1")
+        .bind(account.as_uuid())
+        .execute(&pool)
+        .await;
+
+    assert!(
+        refused.is_err(),
+        "the columns admitted a token with no type"
+    );
+}
+
+/* A media type this build does not know is a photo it could not answer with, so the honest
+reading is that there is none: the screen falls back to initials rather than to an error. */
+#[tokio::test]
+async fn a_type_the_build_does_not_know_reads_as_no_photo() {
+    let Some(pool) = control_plane("auth_portrait_odd").await else {
+        return;
+    };
+    let account = an_account(&pool, "person@example.com", Some("secret")).await;
+    sqlx::query(
+        "UPDATE accounts SET photo_token = 'deadbeef', photo_type = 'image/gif' WHERE id = $1",
+    )
+    .bind(account.as_uuid())
+    .execute(&pool)
+    .await
+    .expect("the control plane holds what it is given");
+
+    let read = PostgresAccounts::new(pool.clone())
+        .portrait_of(account)
+        .await
+        .expect("it is read");
+
+    assert_eq!(read, None);
 }

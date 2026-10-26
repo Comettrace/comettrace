@@ -31,6 +31,8 @@ fn a_member(seed: u128, role: OrgRole) -> Member {
     Member {
         account: an_account(seed),
         email: an_address(&format!("person{seed}")),
+        name: None,
+        photo: None,
         role,
         joined_at_unix_nanos: JOINED,
     }
@@ -52,6 +54,8 @@ impl SessionStore for OneSession {
             Ok(Session {
                 account: an_account(ME),
                 email: an_address("me"),
+                name: None,
+                photo: None,
                 org: None,
                 expires_at: UnixSeconds::new(0),
             })

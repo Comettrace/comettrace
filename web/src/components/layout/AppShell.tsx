@@ -14,6 +14,7 @@ import { useNotifications } from '@/data/notifications'
 import { useIssues } from '@/data/issues'
 import { useAlertRules } from '@/data/alerts'
 import { useProjects } from '@/data/projects'
+import { initialsOf, nameOf } from '@/data/profile'
 import { healthQuery } from '@/auth/api'
 import { useAccount, useOrganizations, useSignOut } from '@/auth/session'
 import { useTheme, type ThemePref } from '@/lib/theme'
@@ -40,7 +41,10 @@ function Sidebar({ onOpenShortcuts }: { onOpenShortcuts: () => void }) {
   const firing = rules.filter((r) => r.firing && r.on).length
   const { pref, setPref } = useTheme()
   const navigate = useNavigate()
-  const initials = (account?.email ?? '??').slice(0, 2).toUpperCase()
+  /* The name when somebody wrote one, the address when nobody did: the same fallback the members
+     table and the profile screen use. */
+  const who = account ? nameOf(account) : null
+  const initials = who ? initialsOf(who) : '??'
   return (
     <aside className="sticky top-0 hidden h-screen w-[224px] shrink-0 flex-col border-r bg-sidebar md:flex" aria-label="Primary">
       <Link to="/" className="flex h-12 shrink-0 items-center gap-2 border-b px-4 text-[15px] font-bold text-foreground no-underline">
@@ -117,9 +121,9 @@ function Sidebar({ onOpenShortcuts }: { onOpenShortcuts: () => void }) {
         <Popover>
           <PopoverTrigger asChild>
             <button type="button" aria-label="Account menu" className="sb-row data-[state=open]:bg-muted">
-              <Avatar initials={initials} />
+              <Avatar initials={initials} src={account?.photo} />
               <span className="flex min-w-0 flex-1 flex-col leading-4">
-                <span className="truncate text-control font-semibold">Signed in</span>
+                <span className="truncate text-control font-semibold">{who ?? 'Signed in'}</span>
                 <span className="truncate text-caption text-muted-foreground">{account?.email ?? '—'}</span>
               </span>
               <ChevronsUpDown className="size-3.5 text-muted-foreground" aria-hidden />
@@ -127,9 +131,9 @@ function Sidebar({ onOpenShortcuts }: { onOpenShortcuts: () => void }) {
           </PopoverTrigger>
           <PopoverContent side="top" align="start" className="w-[264px] p-1">
             <div className="mb-1 flex items-center gap-2.5 border-b px-2 pb-2.5 pt-2">
-              <Avatar initials={initials} />
+              <Avatar initials={initials} src={account?.photo} />
               <div className="flex min-w-0 flex-1 flex-col leading-[17px]">
-                <span className="truncate text-control font-semibold">Signed in</span>
+                <span className="truncate text-control font-semibold">{who ?? 'Signed in'}</span>
                 <span className="truncate text-caption text-muted-foreground">{account?.email ?? '—'}</span>
               </div>
               {active ? <Badge variant="accent">{active.role}</Badge> : null}

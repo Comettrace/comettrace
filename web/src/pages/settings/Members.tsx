@@ -13,7 +13,8 @@ import { Alert, Avatar, Table, Td, Th, Tr } from '@/components/ui/misc'
 import { because } from '@/auth/client'
 import { type Role } from '@/auth/api'
 import { useAccount, useOrganizations } from '@/auth/session'
-import { initialsOf, mayChange, mayHandOut, theLastOwner, useGrantRole, useInvite, useMembers, useRemoveMember, type Member, type Welcomed } from '@/data/members'
+import { mayChange, mayHandOut, theLastOwner, useGrantRole, useInvite, useMembers, useRemoveMember, type Member, type Welcomed } from '@/data/members'
+import { initialsOf, nameOf } from '@/data/profile'
 import { stamp } from '@/lib/format'
 import { H, saved } from './parts'
 
@@ -64,7 +65,7 @@ export function Members() {
             const editable = mayChange(mine, m.role) && !last
             return (
               <Tr key={m.account}>
-                <Td className="h-11"><span className="inline-flex items-center gap-2.5"><Avatar initials={initialsOf(m.email)} /><span className="font-semibold">{m.email}</span>{you ? <Badge variant="outline">you</Badge> : null}</span></Td>
+                <Td className="h-11"><span className="inline-flex items-center gap-2.5"><Avatar initials={initialsOf(nameOf(m))} src={m.photo} /><span className="flex min-w-0 flex-col leading-4"><span className="truncate font-semibold">{nameOf(m)}</span>{m.name ? <span className="truncate text-caption text-muted-foreground">{m.email}</span> : null}</span>{you ? <Badge variant="outline">you</Badge> : null}</span></Td>
                 <Td>{editable ? (
                   <NativeSelect aria-label={`Role for ${m.email}`} className="h-7 w-[130px]" value={m.role} disabled={grant.isPending} onChange={(e) => change(m, e.target.value as Role)}>
                     {mayHandOut(mine).map((role) => <option key={role} value={role}>{role}</option>)}

@@ -37,6 +37,12 @@ export const Td = ({ className, numeric, ...p }: ComponentProps<'td'> & { numeri
 )
 export const Tr = ({ className, ...p }: ComponentProps<'tr'>) => <tr className={cn('hover:[&>td]:bg-row-hover', className)} {...p} />
 
-export const Avatar = ({ initials, className }: { initials: string; className?: string }) => (
-  <span aria-hidden className={cn('inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-accent-subtle text-[12px] font-bold text-accent-text', className)}>{initials}</span>
+/* The initials are the ground and the photo sits on top of them, so a url that answers nothing --
+   a face somebody deleted from the bucket, a store that is down -- falls back to the letters
+   rather than to a broken image. */
+export const Avatar = ({ initials, src, className }: { initials: string; src?: string | null; className?: string }) => (
+  <span aria-hidden className={cn('relative inline-flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-accent-subtle text-[12px] font-bold text-accent-text', className)}>
+    {initials}
+    {src ? <img src={src} alt="" className="absolute inset-0 size-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none' }} /> : null}
+  </span>
 )

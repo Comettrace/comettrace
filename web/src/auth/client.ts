@@ -35,6 +35,11 @@ const carrying = (method: string) => (path: string, body?: unknown) =>
   })
 
 export const post = carrying('POST')
+
+/* The bytes as they are, with no json wrapper: the server reads what an image is from the first
+   of them, so an envelope would only be something to undo at both ends. The browser sets the
+   content type from the file, and the server believes none of it. */
+export const offer = (path: string, body: Blob) => send(path, { method: 'POST', body })
 export const patch = carrying('PATCH')
 export const put = carrying('PUT')
 export const del = carrying('DELETE')

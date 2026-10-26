@@ -8,6 +8,7 @@ use sqlx::{PgPool, Row, postgres::PgRow};
 use tokio::task;
 use uuid::Uuid;
 
+use crate::accounts::read_portrait;
 use crate::hasher::Argon2Hasher;
 use crate::memberships::read_role;
 
@@ -54,8 +55,9 @@ impl<C: Clock + Send + Sync> Roll for PostgresRoster<C> {
         /* The enum is declared owner first, so ordering by it puts the organisation in the order
         the screen reads it in: who answers for it, then who runs it, then everybody else. */
         let rows = sqlx::query(
-            "SELECT m.account_id AS account_id, a.email AS email, m.role::text AS role, \
-             m.created_at AS created_at \
+            "SELECT m.account_id AS account_id, a.email AS email, a.name AS name, \
+             a.photo_token AS photo_token, a.photo_type AS photo_type, \
+             m.role::text AS role, m.created_at AS created_at \
              FROM org_members m JOIN accounts a ON a.id = m.account_id \
              WHERE m.org_id = $1 ORDER BY m.role, a.email",
         )
@@ -132,18 +134,31 @@ impl<C: Clock + Send + Sync> Roll for PostgresRoster<C> {
             .await
             .map_err(|error| unreachable(&error))?;
 
-        let standing: Option<Uuid> = sqlx::query("SELECT id AS id FROM accounts WHERE email = $1")
-            .bind(email.as_str())
-            .fetch_optional(&mut *transaction)
-            .await
-            .map_err(|error| unreachable(&error))?
-            .map(|row| row.get("id"));
+        /* The name comes back with the id because an account that already carried the address
+        may already carry a name, and the member this answers with is the row the screen shows.
+        An account created here has none: nobody has written one yet. */
+        let standing = sqlx::query(
+            "SELECT id AS id, name AS name, photo_token AS photo_token, \
+             photo_type AS photo_type FROM accounts WHERE email = $1",
+        )
+        .bind(email.as_str())
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| unreachable(&error))?;
 
-        let account = match standing {
-            Some(account) => account,
-            None => locked_account(&mut *transaction, email, &locked)
-                .await
-                .map_err(|error| unreachable(&error))?,
+        let (account, name, photo) = match &standing {
+            Some(row) => (
+                row.get::<Uuid, _>("id"),
+                row.get::<Option<String>, _>("name"),
+                read_portrait(row),
+            ),
+            None => (
+                locked_account(&mut *transaction, email, &locked)
+                    .await
+                    .map_err(|error| unreachable(&error))?,
+                None,
+                None,
+            ),
         };
 
         /* Nothing comes back when the membership is already there, and that is the answer: a
@@ -171,6 +186,8 @@ impl<C: Clock + Send + Sync> Roll for PostgresRoster<C> {
         let member = Member {
             account: AccountId::new(row.get("account_id")),
             email: email.clone(),
+            name: name.map(Into::into),
+            photo,
             role: known_role(&row)?,
             joined_at_unix_nanos: read_nanos(&row),
         };
@@ -228,6 +245,8 @@ fn read_member(row: &PgRow) -> Result<Member, ReadError> {
             tracing::error!(%error, "the control plane holds an address nothing can send to");
             ReadError::StoreUnreachable
         })?,
+        name: row.get::<Option<String>, _>("name").map(Into::into),
+        photo: read_portrait(row),
         role: known_role(row)?,
         joined_at_unix_nanos: read_nanos(row),
     })

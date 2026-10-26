@@ -38,6 +38,8 @@ impl SessionStore for OneSession {
             Ok(Session {
                 account: AccountId::new(Uuid::from_u128(9)),
                 email: "person@example.com".try_into().expect("an address"),
+                name: None,
+                photo: None,
                 org: None,
                 expires_at: UnixSeconds::new(0),
             })

@@ -5,12 +5,12 @@ import { NativeSelect } from '@/components/ui/input'
 import { Segmented } from '@/components/ui/segmented'
 import { Switch } from '@/components/ui/switch'
 import { Table, Td, Th, Tr } from '@/components/ui/misc'
-import { useProfile } from '@/data/organization'
+import { useAccount } from '@/auth/session'
 import { useTheme, type ThemePref } from '@/lib/theme'
 import { H, Row, Sub, saved } from './parts'
 
 export function Preferences() {
-  const me = useProfile()
+  const account = useAccount()
   const { pref, setPref } = useTheme()
   const [prec, setPrec] = useState('ms')
   const [dens, setDens] = useState('compact')
@@ -36,7 +36,7 @@ export function Preferences() {
       </Card>
       <Sub>Notifications</Sub>
       <Card className="overflow-hidden">
-        <Row title="Email" sub={me.email}><Switch defaultChecked aria-label="Email notifications" /></Row>
+        <Row title="Email" sub={account?.email ?? '—'}><Switch defaultChecked aria-label="Email notifications" /></Row>
         <Row title="Weekly digest" sub="Monday 09:00 · errors, slowest services, usage"><Switch aria-label="Weekly digest" /></Row>
       </Card>
       <Card className="overflow-x-auto">

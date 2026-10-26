@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::explore_routes::{NotCarried, carried};
+use crate::whoami_routes::photo_url;
 
 const NANOS_PER_MILLI: u64 = 1_000_000;
 
@@ -42,12 +43,16 @@ pub struct Members {
     members: Vec<Listed>,
 }
 
-/* Milliseconds, like every other instant this api carries. The address is the name as well: no
-column holds another one. */
+/* Milliseconds, like every other instant this api carries. The name and the photo are absent
+until somebody fills a profile in, and the table shows the address and a pair of initials then,
+so both absences travel as null rather than as an empty string. The photo is a url for the
+reason the standing's is: no screen should have to know how one is spelt. */
 #[derive(Debug, Serialize)]
 struct Listed {
     account: Uuid,
     email: String,
+    name: Option<String>,
+    photo: Option<String>,
     role: &'static str,
     joined_at_ms: u64,
 }
@@ -57,6 +62,11 @@ impl From<Member> for Listed {
         Self {
             account: member.account.as_uuid(),
             email: member.email.as_str().to_owned(),
+            name: member.name.map(Into::into),
+            photo: member
+                .photo
+                .as_ref()
+                .map(|portrait| photo_url(member.account.as_uuid(), portrait)),
             role: member.role.as_str(),
             joined_at_ms: member.joined_at_unix_nanos / NANOS_PER_MILLI,
         }
