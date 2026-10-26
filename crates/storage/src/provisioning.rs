@@ -147,7 +147,7 @@ fn of_project(error: ProjectError) -> ProvisionError {
     match error {
         ProjectError::Taken(_) => ProvisionError::Taken,
         ProjectError::NoSuchOrg(_) => ProvisionError::NoSuchOrg,
-        other => unreachable(&other),
+        other @ ProjectError::ControlPlane(_) => unreachable(&other),
     }
 }
 
