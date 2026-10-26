@@ -740,7 +740,7 @@ mod tests {
 
         fn a_printable_run(bytes: usize) -> impl Strategy<Value = String> {
             prop::collection::vec(0x21u8..=0x7eu8, 1..=bytes)
-                .map(|bytes| String::from_utf8(bytes).expect("ascii bytes"))
+                .prop_map(|bytes| String::from_utf8(bytes).expect("ascii bytes"))
         }
 
         proptest! {
@@ -762,7 +762,7 @@ mod tests {
             #[test]
             fn a_name_one_byte_past_the_ceiling_is_refused_whatever_it_contains(
                 over in prop::collection::vec(0x21u8..=0x7eu8, MAX_NAME_BYTES + 1)
-                    .map(|bytes| String::from_utf8(bytes).expect("ascii bytes"))
+                    .prop_map(|bytes| String::from_utf8(bytes).expect("ascii bytes"))
             ) {
                 prop_assert_eq!(
                     OrgName::try_from(over.as_str()),
