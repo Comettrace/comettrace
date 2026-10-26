@@ -422,11 +422,7 @@ mod tests {
             Ok(())
         }
 
-        async fn set_logo(
-            &self,
-            _org: TenantId,
-            logo: Option<&Portrait>,
-        ) -> Result<(), ReadError> {
+        async fn set_logo(&self, _org: TenantId, logo: Option<&Portrait>) -> Result<(), ReadError> {
             *self.logo.lock().expect("the lock") = logo.cloned();
             Ok(())
         }

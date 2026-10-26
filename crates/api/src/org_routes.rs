@@ -182,8 +182,8 @@ where
     O: Orgs + Send + Sync + 'static,
     P: Photos + Send + Sync + 'static,
 {
-    let token = session_cookie::carried(&headers)
-        .ok_or(OrgRefused::Reaching(NotCarried::NoSession))?;
+    let token =
+        session_cookie::carried(&headers).ok_or(OrgRefused::Reaching(NotCarried::NoSession))?;
     let (kind, bytes) = settings.logo(&token, TenantId::new(org)).await?;
 
     Ok((
