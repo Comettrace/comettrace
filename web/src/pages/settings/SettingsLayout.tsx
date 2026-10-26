@@ -7,14 +7,12 @@ import { cn } from '@/lib/utils'
 
 const GROUPS: { label: string; items: [string, string][] }[] = [
   { label: 'Personal', items: [['profile', 'Profile'], ['security', 'Login & security'], ['preferences', 'Preferences']] },
-  { label: 'Organization', items: [['general', 'General'], ['members', 'Members'], ['teams', 'Teams'], ['projects', 'Projects'], ['usage', 'Usage'], ['billing', 'Billing']] },
+  { label: 'Organisation', items: [['general', 'General'], ['members', 'Members'], ['teams', 'Teams'], ['projects', 'Projects'], ['usage', 'Usage'], ['billing', 'Billing']] },
   { label: 'Project', items: [['project/general', 'General'], ['project/alerts', 'Exception alerts'], ['project/api-keys', 'Api keys']] },
 ]
 
 export function SettingsLayout() {
   const projects = useProjects()
-  /* The same choice the switcher at the top of every screen makes, so configuring a project and
-     reading its traces do not disagree about which one is meant. */
   const { project, chooseProject } = useScope()
   return (
     <div className="flex flex-wrap items-start gap-8">

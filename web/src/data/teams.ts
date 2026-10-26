@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { del, get, json, patch, post, put } from '@/auth/client'
-import { useOrganizations } from '@/auth/session'
+import { useOrganisations } from '@/auth/session'
 import { nothingYet } from './orgs'
 
 export type Team = {
@@ -14,7 +14,7 @@ export type Team = {
 const key = (org: string | undefined) => ['org', org, 'teams']
 
 export function useTeams() {
-  const found = useOrganizations()
+  const found = useOrganisations()
   const { active } = found
   const { data, isPending, error } = useQuery({
     queryKey: key(active?.org),
@@ -25,11 +25,8 @@ export function useTeams() {
   return { teams: data, nothing: nothingYet(found, isPending, error, 'teams') }
 }
 
-/* Every change answers with the teams as they now stand rather than with the one that moved,
-   because one team is never the whole of it: handing a project to a team takes it off the team
-   that held it, and a screen written from one row would be wrong about the other. */
 function useArrange<T>(send: (org: string, asked: T) => Promise<{ teams: Team[] }>) {
-  const { active } = useOrganizations()
+  const { active } = useOrganisations()
   const client = useQueryClient()
   return useMutation({
     mutationFn: async (asked: T) => (await send(active?.org ?? '', asked)).teams,
@@ -60,8 +57,6 @@ export const useOwnTeam = () =>
 
 export const TEAM_NAME_MAX_BYTES = 64
 
-/* The server owns the rule and answers 422 with it in plain text; this is the same rule checked
-   early so the field can answer without a round trip. */
 export function teamNameProblem(name: string): string | null {
   const kept = name.trim()
   if (new TextEncoder().encode(kept).length > TEAM_NAME_MAX_BYTES) {
@@ -71,8 +66,6 @@ export function teamNameProblem(name: string): string | null {
   return null
 }
 
-/* Two letters drawn from the name, which is what the badge in the table holds: the initials of a
-   name spelt in words, and the first two letters of one that is not. */
 export function initialsOf(name: string) {
   const words = name.split(/[\s.\-_]+/).filter(Boolean)
   const letters = words.length > 1 ? words.map((word) => word[0]).join('') : name

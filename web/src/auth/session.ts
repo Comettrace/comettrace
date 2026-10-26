@@ -6,9 +6,7 @@ export function useAccount() {
   return useQuery(accountQuery).data
 }
 
-/* `asking` tells an organisation screen apart from a session that belongs to no organisation:
-   both carry no active one, and only the second is worth a sentence. */
-export function useOrganizations(): {
+export function useOrganisations(): {
   list: Membership[]
   active: Membership | undefined
   asking: boolean

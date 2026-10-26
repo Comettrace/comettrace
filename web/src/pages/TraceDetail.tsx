@@ -4,21 +4,21 @@ import { Link, useParams } from '@/lib/router'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ServiceDot, svcBg } from '@/components/cmt/bits'
+import { EmptyState, ServiceDot, svcBg } from '@/components/cmt/bits'
 import { useTrace } from '@/data/traces'
+import { because } from '@/auth/client'
 import { stamp } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { NotFound } from './NotFound'
 
 export function TraceDetail() {
   const { id } = useParams()
-  const { row: t, spans, pending } = useTrace(id)
+  const { row: t, spans, pending, failed } = useTrace(id)
   const [picked, setPicked] = useState<string | null>(null)
   const [panel, setPanel] = useState(true)
   if (pending) return null
+  if (failed) return <EmptyState title="The trace could not be read">{because(failed, 'The span store did not answer')}</EmptyState>
   if (!t) return <NotFound />
-  /* The spans arrive after the first render, so the opened span is chosen by id rather than by
-     index: an error span if the trace has one, because that is what the reader came for. */
   const s = spans.find((x) => x.id === picked) ?? spans.find((x) => x.err) ?? spans[0]
   const services = [...new Set(spans.map((x) => x.svc))]
   return (
@@ -72,9 +72,6 @@ export function TraceDetail() {
             </div>
             <div className="flex flex-col gap-3 overflow-y-auto p-4">
               <div className="flex flex-wrap gap-2"><Badge variant="outline" mono>{s.kind}</Badge>{s.err ? <Badge variant="destructive">ERROR</Badge> : <Badge variant="success">OK</Badge>}<Badge variant="outline" mono>{s.dur}</Badge></div>
-              {/* What a reader opening an error span came for, so it goes above the attributes.
-                  Its type, message and stack trace are shown as a block and left out of the
-                  event's own attribute list below, where they would read as three strings. */}
               {s.events.map((e, at) =>
                 e.exception ? (
                   <div key={`exc-${at}`} className="rounded-md border border-destructive-border bg-destructive-subtle px-3 py-2 text-caption text-destructive-text">
@@ -83,8 +80,6 @@ export function TraceDetail() {
                   </div>
                 ) : null,
               )}
-              {/* A span that failed and recorded nothing is a real state, and saying so is more
-                  use than a panel that looks like it is still loading. */}
               {s.err && !s.events.some((e) => e.exception) ? (
                 <span className="text-caption text-muted-foreground">This span failed and recorded no exception.</span>
               ) : null}
@@ -97,9 +92,6 @@ export function TraceDetail() {
                   </div>
                 ))}
               </dl>
-              {/* Every event, exceptions included, in the order the span recorded them — which is
-                  forwards in time, so the list reads as what happened. The offset is from the
-                  start of the trace, the same origin the waterfall uses. */}
               {s.events.length ? (
                 <>
                   <h3 className="m-0 text-caption font-semibold uppercase tracking-[.05em] text-muted-foreground">Events</h3>

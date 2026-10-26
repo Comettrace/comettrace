@@ -17,7 +17,7 @@ export function Security() {
     <>
       <H title="Login & security" sub="How you sign in, and where you are signed in." />
       <Card className="overflow-hidden">
-        <Row title="Sign-in method" sub="Email and password. Single sign-on replaces it when the organization turns it on."><Badge variant="outline">Email and password</Badge></Row>
+        <Row title="Sign-in method" sub="Email and password. Single sign-on replaces it when the organisation turns it on."><Badge variant="outline">Email and password</Badge></Row>
         <Row title="Two-factor authentication" sub="A code from an authenticator app at each sign-in.">{twofa ? <Badge variant="success"><ShieldCheck />On</Badge> : <><Badge variant="warning">Off</Badge><Button variant="primary" size="sm" onClick={() => setSetup(true)}>Set up</Button></>}</Row>
         <Row title="Recovery codes" sub={twofa ? '10 codes left.' : 'Available once two-factor is on.'}><Button size="sm" disabled={!twofa}>Show codes</Button></Row>
       </Card>

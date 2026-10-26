@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { del, get, json, patch, post, put } from '@/auth/client'
-import { useOrganizations } from '@/auth/session'
+import { useOrganisations } from '@/auth/session'
 import { nothingYet } from './orgs'
 
 export type Project = {
@@ -14,7 +14,7 @@ export type Project = {
 const key = (org: string | undefined) => ['projects', org]
 
 export function useCatalogue() {
-  const found = useOrganizations()
+  const found = useOrganisations()
   const { active } = found
   const { data, isPending, error } = useQuery({
     queryKey: key(active?.org),
@@ -25,23 +25,17 @@ export function useCatalogue() {
   return { projects: data, nothing: nothingYet(found, isPending, error, 'projects') }
 }
 
-/* The switcher at the top of every screen wants a list it can map over and nothing else to say
-   when there is none, so it reads the same query through this. */
 export function useProjects(): Project[] {
   return useCatalogue().projects ?? []
 }
 
-/* Every change answers with the catalogue as it now stands: handing a project to a team is a
-   thing the teams screen reads too, and the list is short enough that the answer costs less than
-   asking again. */
 function useArrange<T>(send: (org: string, asked: T) => Promise<{ projects: Project[] }>) {
-  const { active } = useOrganizations()
+  const { active } = useOrganisations()
   const client = useQueryClient()
   return useMutation({
     mutationFn: async (asked: T) => (await send(active?.org ?? '', asked)).projects,
     onSuccess: (projects) => {
       client.setQueryData(key(active?.org), projects)
-      /* The teams screen carries what each team owns, and that just moved. */
       void client.invalidateQueries({ queryKey: ['org', active?.org, 'teams'] })
     },
   })
@@ -65,9 +59,6 @@ export const useAssignProject = () =>
 
 export const PROJECT_NAME_MAX_BYTES = 64
 
-/* The server owns the rule and answers 422 with it in plain text; this is the same rule checked
-   early so the field can answer without a round trip. Case is lowered rather than refused, here
-   as there, so the field shows what will be kept. */
 export function projectNameProblem(name: string): string | null {
   const kept = name.trim().toLowerCase()
   if (new TextEncoder().encode(kept).length > PROJECT_NAME_MAX_BYTES) {

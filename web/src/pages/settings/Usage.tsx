@@ -12,12 +12,6 @@ const DAY = 86_400_000
 const month = (at: number) => new Date(at).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 const dayLabel = (at: number) => new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
 
-/* Four cards of the same shape, which is what makes a row of them readable: a label, a value,
-   what it is measured against, a bar, and a line saying what the bar means. Only one quantity is
-   metered here — decompressed payload bytes — so what differs between the cards is not the
-   measure but what each one compares it to. None of the four is invented.
-
-   `share` of nothing draws no bar, because a bar with no denominator is a decoration. */
 function Meter({ label, used, of, share, note }: { label: string; used: string; of?: string; share: number | null; note: string }) {
   return (
     <Card className="flex flex-col gap-2 p-3.5">
@@ -36,13 +30,6 @@ function Meter({ label, used, of, share, note }: { label: string; used: string; 
   )
 }
 
-/* One series of daily totals: bars, because the buckets are discrete and the question is
-   magnitude per day. No legend — the heading names the one series — and no number on every bar.
-
-   The readout sits in the heading rather than floating over the hovered bar. A bubble centred on
-   a bar overflows the card at either end of a month, and on a narrow screen that is the page
-   itself scrolling sideways; one fixed place cannot. The title attribute stays for a pointer that
-   is really a finger, and the table underneath is how every value is read at once. */
 function Daily({ days }: { days: Day[] }) {
   const hi = Math.max(1, ...days.map((d) => d.bytes))
   const [hovered, setHovered] = useState<Day | null>(null)
@@ -97,8 +84,6 @@ export function Usage() {
   const days = useMemo(() => (metered ? byDay(metered.hours, from, Math.min(to, now + DAY)) : []), [metered, from, to, now])
 
   const rolled = days.reduce((total, d) => total + d.bytes, 0)
-  /* This month's figure is the live counter, which counts the hour in progress. A past month has
-     no live counter to read, so it is the rolled up hours and nothing else. */
   const used = period === 'this' ? (metered?.ingested_bytes ?? 0) : rolled
   const included = metered?.included_bytes ?? null
   const busiest = days.reduce<Day | null>((peak, d) => (peak === null || d.bytes > peak.bytes ? d : peak), null)
@@ -110,7 +95,7 @@ export function Usage() {
 
   return (
     <>
-      <H title="Usage" sub={`${month(from)} · decompressed payload bytes, per organization.`}>
+      <H title="Usage" sub={`${month(from)} · decompressed payload bytes, per organisation.`}>
         <Segmented
           label="Period"
           value={period}
@@ -184,7 +169,7 @@ export function Usage() {
         <Card className="px-4 py-3 text-control text-muted-foreground">{nothing}</Card>
       )}
       <p className="m-0 text-caption text-muted-foreground">
-        What is metered is the decompressed size of each payload accepted, counted per organization — not per project, because the counter is keyed by the organization. Nothing counts spans, log records or metric points, and nothing measures what the span store holds. The ceiling is the <Link to="/settings/billing">plan</Link> the control plane carries, and it is the same number a payload is refused against.
+        What is metered is the decompressed size of each payload accepted, counted per organisation — not per project, because the counter is keyed by the organisation. Nothing counts spans, log records or metric points, and nothing measures what the span store holds. The ceiling is the <Link to="/settings/billing">plan</Link> the control plane carries, and it is the same number a payload is refused against.
       </p>
     </>
   )

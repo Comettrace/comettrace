@@ -12,14 +12,14 @@ import { Segmented } from '@/components/ui/segmented'
 import { Alert, Avatar, Table, Td, Th, Tr } from '@/components/ui/misc'
 import { because } from '@/auth/client'
 import { type Role } from '@/auth/api'
-import { useAccount, useOrganizations } from '@/auth/session'
+import { useAccount, useOrganisations } from '@/auth/session'
 import { mayChange, mayHandOut, theLastOwner, useGrantRole, useInvite, useMembers, useRemoveMember, type Member, type Welcomed } from '@/data/members'
 import { initialsOf, nameOf } from '@/data/profile'
 import { stamp } from '@/lib/format'
 import { H, saved } from './parts'
 
 export function Members() {
-  const { active } = useOrganizations()
+  const { active } = useOrganisations()
   const me = useAccount()
   const { members, nothing } = useMembers()
   const grant = useGrantRole()
@@ -35,8 +35,6 @@ export function Members() {
   const change = (member: Member, role: Role) =>
     grant.mutate({ account: member.account, role }, { onSuccess: saved, onError: (error) => toast.error(because(error, 'The role was not changed')) })
 
-  /* Removing your own membership is leaving, and every screen behind this one is then reading an
-     organisation you no longer belong to. So the cache goes and the browser starts again. */
   const drop = (member: Member) =>
     remove.mutate(member.account, {
       onSuccess: () => {
@@ -53,7 +51,7 @@ export function Members() {
 
   return (
     <>
-      <H title="Members" sub={members ? `${roll.length} ${roll.length === 1 ? 'member' : 'members'} · ${administered} can administer it` : 'Who belongs to the organization.'}>
+      <H title="Members" sub={members ? `${roll.length} ${roll.length === 1 ? 'member' : 'members'} · ${administered} can administer it` : 'Who belongs to the organisation.'}>
         {mine === 'owner' || mine === 'admin' ? <Button variant="primary" onClick={() => setInvite(true)}><Plus />Invite member</Button> : null}
       </H>
       <Card className="overflow-x-auto">
@@ -79,12 +77,12 @@ export function Members() {
             )
           })}</tbody>
         </Table>
-        {roll.length === 0 ? <p className="m-0 px-4 py-3 text-control text-muted-foreground">{members ? 'Nobody belongs to this organization.' : nothing}</p> : null}
+        {roll.length === 0 ? <p className="m-0 px-4 py-3 text-control text-muted-foreground">{members ? 'Nobody belongs to this organisation.' : nothing}</p> : null}
       </Card>
-      <p className="m-0 text-caption text-muted-foreground">Only an owner hands out the owner role or changes somebody who holds it, and an organization keeps at least one owner — so the last one stays until it has handed the role on. Somebody who has lost their password asks for a link on the sign-in screen.</p>
+      <p className="m-0 text-caption text-muted-foreground">Only an owner hands out the owner role or changes somebody who holds it, and an organisation keeps at least one owner — so the last one stays until it has handed the role on. Somebody who has lost their password asks for a link on the sign-in screen.</p>
       <InviteMember open={invite} onOpenChange={setInvite} mine={mine} />
       <Dialog open={leaving} onOpenChange={setLeaving}>
-        <DialogContent role="alertdialog" title={`Leave ${active?.name ?? 'the organization'}?`} description="You lose every screen of it at once. Somebody who stays has to invite you back.">
+        <DialogContent role="alertdialog" title={`Leave ${active?.name ?? 'the organisation'}?`} description="You lose every screen of it at once. Somebody who stays has to invite you back.">
           <DialogFooter><Button onClick={() => setLeaving(false)}>Stay</Button><Button variant="destructive" disabled={remove.isPending} onClick={() => { const mineRow = roll.find((m) => m.account === me?.account); if (mineRow) drop(mineRow) }}>Leave</Button></DialogFooter>
         </DialogContent>
       </Dialog>
@@ -97,8 +95,6 @@ function InviteMember({ open, onOpenChange, mine }: { open: boolean; onOpenChang
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<Role>('member')
   const [welcomed, setWelcomed] = useState<Welcomed | null>(null)
-  /* The server hands back a token, not a link: the path that spends it belongs to this app, and
-     the server does not know what address the browser reached it on. */
   const link = welcomed?.invite_token ? `${window.location.origin}/reset?token=${welcomed.invite_token}` : null
 
   const close = (o: boolean) => {
@@ -114,7 +110,7 @@ function InviteMember({ open, onOpenChange, mine }: { open: boolean; onOpenChang
   return (
     <Dialog open={open} onOpenChange={close}>
       <DialogContent
-        title={welcomed ? `${welcomed.member.email} belongs to the organization` : 'Invite member'}
+        title={welcomed ? `${welcomed.member.email} belongs to the organisation` : 'Invite member'}
         description={welcomed ? (link ? `Role: ${welcomed.member.role}. Send the link through your own channel.` : `Role: ${welcomed.member.role}. It signs in with the password it already has.`) : 'An address that has no account here gets one, and a link that sets its password once.'}
       >
         {welcomed ? (
@@ -133,7 +129,7 @@ function InviteMember({ open, onOpenChange, mine }: { open: boolean; onOpenChang
           <form className="flex flex-col gap-4" onSubmit={send}>
             <Field label="Email" htmlFor="iv-e"><Input id="iv-e" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="somebody@example.com" autoFocus /></Field>
             <Field label="Role"><div><Segmented label="Role" value={role} onChange={(chosen) => setRole(chosen as Role)} options={mayHandOut(mine).map((one) => ({ value: one, label: one }))} /></div></Field>
-            <span className="text-caption text-muted-foreground">{role === 'owner' ? 'Answers for the organization: everything an administrator does, and the owner role itself.' : role === 'admin' ? 'Also manages members, projects, keys and billing.' : 'Reads traces, logs and metrics, and posts incidents.'}</span>
+            <span className="text-caption text-muted-foreground">{role === 'owner' ? 'Answers for the organisation: everything an administrator does, and the owner role itself.' : role === 'admin' ? 'Also manages members, projects, keys and billing.' : 'Reads traces, logs and metrics, and posts incidents.'}</span>
             <DialogFooter><Button type="button" onClick={() => close(false)}>Cancel</Button><Button variant="primary" type="submit" disabled={email.trim().length === 0 || invite.isPending}>Invite</Button></DialogFooter>
           </form>
         )}
