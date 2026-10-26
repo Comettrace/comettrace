@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use axum::Router;
+use clap::Parser;
 use comettrace_api::{
     SessionCookie, SignInMethods, auth_router, catalogue_router, explore_router, health_router,
     me_router, methods_router, oidc_router, org_router, password_router, reset_router,
