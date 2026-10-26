@@ -33,6 +33,7 @@ tracing.workspace = true
 axum.workspace = true
 base64.workspace = true
 clickhouse = { workspace = true, features = ["test-util"] }
+comettrace-core = { workspace = true, features = ["testing"] }
 jsonwebtoken.workspace = true
 rsa = { version = "0.9.10", features = ["getrandom"] }
 serde_json.workspace = true
