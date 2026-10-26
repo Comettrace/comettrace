@@ -11,6 +11,7 @@ mod oidc;
 mod organisation;
 mod password;
 mod photo;
+mod profile;
 mod quota;
 mod reset;
 mod roster;
@@ -49,6 +50,7 @@ pub use password::{ChangeError, ChangePassword};
 pub use photo::{
     BadPhoto, MAX_PHOTO_BYTES, NoPhotos, Photo, PhotoError, PhotoKind, Photos, Pictured, Portrait,
 };
+pub use profile::{AccountName, Accounts, BadAccountName, Profile, ProfileError};
 pub use quota::{Admission, QuotaPolicy, Unmetered};
 pub use reset::{Mailer, ResetError, ResetPassword, ResetStore};
 pub use roster::{Admitted, Invitation, Member, Roll, Roster, RosterError};

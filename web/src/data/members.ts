@@ -4,7 +4,7 @@ import { del, get, json, patch, post } from '@/auth/client'
 import { useOrganizations } from '@/auth/session'
 import { nothingYet } from './orgs'
 
-export type Member = { account: string; email: string; role: Role; joined_at_ms: number }
+export type Member = { account: string; email: string; name: string | null; photo: string | null; role: Role; joined_at_ms: number }
 
 /* The token is returned once, by the one request that created the account, and the control plane
    keeps only its digest. It is absent when the address already had an account: choosing a
@@ -80,15 +80,3 @@ export const theLastOwner = (roll: Member[], member: Member) =>
 
 export const mayHandOut = (mine: Role | undefined): Role[] =>
   mine === 'owner' ? ['owner', 'admin', 'member'] : ['admin', 'member']
-
-/* An address is all the server holds, so initials come from the local part: the first letter of
-   each word it is spelt in, which is what most addresses are built from. */
-export function initialsOf(email: string) {
-  const letters = email
-    .split('@')[0]
-    .split(/[.\-_+]/)
-    .filter(Boolean)
-    .map((word) => word[0])
-    .join('')
-  return (letters || email.slice(0, 2)).slice(0, 2).toUpperCase()
-}

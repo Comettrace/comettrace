@@ -235,6 +235,8 @@ mod tests {
                 Ok(Session {
                     account: AccountId::new(Uuid::from_u128(9)),
                     email: Email::try_from("person@example.com").expect("an address"),
+                    name: None,
+                    photo: None,
                     org: None,
                     expires_at: UnixSeconds::new(0),
                 })

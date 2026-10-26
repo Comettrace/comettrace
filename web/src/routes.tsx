@@ -94,7 +94,7 @@ const settingsRoute = createRoute({ getParentRoute: () => shellRoute, path: '/se
 
 const settingsChildren = [
   createRoute({ getParentRoute: () => settingsRoute, path: '/', beforeLoad: () => { throw redirect({ to: '/settings/general' }) } }),
-  createRoute({ getParentRoute: () => settingsRoute, path: 'profile', component: Profile, staticData: mock }),
+  createRoute({ getParentRoute: () => settingsRoute, path: 'profile', component: Profile, staticData: real }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'security', component: Security, staticData: mock }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'preferences', component: Preferences, staticData: mock }),
   createRoute({ getParentRoute: () => settingsRoute, path: 'general', component: OrgGeneral, staticData: real }),

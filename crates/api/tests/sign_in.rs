@@ -80,6 +80,8 @@ impl SessionStore for MemorySessions {
             Ok(Session {
                 account: AccountId::new(Uuid::nil()),
                 email: an_email(),
+                name: None,
+                photo: None,
                 org: None,
                 expires_at: UnixSeconds::new(0),
             })

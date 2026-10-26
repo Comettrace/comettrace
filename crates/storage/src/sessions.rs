@@ -4,6 +4,8 @@ use comettrace_core::{
 };
 use sqlx::{PgPool, Row};
 
+use crate::accounts::read_portrait;
+
 const TOKEN_BYTES: usize = 32;
 const NANOS_PER_SECOND: i64 = 1_000_000_000;
 
@@ -64,7 +66,8 @@ impl<C: Clock + Send + Sync> SessionStore for PostgresSessions<C> {
     async fn resolve(&self, token: &SessionToken) -> Result<Session, SessionError> {
         let now = self.clock.now();
         let row = sqlx::query(
-            "SELECT s.account_id AS account_id, a.email AS email, \
+            "SELECT s.account_id AS account_id, a.email AS email, a.name AS name, \
+                    a.photo_token AS photo_token, a.photo_type AS photo_type, \
                     s.org_id AS org_id, s.created_at AS created_at \
              FROM sessions s JOIN accounts a ON a.id = s.account_id \
              WHERE s.hash = $1 AND s.revoked_at IS NULL AND s.expires_at > $2",
@@ -92,6 +95,8 @@ impl<C: Clock + Send + Sync> SessionStore for PostgresSessions<C> {
         Ok(Session {
             account: AccountId::new(row.get("account_id")),
             email,
+            name: row.get::<Option<String>, _>("name").map(Into::into),
+            photo: read_portrait(&row),
             org: row
                 .get::<Option<uuid::Uuid>, _>("org_id")
                 .map(TenantId::new),

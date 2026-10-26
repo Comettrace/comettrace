@@ -1,9 +1,9 @@
 import { queryOptions } from '@tanstack/react-query'
-import { get, json, post } from './client'
+import { get, json, patch, post } from './client'
 
 export type Role = 'owner' | 'admin' | 'member'
 export type Membership = { org: string; name: string; role: Role }
-export type Account = { account: string; email: string; active_org: string | null; memberships: Membership[] }
+export type Account = { account: string; email: string; name: string | null; photo: string | null; active_org: string | null; memberships: Membership[] }
 export type Methods = { local_password: boolean; oidc: boolean }
 
 export const accountQuery = queryOptions({
@@ -38,6 +38,10 @@ export const signIn = (email: string, password: string) => post('/auth/sign-in',
 export const signOut = () => post('/auth/sign-out')
 export const requestReset = (email: string) => post('/auth/reset/request', { email })
 export const confirmReset = (token: string, password: string) => post('/auth/reset/confirm', { token, password })
+
+/* An emptied box takes the name off, the way an emptied filter box is no filter: the server trims
+   what it is sent and answers with the standing it kept. */
+export const renameMe = (name: string) => patch('/auth/me', { name })
 
 export const OIDC_START = '/auth/oidc/start'
 

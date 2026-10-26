@@ -1,6 +1,8 @@
 use comettrace_core::{
-    AccountDirectory, AccountId, AuthError, Email, PasswordHash, ProvisionPolicy, ResolvedIdentity,
+    AccountDirectory, AccountId, AccountName, Accounts, AuthError, Email, PasswordHash, PhotoKind,
+    Portrait, ProvisionPolicy, ReadError, ResolvedIdentity,
 };
+use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -140,4 +142,75 @@ impl AccountDirectory for PostgresAccounts {
             }
         }
     }
+}
+
+impl Accounts for PostgresAccounts {
+    /* `None` writes the column null rather than an empty string, so an account with no name is
+    one state in the schema as well as one in the code. The check on the column refuses the
+    other spelling. */
+    async fn rename(
+        &self,
+        account: AccountId,
+        name: Option<&AccountName>,
+    ) -> Result<(), ReadError> {
+        sqlx::query("UPDATE accounts SET name = $2 WHERE id = $1")
+            .bind(account.as_uuid())
+            .bind(name.map(AccountName::as_str))
+            .execute(&self.pool)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "the control plane refused to rename an account");
+                ReadError::StoreUnreachable
+            })?;
+        Ok(())
+    }
+
+    async fn portrait_of(&self, account: AccountId) -> Result<Option<Portrait>, ReadError> {
+        let found = sqlx::query(
+            "SELECT photo_token AS photo_token, photo_type AS photo_type \
+             FROM accounts WHERE id = $1",
+        )
+        .bind(account.as_uuid())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "the control plane refused to read a photo");
+            ReadError::StoreUnreachable
+        })?;
+        Ok(found.as_ref().and_then(read_portrait))
+    }
+
+    /* Both columns move together or neither does, which is what the check on them says too. */
+    async fn set_portrait(
+        &self,
+        account: AccountId,
+        portrait: Option<&Portrait>,
+    ) -> Result<(), ReadError> {
+        sqlx::query("UPDATE accounts SET photo_token = $2, photo_type = $3 WHERE id = $1")
+            .bind(account.as_uuid())
+            .bind(portrait.map(|kept| kept.token.as_ref()))
+            .bind(portrait.map(|kept| kept.kind.as_str()))
+            .execute(&self.pool)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "the control plane refused to keep a photo");
+                ReadError::StoreUnreachable
+            })?;
+        Ok(())
+    }
+}
+
+/* The token and the media type are one fact, and the schema holds them that way. Half of one is
+a row nothing can serve -- a media type this build does not know included -- and no photo is the
+honest reading of it: the screen falls back to initials rather than to an error. */
+pub(crate) fn read_portrait(row: &PgRow) -> Option<Portrait> {
+    let token: Option<String> = row.get("photo_token");
+    let kind = row
+        .get::<Option<String>, _>("photo_type")
+        .as_deref()
+        .and_then(PhotoKind::named);
+    Some(Portrait {
+        token: token?.into(),
+        kind: kind?,
+    })
 }

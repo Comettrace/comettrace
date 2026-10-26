@@ -16,18 +16,19 @@ use comettrace_api::{
 };
 use comettrace_core::{
     AccountId, AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
-    FederatedSignIn, Ingest, IngestKey, Mailer, Metering, NoProvider, OrgRole, OrgSettings,
-    ProjectId, ProjectName, ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken,
-    Roster, Scope, SessionLifetime, SignIn, SinkError, Span, SpanSink, Squad, TenantDirectory,
-    TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
+    FederatedSignIn, Ingest, IngestKey, Mailer, Metering, NoPhotos, NoProvider, OrgRole,
+    OrgSettings, Photo, PhotoError, Photos, Portrait, Profile, ProjectId, ProjectName,
+    ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken, Roster, Scope,
+    SessionLifetime, SignIn, SinkError, Span, SpanSink, Squad, TenantDirectory, TenantId,
+    UnknownKey, UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink,
     LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink, OidcProvider, OidcSettings,
-    PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresMemberships, PostgresOrgs,
-    PostgresProjects, PostgresResets, PostgresRoster, PostgresSessions, PostgresTeams,
-    PostgresUsage, RedisMeter, SmtpMailer, SpanStoreSettings, StaticDirectory, StaticQuota,
-    SystemClock, load_allowances, open_span_store,
+    PhotoStoreSettings, PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresMemberships,
+    PostgresOrgs, PostgresProjects, PostgresResets, PostgresRoster, PostgresSessions,
+    PostgresTeams, PostgresUsage, RedisMeter, S3Photos, SmtpMailer, SpanStoreSettings,
+    StaticDirectory, StaticQuota, SystemClock, load_allowances, open_span_store,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -73,6 +74,45 @@ impl Mailer for Relay {
                 tracing::warn!("a reset link was asked for but no mail relay is configured");
                 Err(ResetError::Undeliverable)
             }
+        }
+    }
+}
+
+/* The bytes of a face live outside the control plane, and a deployment that was never given a
+bucket keeps none. It refuses rather than being absent, the way the relay above does: somebody
+who presses the control is told which part is missing. */
+#[derive(Debug)]
+enum Gallery {
+    Objects(Box<S3Photos<SystemClock>>),
+    Nowhere,
+}
+
+impl Photos for Gallery {
+    async fn put(&self, account: AccountId, photo: &Photo) -> Result<Portrait, PhotoError> {
+        match self {
+            Self::Objects(store) => store.put(account, photo).await,
+            Self::Nowhere => {
+                tracing::warn!("a photo was offered but no object store is configured");
+                NoPhotos.put(account, photo).await
+            }
+        }
+    }
+
+    async fn fetch(
+        &self,
+        account: AccountId,
+        portrait: &Portrait,
+    ) -> Result<Option<Vec<u8>>, PhotoError> {
+        match self {
+            Self::Objects(store) => store.fetch(account, portrait).await,
+            Self::Nowhere => NoPhotos.fetch(account, portrait).await,
+        }
+    }
+
+    async fn remove(&self, account: AccountId, portrait: &Portrait) -> Result<(), PhotoError> {
+        match self {
+            Self::Objects(store) => store.remove(account, portrait).await,
+            Self::Nowhere => NoPhotos.remove(account, portrait).await,
         }
     }
 }
@@ -442,7 +482,8 @@ async fn main() -> anyhow::Result<()> {
     let (sink, reader) = spans_of(&config).await?;
     let sink = Arc::new(sink);
     tokio::spawn(flush_spans(Arc::clone(&sink)));
-    let identity = identity_routes(&config, pool.as_ref())
+    let gallery = Arc::new(gallery_of(&config)?);
+    let identity = identity_routes(&config, pool.as_ref(), gallery)
         .await?
         .merge(explore_routes(pool.as_ref(), reader))
         .merge(catalogue_routes(pool.as_ref()))
@@ -741,11 +782,15 @@ type PasswordSignIn = SignIn<LocalSource, NoProvider, PostgresAccounts, Arc<Sess
 type Resets = ResetPassword<PostgresResets<SystemClock>, Argon2Hasher, Relay>;
 type Changes =
     ChangePassword<Arc<Sessions>, LocalSource, PostgresResets<SystemClock>, Argon2Hasher>;
-type Me = Whoami<Arc<Sessions>, PostgresMemberships>;
+type Me = Profile<Arc<Sessions>, PostgresMemberships, PostgresAccounts, Arc<Gallery>>;
 type Federated =
     FederatedSignIn<OidcProvider, PostgresFlows<SystemClock>, PostgresAccounts, Arc<Sessions>>;
 
-async fn identity_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Result<Router> {
+async fn identity_routes(
+    config: &Config,
+    pool: Option<&PgPool>,
+    gallery: Arc<Gallery>,
+) -> anyhow::Result<Router> {
     let offered = methods_router(SignInMethods {
         local_password: config.local_password && pool.is_some(),
         oidc: config.oidc.is_some() && pool.is_some(),
@@ -767,11 +812,17 @@ async fn identity_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Resu
         SystemClock,
         SessionLifetime::default(),
     ));
-    let whoami: Arc<Me> = Arc::new(Whoami::new(
-        Arc::clone(&sessions),
-        PostgresMemberships::new(pool.clone()),
+    /* The standing reader and the two things a person may change about themselves ride together:
+    /auth/me answers the first and takes the others. */
+    let me: Arc<Me> = Arc::new(Profile::new(
+        Whoami::new(
+            Arc::clone(&sessions),
+            PostgresMemberships::new(pool.clone()),
+        ),
+        accounts.clone(),
+        gallery,
     ));
-    let mut routes = offered.merge(me_router(whoami));
+    let mut routes = offered.merge(me_router(me));
 
     if config.local_password {
         let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
@@ -828,6 +879,20 @@ async fn identity_routes(config: &Config, pool: Option<&PgPool>) -> anyhow::Resu
     }
 
     Ok(routes)
+}
+
+fn gallery_of(config: &Config) -> anyhow::Result<Gallery> {
+    let Some(objects) = config.objects.clone() else {
+        tracing::warn!(
+            "no object store is configured, so nobody can keep a profile photo; set objects.endpoint, objects.bucket and its credentials to offer one"
+        );
+        return Ok(Gallery::Nowhere);
+    };
+    let bucket = objects.bucket.clone();
+    let store = S3Photos::new(&PhotoStoreSettings::from(objects), SystemClock)
+        .context("preparing the photo store")?;
+    tracing::info!(%bucket, "profile photos are kept in an object store");
+    Ok(Gallery::Objects(Box::new(store)))
 }
 
 fn relay_of(config: &Config) -> anyhow::Result<Relay> {

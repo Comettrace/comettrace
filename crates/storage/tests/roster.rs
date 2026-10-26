@@ -402,3 +402,80 @@ async fn deleting_an_organisation_takes_the_roll_with_it_and_leaves_the_accounts
     );
     assert_eq!(accounts_with(&pool, "new@example.com").await, 1);
 }
+
+/* The members table shows a name where one was written and the address everywhere else, so the
+roll has to carry both and the absence has to survive the read. */
+#[tokio::test]
+async fn the_roll_carries_the_name_an_account_was_given() {
+    let Some(pool) = control_plane("roster_named").await else {
+        return;
+    };
+    let org = an_org(&pool, "owner@example.com").await;
+    let joiner = an_account(&pool, "joiner@example.com").await;
+    PostgresMemberships::new(pool.clone())
+        .grant(org, "joiner@example.com", OrgRole::Member)
+        .await
+        .expect("the grant");
+    named(&pool, joiner, "Ines Martin").await;
+
+    let roll = roster(&pool).of(org).await.expect("the roll is read");
+
+    assert_eq!(
+        member_at(&roll, "joiner@example.com").name.as_deref(),
+        Some("Ines Martin")
+    );
+    assert_eq!(
+        member_at(&roll, "owner@example.com").name,
+        None,
+        "an account nobody has named is listed under its address"
+    );
+}
+
+/* An invitation to an address somebody already holds answers with the member as it stands, and
+that includes the name they had already written. */
+#[tokio::test]
+async fn an_admitted_standing_account_brings_its_name_with_it() {
+    let Some(pool) = control_plane("roster_admit_named").await else {
+        return;
+    };
+    let org = an_org(&pool, "owner@example.com").await;
+    let standing = an_account(&pool, "known@example.com").await;
+    named(&pool, standing, "Ines Martin").await;
+
+    let admitted = roster(&pool)
+        .admit(org, &an_address("known"), OrgRole::Admin, a_digest(9))
+        .await
+        .expect("the admission");
+
+    let Admitted::Standing(member) = admitted else {
+        panic!("an address somebody already holds must join standing: {admitted:?}");
+    };
+    assert_eq!(member.name.as_deref(), Some("Ines Martin"));
+}
+
+#[tokio::test]
+async fn an_account_created_by_an_invitation_carries_no_name() {
+    let Some(pool) = control_plane("roster_admit_unnamed").await else {
+        return;
+    };
+    let org = an_org(&pool, "owner@example.com").await;
+
+    let admitted = roster(&pool)
+        .admit(org, &an_address("stranger"), OrgRole::Member, a_digest(4))
+        .await
+        .expect("the admission");
+
+    let Admitted::Awaiting(member) = admitted else {
+        panic!("an unknown address must be given an account: {admitted:?}");
+    };
+    assert_eq!(member.name, None, "nobody has written a name for them yet");
+}
+
+async fn named(pool: &PgPool, account: Uuid, name: &str) {
+    sqlx::query("UPDATE accounts SET name = $2 WHERE id = $1")
+        .bind(account)
+        .bind(name)
+        .execute(pool)
+        .await
+        .expect("naming an account");
+}

@@ -1,4 +1,4 @@
-import { ALERT_RULES, INGEST_KEYS, ME, MEMBERS, PROJECTS, QUERY_KEYS } from '@/mocks/mock'
+import { ALERT_RULES, INGEST_KEYS, MEMBERS, PROJECTS, QUERY_KEYS } from '@/mocks/mock'
 import { useMock } from './seam'
 
 /* What is left of the sample data. The organisation itself is real (see src/data/orgs), so are
@@ -29,8 +29,4 @@ export function useReadKeys() {
 
 export function useExceptionAlerts() {
   return useMock(['organization', 'exception-alerts'], () => ALERT_RULES)
-}
-
-export function useProfile() {
-  return useMock(['organization', 'profile'], () => ME)
 }
