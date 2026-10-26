@@ -7,23 +7,14 @@ use uuid::Uuid;
 const NOVEMBER: u64 = 1_700_000_000;
 const DECEMBER: u64 = 1_702_600_000;
 
-fn redis_url() -> Option<String> {
-    if let Ok(url) = std::env::var("REDIS_URL") {
-        return Some(url);
-    }
-    assert!(
-        std::env::var("REQUIRE_REDIS_URL").is_err(),
-        "REQUIRE_REDIS_URL is set but REDIS_URL is not"
-    );
-    None
-}
+mod backend;
 
 async fn meter_at(seconds: u64) -> Option<RedisMeter<FixedClock>> {
     namespaced_meter_at(seconds, "shared").await
 }
 
 async fn namespaced_meter_at(seconds: u64, namespace: &str) -> Option<RedisMeter<FixedClock>> {
-    let url = redis_url()?;
+    let url = backend::redis_url()?;
     Some(
         RedisMeter::connect(&url, FixedClock::at(seconds))
             .await
@@ -33,7 +24,7 @@ async fn namespaced_meter_at(seconds: u64, namespace: &str) -> Option<RedisMeter
 }
 
 async fn control_plane(schema: &str) -> Option<PgPool> {
-    let url = std::env::var("DATABASE_URL").ok()?;
+    let url = backend::url()?;
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(&url)

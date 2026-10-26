@@ -9,8 +9,10 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 use uuid::Uuid;
 
+mod backend;
+
 async fn control_plane(schema: &str) -> Option<PgPool> {
-    let url = std::env::var("DATABASE_URL").ok()?;
+    let url = backend::url()?;
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(&url)
@@ -233,8 +235,6 @@ async fn seating_writes_the_whole_list_and_a_second_one_replaces_it() {
     );
 }
 
-/* The membership points at org_members rather than at the account, so this falls out of the
-schema rather than out of anybody remembering to do it. */
 #[tokio::test]
 async fn leaving_the_organisation_takes_you_off_its_teams() {
     let Some(pool) = control_plane("teams_leaving").await else {
@@ -419,8 +419,6 @@ async fn deleting_an_organisation_takes_its_teams_with_it() {
     }
 }
 
-/* The roster is what removes a membership in the application, and the schema is what carries that
-through to the teams. Worth asserting together, because neither half says so on its own. */
 #[tokio::test]
 async fn a_member_removed_through_the_roster_is_off_the_teams_too() {
     let Some(pool) = control_plane("teams_roster").await else {

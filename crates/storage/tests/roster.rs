@@ -9,8 +9,10 @@ use uuid::Uuid;
 const NOW: u64 = 1_700_000_000;
 const A_DAY: i64 = 24 * 60 * 60 * 1_000_000_000;
 
+mod backend;
+
 async fn control_plane(schema: &str) -> Option<PgPool> {
-    let url = std::env::var("DATABASE_URL").ok()?;
+    let url = backend::url()?;
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(&url)
@@ -311,8 +313,6 @@ async fn an_unknown_address_is_given_an_account_a_membership_and_one_way_in() {
     );
 }
 
-/* Choosing a password for an address somebody already signs in with is that account handed over,
-so joining one to an organisation opens nothing and leaves the password it chose alone. */
 #[tokio::test]
 async fn an_address_that_already_has_an_account_joins_without_a_way_in() {
     let Some(pool) = control_plane("roster_admit_known").await else {
@@ -403,8 +403,6 @@ async fn deleting_an_organisation_takes_the_roll_with_it_and_leaves_the_accounts
     assert_eq!(accounts_with(&pool, "new@example.com").await, 1);
 }
 
-/* The members table shows a name where one was written and the address everywhere else, so the
-roll has to carry both and the absence has to survive the read. */
 #[tokio::test]
 async fn the_roll_carries_the_name_an_account_was_given() {
     let Some(pool) = control_plane("roster_named").await else {
@@ -431,8 +429,6 @@ async fn the_roll_carries_the_name_an_account_was_given() {
     );
 }
 
-/* An invitation to an address somebody already holds answers with the member as it stands, and
-that includes the name they had already written. */
 #[tokio::test]
 async fn an_admitted_standing_account_brings_its_name_with_it() {
     let Some(pool) = control_plane("roster_admit_named").await else {

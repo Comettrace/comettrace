@@ -7,8 +7,10 @@ use uuid::Uuid;
 const AN_HOUR: u64 = 3_600_000_000_000;
 const A_GIGABYTE: u64 = 1024 * 1024 * 1024;
 
+mod backend;
+
 async fn control_plane(schema: &str) -> Option<PgPool> {
-    let url = std::env::var("DATABASE_URL").ok()?;
+    let url = backend::url()?;
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(&url)
@@ -118,7 +120,6 @@ async fn the_hours_of_a_window_come_back_in_order() {
     assert_eq!(read[0].started_at_unix_nanos, AN_HOUR);
 }
 
-/* Half open, so two windows that meet count no hour twice. */
 #[tokio::test]
 async fn the_hour_a_window_ends_on_belongs_to_the_next_one() {
     let Some(pool) = control_plane("usage_half_open").await else {
@@ -178,8 +179,6 @@ async fn a_window_nothing_arrived_in_reads_as_empty_rather_than_as_an_error() {
     assert!(read.is_empty());
 }
 
-/* The same column the quota is built from, and the same binary gigabyte, so the ceiling a screen
-draws is the ceiling a payload is refused against rather than a second opinion about it. */
 #[tokio::test]
 async fn what_a_plan_allows_is_read_in_binary_gigabytes() {
     let Some(pool) = control_plane("usage_capped").await else {
