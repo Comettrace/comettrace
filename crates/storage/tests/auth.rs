@@ -16,6 +16,8 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 use uuid::Uuid;
 
+mod backend;
+
 const NOW: u64 = 1_700_000_000;
 
 fn cheap() -> Argon2Hasher {
@@ -34,7 +36,7 @@ fn lifetime() -> SessionLifetime {
 }
 
 async fn control_plane(schema: &str) -> Option<PgPool> {
-    let url = std::env::var("DATABASE_URL").ok()?;
+    let url = backend::url()?;
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(&url)
@@ -734,9 +736,6 @@ async fn a_local_identity_naming_no_account_is_not_provisioned() {
     );
 }
 
-/* The name is the one thing a person may change about their own account, so these three pin the
-column itself: that it starts empty, that a chosen one travels on the session the screens read,
-and that emptying it writes a null rather than a blank. */
 #[tokio::test]
 async fn an_account_carries_no_name_until_somebody_writes_one() {
     let Some(pool) = control_plane("auth_unnamed").await else {
@@ -799,8 +798,6 @@ async fn emptying_the_name_writes_a_null_rather_than_a_blank() {
     );
 }
 
-/* The check on the column says in the schema what AccountName says in core. Without it a
-hand-written update could leave a row the code calls named and the screens print as a blank. */
 #[tokio::test]
 async fn the_column_refuses_a_name_that_is_only_space() {
     let Some(pool) = control_plane("auth_blank_name").await else {
@@ -817,10 +814,6 @@ async fn the_column_refuses_a_name_that_is_only_space() {
     assert!(refused.is_err(), "the column admitted a blank name");
 }
 
-/* The bytes live in an object store; what the control plane keeps is where to find them and what
-they are. These pin the pair of columns: that they travel on the session the screens read, that
-half of one cannot be written, and that a type this build does not know reads as no photo rather
-than as a row nothing can serve. */
 #[tokio::test]
 async fn a_portrait_travels_on_the_session() {
     let Some(pool) = control_plane("auth_portrait").await else {
@@ -883,8 +876,6 @@ async fn a_dropped_portrait_leaves_both_columns_null() {
     assert_eq!(held, (None, None));
 }
 
-/* The two columns are one fact and the schema says so, because half of one is a row that cannot
-be served. */
 #[tokio::test]
 async fn the_columns_refuse_half_a_photo() {
     let Some(pool) = control_plane("auth_portrait_half").await else {
@@ -903,8 +894,6 @@ async fn the_columns_refuse_half_a_photo() {
     );
 }
 
-/* A media type this build does not know is a photo it could not answer with, so the honest
-reading is that there is none: the screen falls back to initials rather than to an error. */
 #[tokio::test]
 async fn a_type_the_build_does_not_know_reads_as_no_photo() {
     let Some(pool) = control_plane("auth_portrait_odd").await else {

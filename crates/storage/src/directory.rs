@@ -58,7 +58,7 @@ fn digest_of(plaintext: &str) -> Digest32 {
 
 #[cfg(test)]
 mod tests {
-    use comettrace_core::{IngestKey, Scope, TenantDirectory, TenantId, UnknownKey};
+    use comettrace_core::{IngestKey, Scope, TenantDirectory, TenantId, UnknownKey, testing};
     use uuid::Uuid;
 
     use super::StaticDirectory;
@@ -96,5 +96,17 @@ mod tests {
                 .await,
             Err(UnknownKey)
         );
+    }
+
+    #[tokio::test]
+    async fn a_static_directory_honours_the_directory_contract() {
+        let tenant = TenantId::new(Uuid::from_u128(3));
+        let directory = StaticDirectory::from_plaintext([("secret", tenant)]);
+        let held = IngestKey::from_plaintext("secret");
+        let absent = IngestKey::from_plaintext("other");
+
+        testing::a_directory_resolves_the_key_it_holds(&directory, &held, tenant).await;
+        testing::a_directory_refuses_a_key_it_does_not_hold(&directory, &absent).await;
+        testing::a_directory_answers_the_same_key_the_same_way_twice(&directory, &held).await;
     }
 }

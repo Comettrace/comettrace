@@ -1,6 +1,6 @@
 use comettrace_core::{
     DecompressedBytes, Email, IngestKey, Issuer, ProjectName, Projects, ProvisionPolicy,
-    ResolvedIdentity, Scope, SecretHash, Subject, TenantDirectory, TenantId, UnknownKey,
+    ResolvedIdentity, Scope, SecretHash, Subject, TenantDirectory, TenantId, UnknownKey, testing,
 };
 use comettrace_storage::{
     AccountError, Allowance, CONTROL_PLANE, FixedClock, OVERAGE_FEATURE, PostgresAccounts,
@@ -10,23 +10,14 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 use uuid::Uuid;
 
+mod backend;
+
 fn a_slug(name: &str) -> ProjectName {
     ProjectName::try_from(name).expect("an admitted name")
 }
 
-fn url() -> Option<String> {
-    if let Ok(url) = std::env::var("DATABASE_URL") {
-        return Some(url);
-    }
-    assert!(
-        std::env::var("REQUIRE_DATABASE_URL").is_err(),
-        "REQUIRE_DATABASE_URL is set but DATABASE_URL is not"
-    );
-    None
-}
-
 async fn migrated(schema: &str) -> Option<PgPool> {
-    let url = url()?;
+    let url = backend::url()?;
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(&url)
@@ -904,4 +895,20 @@ async fn a_key_issued_for_no_project_resolves_to_none() {
     let key = directory.issue(org, None).await.expect("a key is issued");
 
     assert_eq!(directory.resolve(&key).await, Ok(Scope::of(org)));
+}
+
+#[tokio::test]
+async fn a_postgres_directory_honours_the_directory_contract() {
+    let Some(pool) = migrated("keys_contract").await else {
+        return;
+    };
+    let org = seeded_org(&pool).await;
+    a_key(&pool, org, "ct_live_abc", Some("the-secret")).await;
+    let directory = PostgresDirectory::new(pool.clone(), FixedClock::at(1_700_000_000));
+    let held = IngestKey::from_plaintext("ct_live_abc.the-secret");
+    let absent = IngestKey::from_plaintext("ct_live_zzz.the-secret");
+
+    testing::a_directory_resolves_the_key_it_holds(&directory, &held, TenantId::new(org)).await;
+    testing::a_directory_refuses_a_key_it_does_not_hold(&directory, &absent).await;
+    testing::a_directory_answers_the_same_key_the_same_way_twice(&directory, &held).await;
 }

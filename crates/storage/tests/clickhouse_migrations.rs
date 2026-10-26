@@ -2,6 +2,8 @@ use clickhouse::{Client, Row};
 use comettrace_storage::{ClickhouseMigrator, MIGRATIONS};
 use serde::Deserialize;
 
+mod backend;
+
 #[derive(Debug, Row, Deserialize)]
 struct Text {
     value: String,
@@ -10,17 +12,6 @@ struct Text {
 #[derive(Debug, Row, Deserialize)]
 struct Count {
     value: u64,
-}
-
-fn endpoint() -> Option<String> {
-    if let Ok(url) = std::env::var("CLICKHOUSE_URL") {
-        return Some(url);
-    }
-    assert!(
-        std::env::var("REQUIRE_CLICKHOUSE_URL").is_err(),
-        "REQUIRE_CLICKHOUSE_URL is set but CLICKHOUSE_URL is not"
-    );
-    None
 }
 
 fn connected(url: &str) -> Client {
@@ -35,7 +26,7 @@ fn connected(url: &str) -> Client {
 }
 
 async fn fresh_database(name: &str) -> Option<Client> {
-    let url = endpoint()?;
+    let url = backend::clickhouse_url()?;
     let root = connected(&url);
     root.query(&format!("DROP DATABASE IF EXISTS {name}"))
         .execute()

@@ -10,8 +10,10 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 use uuid::Uuid;
 
+mod backend;
+
 async fn control_plane(schema: &str) -> Option<PgPool> {
-    let url = std::env::var("DATABASE_URL").ok()?;
+    let url = backend::url()?;
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(&url)
@@ -162,8 +164,6 @@ async fn a_name_one_organisation_holds_is_still_free_in_another() {
     assert_eq!(elsewhere, Created::Done);
 }
 
-/* Nothing anywhere holds the name — the keys carry the id and so do the spans — so a rename is
-only ever a rename. */
 #[tokio::test]
 async fn renaming_a_project_keeps_its_id_and_its_keys() {
     let Some(pool) = control_plane("projects_rename").await else {
@@ -309,8 +309,6 @@ async fn assigning_a_project_the_organisation_does_not_hold_is_told_apart_from_a
     assert_eq!(gone, Assigned::Gone);
 }
 
-/* A project of another organisation is not a project to arrange, and saying so rather than
-touching it is what keeps one tenant out of another. */
 #[tokio::test]
 async fn a_project_of_another_organisation_is_not_there_to_arrange() {
     let Some(pool) = control_plane("projects_theirs").await else {

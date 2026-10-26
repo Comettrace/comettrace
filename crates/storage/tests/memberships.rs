@@ -4,8 +4,10 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 use uuid::Uuid;
 
+mod backend;
+
 async fn control_plane(schema: &str) -> Option<PgPool> {
-    let url = std::env::var("DATABASE_URL").ok()?;
+    let url = backend::url()?;
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(&url)
