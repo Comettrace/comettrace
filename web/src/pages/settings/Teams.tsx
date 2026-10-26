@@ -2,7 +2,7 @@ import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { because } from '@/auth/client'
-import { useOrganizations } from '@/auth/session'
+import { useOrganisations } from '@/auth/session'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
@@ -24,15 +24,13 @@ import {
 import { H } from './parts'
 
 export function Teams() {
-  const { active } = useOrganizations()
+  const { active } = useOrganisations()
   const { teams, nothing } = useTeams()
   const [adding, setAdding] = useState(false)
   const [managing, setManaging] = useState<Team | null>(null)
   const mayArrange = active?.role === 'owner' || active?.role === 'admin'
   const roll = teams ?? []
 
-  /* The dialog is handed the row it was opened on, and that row goes stale the moment anything
-     is saved — so it is read back out of the list the answer replaced. */
   const open = managing && roll.find((team) => team.id === managing.id)
 
   return (
@@ -54,7 +52,7 @@ export function Teams() {
         </Table>
         {roll.length === 0 ? <p className="m-0 px-4 py-3 text-control text-muted-foreground">{teams ? 'No team yet. One groups members and owns projects.' : nothing}</p> : null}
       </Card>
-      <p className="m-0 text-caption text-muted-foreground">A project has one owner team or none, so handing it to a team takes it off the team that held it. Leaving the organization takes you off its teams.</p>
+      <p className="m-0 text-caption text-muted-foreground">A project has one owner team or none, so handing it to a team takes it off the team that held it. Leaving the organisation takes you off its teams.</p>
       <NewTeam open={adding} onOpenChange={setAdding} />
       <ManageTeam team={open ?? null} onOpenChange={(o) => !o && setManaging(null)} />
     </>
@@ -100,8 +98,6 @@ function ManageTeam({ team, onOpenChange }: { team: Team | null; onOpenChange: (
   const seat = useSeatTeam()
   const own = useOwnTeam()
   const disband = useDisbandTeam()
-  /* Null means the field is still showing what the server holds, so a rename made elsewhere
-     reaches it; anything else is what is being typed. */
   const [typed, setTyped] = useState<string | null>(null)
 
   if (!team) return null
@@ -135,7 +131,7 @@ function ManageTeam({ team, onOpenChange }: { team: Team | null; onOpenChange: (
         </Field>
         {problem ? <span className="text-caption text-destructive-text">{problem}</span> : null}
 
-        <Picker label="Members" empty="Nobody belongs to this organization yet.">
+        <Picker label="Members" empty="Nobody belongs to this organisation yet.">
           {(members ?? []).map((m) => (
             <label key={m.account} className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-control">
               <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={team.members.includes(m.account)} disabled={seat.isPending} onChange={() => toggleMember(m.account)} />
@@ -145,7 +141,7 @@ function ManageTeam({ team, onOpenChange }: { team: Team | null; onOpenChange: (
           ))}
         </Picker>
 
-        <Picker label="Projects it owns" empty="This organization holds no project yet.">
+        <Picker label="Projects it owns" empty="This organisation holds no project yet.">
           {projects.map((p) => (
             <label key={p.id} className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-control">
               <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={owned.has(p.id)} disabled={own.isPending} onChange={() => toggleProject(p.id)} />

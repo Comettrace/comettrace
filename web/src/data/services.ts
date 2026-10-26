@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { get, json } from '@/auth/client'
-import { useOrganizations } from '@/auth/session'
+import { useOrganisations } from '@/auth/session'
 import { useScope } from '@/lib/scope'
 import { dur } from '@/lib/format'
 
@@ -41,7 +41,7 @@ export const serving = (service: Serving): Service => ({
 })
 
 export function useServices(): Service[] {
-  const { active } = useOrganizations()
+  const { active } = useOrganisations()
   const { project } = useScope()
   const { data } = useQuery({
     queryKey: ['services', active?.org, project],
@@ -60,11 +60,8 @@ export function useServices(): Service[] {
   return data ?? []
 }
 
-/* Just the names, for a filter that needs a list rather than a table. Over the window being
-   browsed, because a service with no traffic in it is not a service worth offering: picking it
-   would narrow the list to nothing and say nothing about why. */
 export function useServiceNames(windowMs: number): { names: string[]; unreachable: unknown } {
-  const { active } = useOrganizations()
+  const { active } = useOrganisations()
   const { project } = useScope()
   const { data, error } = useQuery({
     queryKey: ['service-names', active?.org, project, windowMs],

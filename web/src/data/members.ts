@@ -1,20 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { roleRank, type Role } from '@/auth/api'
 import { del, get, json, patch, post } from '@/auth/client'
-import { useOrganizations } from '@/auth/session'
+import { useOrganisations } from '@/auth/session'
 import { nothingYet } from './orgs'
 
 export type Member = { account: string; email: string; name: string | null; photo: string | null; role: Role; joined_at_ms: number }
 
-/* The token is returned once, by the one request that created the account, and the control plane
-   keeps only its digest. It is absent when the address already had an account: choosing a
-   password for one somebody else signs in with would hand that account over. */
 export type Welcomed = { member: Member; invite_token: string | null }
 
 const key = (org: string | undefined) => ['org', org, 'members']
 
 export function useMembers() {
-  const found = useOrganizations()
+  const found = useOrganisations()
   const { active } = found
   const { data, isPending, error } = useQuery({
     queryKey: key(active?.org),
@@ -25,10 +22,8 @@ export function useMembers() {
   return { members: data, nothing: nothingYet(found, isPending, error, 'members') }
 }
 
-/* Every change answers with the member as the server now holds it, so the table is written from
-   that rather than asked for again. */
 export function useGrantRole() {
-  const { active } = useOrganizations()
+  const { active } = useOrganisations()
   const client = useQueryClient()
   return useMutation({
     mutationFn: async (asked: { account: string; role: Role }) =>
@@ -41,7 +36,7 @@ export function useGrantRole() {
 }
 
 export function useRemoveMember() {
-  const { active } = useOrganizations()
+  const { active } = useOrganisations()
   const client = useQueryClient()
   return useMutation({
     mutationFn: async (account: string) => {
@@ -54,7 +49,7 @@ export function useRemoveMember() {
 }
 
 export function useInvite() {
-  const { active } = useOrganizations()
+  const { active } = useOrganisations()
   const client = useQueryClient()
   return useMutation({
     mutationFn: async (asked: { email: string; role: Role }) =>
@@ -64,14 +59,9 @@ export function useInvite() {
   })
 }
 
-/* The order the server answers in, said again here so a role changed in place lands where the
-   next read would have put it rather than where the row happened to be. */
 export const sorted = (roll: Member[]) =>
   [...roll].sort((a, b) => roleRank[a.role] - roleRank[b.role] || a.email.localeCompare(b.email))
 
-/* The rules the server enforces, said once here so a control can be greyed out rather than
-   pressed and refused. Your own row is a row like any other: what holds the last owner in place
-   is that the organisation would be left with none, not that the row is yours. */
 export const mayChange = (mine: Role | undefined, theirs: Role) =>
   mine === 'owner' || (mine === 'admin' && theirs !== 'owner')
 

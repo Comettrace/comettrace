@@ -2,7 +2,7 @@ import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { because } from '@/auth/client'
-import { useOrganizations } from '@/auth/session'
+import { useOrganisations } from '@/auth/session'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
@@ -16,7 +16,7 @@ import { useScope } from '@/lib/scope'
 import { H } from './parts'
 
 export function Projects() {
-  const { active } = useOrganizations()
+  const { active } = useOrganisations()
   const { projects, nothing } = useCatalogue()
   const { teams } = useTeams()
   const assign = useAssignProject()

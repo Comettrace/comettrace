@@ -9,7 +9,7 @@ import { Segmented } from '@/components/ui/segmented'
 import { Avatar, Table, Td, Th } from '@/components/ui/misc'
 import { EmptyState, PageHeader } from '@/components/cmt/bits'
 import { Sparkline } from '@/components/cmt/charts'
-import { useAssignees } from '@/data/organization'
+import { useAssignees } from '@/data/sampled'
 import { useIssues, type IssueStatus } from '@/data/issues'
 import { cn } from '@/lib/utils'
 

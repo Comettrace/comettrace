@@ -7,13 +7,14 @@ import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
 import { Field, Input } from '@/components/ui/input'
 import { Alert, Table, Td, Th, Tr } from '@/components/ui/misc'
-import { useIngestKeys, useReadKeys } from '@/data/organization'
+import { useMock } from '@/data/seam'
+import { INGEST_KEYS, QUERY_KEYS } from '@/mocks/mock'
 import { cn } from '@/lib/utils'
 import { H } from './parts'
 
 export function ProjectApiKeys() {
-  const readKeys = useReadKeys()
-  const [keys, setKeys] = useState(useIngestKeys())
+  const readKeys = useMock(['organisation', 'read-keys'], () => QUERY_KEYS)
+  const [keys, setKeys] = useState(useMock(['organisation', 'ingest-keys'], () => INGEST_KEYS))
   const [issue, setIssue] = useState(false)
   const [name, setName] = useState('edge-collector')
   const [secret, setSecret] = useState<string | null>(null)

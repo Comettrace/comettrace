@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { because } from '@/auth/client'
-import { useOrganizations } from '@/auth/session'
+import { useOrganisations } from '@/auth/session'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Field, Input, NativeSelect } from '@/components/ui/input'
@@ -18,30 +18,26 @@ import { useScope } from '@/lib/scope'
 import { ConfirmDelete, Danger, H } from './parts'
 
 export function ProjectGeneral() {
-  const { active } = useOrganizations()
+  const { active } = useOrganisations()
   const { projects, nothing } = useCatalogue()
   const { teams } = useTeams()
   const { project: chosen, chooseProject } = useScope()
   const rename = useRenameProject()
   const assign = useAssignProject()
   const forget = useForgetProject()
-  /* Null means the field is still showing what the server holds, so a rename made elsewhere
-     reaches it; anything else is what is being typed. */
   const [typed, setTyped] = useState<string | null>(null)
   const [del, setDel] = useState(false)
 
   const catalogue = projects ?? []
-  /* The settings navigation chooses a project, and so does the switcher at the top of every
-     screen; they are the same choice. "All projects" is not one, so the first stands in. */
   const project = catalogue.find((one) => one.id === chosen) ?? catalogue[0]
   const mayChange = active?.role === 'owner' || active?.role === 'admin'
 
   if (!project) {
     return (
       <>
-        <H title="General" sub="The project this organization holds telemetry under." />
+        <H title="General" sub="The project this organisation holds telemetry under." />
         <Card className="px-4 py-3 text-control text-muted-foreground">
-          {projects ? <>This organization holds no project yet. <Link to="/settings/projects">Make one</Link> and come back.</> : nothing}
+          {projects ? <>This organisation holds no project yet. <Link to="/settings/projects">Make one</Link> and come back.</> : nothing}
         </Card>
       </>
     )

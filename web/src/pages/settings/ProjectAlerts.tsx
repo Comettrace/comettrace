@@ -9,12 +9,13 @@ import { Field, NativeSelect } from '@/components/ui/input'
 import { Segmented } from '@/components/ui/segmented'
 import { Switch } from '@/components/ui/switch'
 import { Alert, Table, Td, Th, Tr } from '@/components/ui/misc'
-import { useExceptionAlerts } from '@/data/organization'
+import { useMock } from '@/data/seam'
+import { ALERT_RULES } from '@/mocks/mock'
 import { cn } from '@/lib/utils'
 import { H } from './parts'
 
 export function ProjectAlerts() {
-  const [rules, setRules] = useState(useExceptionAlerts())
+  const [rules, setRules] = useState(useMock(['organisation', 'exception-alerts'], () => ALERT_RULES))
   const [open, setOpen] = useState(false)
   const [cond, setCond] = useState('rate')
   const [thr, setThr] = useState('2')

@@ -13,9 +13,6 @@ import { stamp } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { H } from './parts'
 
-/* The facts rather than the fields: the address signs you in and no route moves it yet, the id is
-   what a support question is about, and the three below it are the organisation's answer about
-   you rather than yours. */
 function Standing() {
   const account = useAccount()
   const { active, mine, noRoll, teams, noTeams } = useMyStanding()
@@ -32,7 +29,7 @@ function Standing() {
         </span>
       ) : muted('—'),
     ],
-    [active ? `Role in ${active.name}` : 'Role', active ? <Badge variant="accent">{active.role}</Badge> : muted('This session belongs to no organization.')],
+    [active ? `Role in ${active.name}` : 'Role', active ? <Badge variant="accent">{active.role}</Badge> : muted('This session belongs to no organisation.')],
     ['Teams', teams === undefined ? muted(noTeams) : teams.length > 0 ? teams.map((team) => team.name).join(', ') : muted('You sit in none of them yet.')],
     ['Member since', mine ? <span className="font-mono">{stamp(mine.joined_at_ms)}</span> : muted(noRoll)],
   ]
@@ -46,8 +43,6 @@ function Standing() {
   )
 }
 
-/* A hidden input and a button, because a file input styled to look like the rest of the screen
-   is a fight nobody wins. */
 function Face() {
   const account = useAccount()
   const picker = useRef<HTMLInputElement>(null)
@@ -58,7 +53,6 @@ function Face() {
 
   const pick = (event: React.ChangeEvent<HTMLInputElement>) => {
     const chosen = event.target.files?.[0]
-    /* Cleared so choosing the same file twice is two events rather than one. */
     event.target.value = ''
     if (!chosen) return
     const problem = photoProblem(chosen)
@@ -95,8 +89,6 @@ function Face() {
 export function Profile() {
   const account = useAccount()
   const rename = useRenameMe()
-  /* Null means the field is still showing what the server holds, so a name written in another tab
-     reaches it; anything else is what is being typed. */
   const [typed, setTyped] = useState<string | null>(null)
   const written = account?.name ?? ''
   const name = typed ?? written
@@ -114,7 +106,7 @@ export function Profile() {
 
   return (
     <>
-      <H title="Profile" sub="The name and face you appear under, and what your organization holds about you." />
+      <H title="Profile" sub="The name and face you appear under, and what your organisation holds about you." />
       <Card className="flex flex-col gap-3.5 p-4">
         <Face />
         <Field label="Name" htmlFor="pf-n" hint="Shown in the top bar and in the members table. Empty it to go back to your address.">

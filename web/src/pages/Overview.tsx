@@ -5,21 +5,19 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { EmptyState, Kpi, PageHeader, ServiceDot, SeverityBadge } from '@/components/cmt/bits'
 import { LineChart } from '@/components/cmt/charts'
 import { useLogs } from '@/data/logs'
-import { useSampledProjects } from '@/data/organization'
 import { DEPLOY_MARKERS, useOverviewSeries } from '@/data/series'
+import { useMock } from '@/data/seam'
 import { useServices } from '@/data/services'
 import { AN_HOUR, ANY, useTraces } from '@/data/traces'
 import { otlpEndpoint } from '@/data/onboarding'
+import { PROJECTS } from '@/mocks/mock'
 import { cn } from '@/lib/utils'
 
 export function Overview() {
   const all = useServices()
   const logs = useLogs()
-  /* The slowest of the hour, ordered by the store rather than here: this used to sort the
-     formatted durations, which meant parsing "2.5 s" back into a number to compare it with
-     "980 ms". The window matches what the header claims and what the services beside it read. */
   const { rows: slow } = useTraces({ ...ANY, rangeMs: AN_HOUR, order: 'duration', limit: 5 })
-  const projects = useSampledProjects()
+  const projects = useMock(['organisation', 'projects'], () => PROJECTS)
   const series = useOverviewSeries()
   if (!all.length) return <><PageHeader title="Overview" meta="no signals yet" /><EmptyState icon={<Rocket />} title="No signals yet" code={`OTEL_SERVICE_NAME=checkout-api\nOTEL_EXPORTER_OTLP_ENDPOINT=${otlpEndpoint()}\nOTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer <ingest key>"`} actions={<Button asChild size="sm" variant="primary"><Link to="/onboarding">Connect your first service</Link></Button>}>This page fills in as soon as your first span, log record or metric point arrives. Set three environment variables in any OpenTelemetry SDK and restart your service.</EmptyState></>
   const services = [...all].filter((s) => s.err !== null).sort((a, b) => (b.err ?? 0) - (a.err ?? 0)).slice(0, 5)
