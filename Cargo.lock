@@ -667,6 +667,7 @@ dependencies = [
  "clickhouse",
  "comettrace-core",
  "hex",
+ "hmac 0.13.0",
  "jsonwebtoken",
  "lettre",
  "openidconnect",

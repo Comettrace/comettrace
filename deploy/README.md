@@ -138,6 +138,37 @@ organisation to own. It prints no reset token in that case: there is no
 password to set, and `/auth/reset/*` is not mounted when local passwords
 are off.
 
+## Profile photos
+
+Without a bucket, everybody is shown under their initials, taken from the
+name they wrote or from their address. Give the server one and the profile
+screen gets an upload control:
+
+```sh
+COMETTRACE_OBJECTS__ENDPOINT=https://<account id>.r2.cloudflarestorage.com
+COMETTRACE_OBJECTS__BUCKET=comettrace-avatars
+COMETTRACE_OBJECTS__ACCESS_KEY_ID=...
+COMETTRACE_OBJECTS__SECRET_ACCESS_KEY=...
+```
+
+Cloudflare R2 is what this was built against. The protocol is S3, so an S3
+bucket answers it, and so does a MinIO; R2 has one region and calls it
+`auto`, which is what the server assumes when `COMETTRACE_OBJECTS__REGION`
+is left out. Nothing goes in the compose file: `env_file` hands anything
+prefixed `COMETTRACE_` to the server already.
+
+The bucket needs no public access and should not have any. A browser never
+talks to it: the server reads the bytes and serves them from its own origin,
+under a url that carries a token which changes every time somebody replaces
+their photo. That is what lets those urls be cached for a year without ever
+showing a face somebody deleted.
+
+A photo is at most 1 MB and must really be a PNG, a JPEG or a WebP — the
+first bytes decide, not the content type the browser announced, because an
+avatar is handed back to every reader under this deployment's own origin.
+Nothing is resized: 1 MB is small enough that a resizer would be a
+dependency rather than a saving.
+
 ## Adding somebody
 
 Settings > Organization > Members does it: an owner or an administrator

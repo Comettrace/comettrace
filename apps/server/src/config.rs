@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use comettrace_core::DecompressedBytes;
-use comettrace_storage::{Allowance, SpanStoreSettings};
+use comettrace_storage::{Allowance, PhotoStoreSettings, SpanStoreSettings};
 use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Toml};
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,8 @@ pub struct Config {
     pub oidc: Option<OidcConfig>,
     #[serde(default)]
     pub mail: Option<MailConfig>,
+    #[serde(default)]
+    pub objects: Option<ObjectsConfig>,
     #[serde(default = "yes")]
     pub local_password: bool,
     #[serde(default = "yes")]
@@ -82,6 +84,31 @@ pub struct MailConfig {
     pub base_url: String,
 }
 
+/* Cloudflare R2 is what this was built against, and the protocol is S3, so an S3 bucket or a
+MinIO answer it too. R2 has one region and calls it "auto", which is what the store assumes when
+none is named here. */
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectsConfig {
+    pub endpoint: String,
+    pub bucket: String,
+    #[serde(default)]
+    pub region: Option<String>,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+}
+
+impl From<ObjectsConfig> for PhotoStoreSettings {
+    fn from(objects: ObjectsConfig) -> Self {
+        Self {
+            endpoint: objects.endpoint,
+            bucket: objects.bucket,
+            region: objects.region,
+            access_key_id: objects.access_key_id,
+            secret_access_key: objects.secret_access_key,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OidcConfig {
     pub issuer: String,
@@ -128,6 +155,7 @@ impl Default for Config {
             tenants: Vec::new(),
             oidc: None,
             mail: None,
+            objects: None,
             local_password: true,
             cookie_secure: true,
             after_sign_in: landing(),
@@ -271,6 +299,45 @@ mod tests {
 
             assert_eq!(spans.retention_days, 7);
             assert_eq!(spans.database.as_deref(), Some("comettrace"));
+            Ok(())
+        });
+    }
+
+    /* A bucket with no credentials is a deployment that would fail on the first upload rather
+    than at startup, so the four that matter are required together and the region is the only one
+    with a sensible default. */
+    #[test]
+    fn a_photo_store_needs_its_endpoint_bucket_and_credentials() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                FILE,
+                r#"
+                [objects]
+                endpoint = "https://abc123.r2.cloudflarestorage.com"
+                bucket = "comettrace-avatars"
+                access_key_id = "AKIAEXAMPLE"
+                secret_access_key = "a secret"
+                "#,
+            )?;
+
+            let config: Config = figment().extract()?;
+            let objects = config.objects.expect("an object store");
+
+            assert_eq!(objects.bucket, "comettrace-avatars");
+            assert_eq!(
+                objects.region, None,
+                "r2 has one region and the store names it"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn a_deployment_keeps_no_photos_unless_a_store_is_declared() {
+        figment::Jail::expect_with(|_jail| {
+            let config: Config = figment().extract()?;
+
+            assert!(config.objects.is_none());
             Ok(())
         });
     }
