@@ -384,13 +384,11 @@ mod tests {
         use super::*;
 
         fn nonzero_id(width: usize) -> impl Strategy<Value = Vec<u8>> {
-            (1u8..=u8::MAX, prop::collection::vec(any::<u8>(), width - 1)).map(
-                |(first, rest)| {
-                    let mut bytes = vec![first];
-                    bytes.extend(rest);
-                    bytes
-                },
-            )
+            (1u8..=u8::MAX, prop::collection::vec(any::<u8>(), width - 1)).map(|(first, rest)| {
+                let mut bytes = vec![first];
+                bytes.extend(rest);
+                bytes
+            })
         }
 
         fn id_of_the_wrong_length(correct: usize) -> impl Strategy<Value = Vec<u8>> {
