@@ -5,6 +5,10 @@ to run the tests, what the code is held to, and what a pull request needs.
 
 Everything written into this repository is in English.
 
+Two pages sit beside this one: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), which
+everybody taking part is held to, and [SECURITY.md](SECURITY.md), which is
+where a vulnerability goes instead of an issue.
+
 ## Sign off your commits
 
 Comettrace takes contributions under the [Developer Certificate of
