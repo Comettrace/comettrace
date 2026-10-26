@@ -6,8 +6,8 @@ use axum::http::{Method, Request, StatusCode};
 use comettrace_api::me_router;
 use comettrace_core::{
     AccountId, AccountName, Accounts, MAX_PHOTO_BYTES, Membership, Memberships, NoPhotos, OrgRole,
-    Photo, PhotoError, PhotoKind, Photos, Portrait, Profile, ReadError, Session, SessionError,
-    SessionStore, SessionToken, TenantId, UnixSeconds, Whoami, WhoamiError,
+    Photo, PhotoError, PhotoKind, Photos, Pictured, Portrait, Profile, ReadError, Session,
+    SessionError, SessionStore, SessionToken, TenantId, UnixSeconds, Whoami, WhoamiError,
 };
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -87,7 +87,7 @@ struct Shelf {
 }
 
 impl Photos for Shelf {
-    async fn put(&self, _account: AccountId, photo: &Photo) -> Result<Portrait, PhotoError> {
+    async fn put(&self, _of: Pictured, photo: &Photo) -> Result<Portrait, PhotoError> {
         let token = format!("token{}", self.objects.lock().expect("the lock").len() + 1);
         self.objects
             .lock()
@@ -101,7 +101,7 @@ impl Photos for Shelf {
 
     async fn fetch(
         &self,
-        _account: AccountId,
+        _of: Pictured,
         portrait: &Portrait,
     ) -> Result<Option<Vec<u8>>, PhotoError> {
         Ok(self
@@ -113,7 +113,7 @@ impl Photos for Shelf {
             .map(|(_, bytes)| bytes.clone()))
     }
 
-    async fn remove(&self, _account: AccountId, portrait: &Portrait) -> Result<(), PhotoError> {
+    async fn remove(&self, _of: Pictured, portrait: &Portrait) -> Result<(), PhotoError> {
         self.objects
             .lock()
             .expect("the lock")
