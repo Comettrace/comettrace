@@ -12,6 +12,8 @@ use comettrace_storage::{
 };
 use uuid::Uuid;
 
+mod backend;
+
 const NOW: u64 = 4_000_000_000;
 
 pub fn a_span(seed: u8, service: &str) -> Span {
@@ -111,17 +113,6 @@ async fn the_clickhouse_sink_honours_the_contract() {
     );
 }
 
-pub fn endpoint() -> Option<String> {
-    if let Ok(url) = std::env::var("CLICKHOUSE_URL") {
-        return Some(url);
-    }
-    assert!(
-        std::env::var("REQUIRE_CLICKHOUSE_URL").is_err(),
-        "REQUIRE_CLICKHOUSE_URL is set but CLICKHOUSE_URL is not"
-    );
-    None
-}
-
 pub fn connected(url: &str) -> Client {
     let mut client = Client::default().with_url(url);
     if let Ok(user) = std::env::var("CLICKHOUSE_USER") {
@@ -134,7 +125,7 @@ pub fn connected(url: &str) -> Client {
 }
 
 pub async fn prepared(name: &str) -> Option<Client> {
-    let url = endpoint()?;
+    let url = backend::clickhouse_url()?;
     let root = connected(&url);
     root.query(&format!("DROP DATABASE IF EXISTS {name}"))
         .execute()
@@ -323,7 +314,7 @@ async fn a_timestamp_the_store_cannot_hold_is_refused() {
 }
 
 async fn an_empty_database(name: &str) -> Option<String> {
-    let url = endpoint()?;
+    let url = backend::clickhouse_url()?;
     let root = connected(&url);
     root.query(&format!("DROP DATABASE IF EXISTS {name}"))
         .execute()
@@ -740,9 +731,6 @@ async fn the_trace_list_never_crosses_tenants() {
     assert_eq!(&*ours[0].root_service, "checkout");
 }
 
-/* The box on the Traces screen. It matches any span of a trace, not only its root: somebody
-hunting `psp.charge` wants the traces it failed inside, and those are named after whatever
-request came in at the top. */
 #[tokio::test]
 async fn the_trace_list_can_be_narrowed_to_a_span_name_anywhere_in_it() {
     let Some((url, reader)) = a_written_store("read_trace_names").await else {
@@ -786,8 +774,6 @@ async fn the_trace_list_can_be_narrowed_to_a_span_name_anywhere_in_it() {
     );
 }
 
-/* Part of a name, and the case does not matter. A reader typing `PSP` into a box is not spelling
-an exact span name, and one typing half of one should still find it. */
 #[tokio::test]
 async fn a_span_name_matches_on_part_of_it_and_ignores_case() {
     let Some((url, reader)) = a_written_store("read_trace_part_name").await else {
@@ -830,7 +816,6 @@ async fn a_span_name_matches_on_part_of_it_and_ignores_case() {
     );
 }
 
-/* A name and a service together narrow, rather than one quietly replacing the other. */
 #[tokio::test]
 async fn a_name_and_a_service_both_have_to_match() {
     let Some((url, reader)) = a_written_store("read_trace_name_and_service").await else {
@@ -1182,8 +1167,6 @@ async fn stored_events(client: &Client) -> u64 {
         .value
 }
 
-/* The whole point of the slice: an exception recorded inside a span arrives at the other end
-attached to the span that recorded it, attributes and all. */
 #[tokio::test]
 async fn an_exception_written_with_a_span_reads_back_on_that_span() {
     let Some((url, reader)) = a_written_store("read_span_events").await else {
@@ -1218,7 +1201,6 @@ async fn an_exception_written_with_a_span_reads_back_on_that_span() {
     let found = reader.trace(tenant, trace).await.expect("the trace reads");
 
     assert_eq!(found.len(), 2);
-    /* On the span that recorded it, and not on the one beside it. */
     assert!(found[0].events.is_empty(), "the root recorded nothing");
     assert_eq!(found[1].events.len(), 1);
     let event = &found[1].events[0];
@@ -1234,7 +1216,6 @@ async fn an_exception_written_with_a_span_reads_back_on_that_span() {
     );
 }
 
-/* Forwards in time, because a reader walking down the list is reading what happened. */
 #[tokio::test]
 async fn several_events_on_one_span_read_back_in_time_order() {
     let Some((url, reader)) = a_written_store("read_events_order").await else {
@@ -1282,9 +1263,6 @@ async fn several_events_on_one_span_read_back_in_time_order() {
     );
 }
 
-/* Events of another organisation are not reachable through a trace id, the same way its spans
-are not. The trace id is the only thing the caller supplies, so it is the only thing that could
-have carried somebody over the line. */
 #[tokio::test]
 async fn another_organisations_events_are_not_read_with_a_shared_trace_id() {
     let Some((url, reader)) = a_written_store("read_events_tenant").await else {
@@ -1320,8 +1298,6 @@ async fn another_organisations_events_are_not_read_with_a_shared_trace_id() {
     assert!(found.is_empty(), "no span, and so no event either");
 }
 
-/* Most spans carry no events, and a deployment where none of them do should not be writing to
-the events table at all. */
 #[tokio::test]
 async fn spans_with_no_events_write_no_event_rows() {
     let Some(client) = prepared("comettrace_no_events").await else {
@@ -1341,8 +1317,6 @@ async fn spans_with_no_events_write_no_event_rows() {
     assert_eq!(stored_events(&client).await, 0);
 }
 
-/* The events expire on their own clock, set from the same retention the spans got, so a span and
-its exception leave together rather than the exception outliving what explains it. */
 #[tokio::test]
 async fn an_event_expires_with_the_span_that_recorded_it() {
     let Some(client) = prepared("comettrace_event_expiry").await else {
@@ -1366,4 +1340,34 @@ async fn an_event_expires_with_the_span_that_recorded_it() {
         events_expire_at(&client).await,
         stored_expire_at(&client).await,
     );
+}
+
+async fn collapsed_rows(client: &Client) -> u64 {
+    client
+        .query("SELECT count() AS value FROM spans FINAL")
+        .fetch_one::<Counted>()
+        .await
+        .expect("counting the collapsed spans")
+        .value
+}
+
+#[tokio::test]
+async fn a_resent_export_is_read_back_once() {
+    let Some(client) = prepared("comettrace_span_sink_resent").await else {
+        return;
+    };
+    let sink = sink_with(&client, BatchLimits::default());
+    let tenant = TenantId::new(Uuid::from_u128(11));
+    let batch = vec![a_span(4, "checkout"), a_span(5, "checkout")];
+
+    sink.accept(Scope::of(tenant), batch.clone())
+        .await
+        .expect("the first export is accepted");
+    sink.flush().await.expect("the first export is committed");
+    sink.accept(Scope::of(tenant), batch)
+        .await
+        .expect("the retry is accepted");
+    sink.flush().await.expect("the retry is committed");
+
+    assert_eq!(collapsed_rows(&client).await, 2);
 }

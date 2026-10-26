@@ -16,7 +16,7 @@ const SERVICES: &str = "SELECT \
        toUnixTimestamp64Nano(end_time) - toUnixTimestamp64Nano(start_time) \
      ) AS latency, \
      toUnixTimestamp64Nano(max(start_time)) AS last_seen \
-   FROM spans \
+   FROM spans FINAL \
    WHERE tenant_id = ? \
      AND start_time >= fromUnixTimestamp64Nano(?) \
      AND start_time < fromUnixTimestamp64Nano(?) \
@@ -34,7 +34,7 @@ const SUMMARIES: &str = "SELECT \
      toUnixTimestamp64Nano(max(end_time)) - toUnixTimestamp64Nano(min(start_time)) AS duration, \
      count() AS spans, \
      countIf(status = 'error') AS errors \
-   FROM spans \
+   FROM spans FINAL \
    WHERE tenant_id = ? \
      AND start_time >= fromUnixTimestamp64Nano(?) \
      AND start_time < fromUnixTimestamp64Nano(?) \
@@ -57,25 +57,16 @@ const ONE_TRACE: &str = "SELECT \
      toUnixTimestamp64Nano(start_time) AS start_time, \
      toUnixTimestamp64Nano(end_time) AS end_time, \
      attributes AS attributes \
-   FROM spans \
+   FROM spans FINAL \
    WHERE tenant_id = ? AND trace_id = unhex(?) \
    ORDER BY start_time, span_id";
 
-/* The events of one trace, read beside its spans rather than joined to them: the stitching is a
-hash map here and a sort key there, and ClickHouse would have had to shuffle to do it. Ordered by
-time so a reader walks forwards, and by name after it so two events recorded at the same
-nanosecond still come back in a settled order.
-
-The limit is a ceiling on a pathological trace rather than a page: the door keeps 128 events per
-span, so reaching ten thousand takes eighty failing spans in one trace, and a panel that showed
-them all would be unreadable long before that. A trace past it loses its last events, which is
-the end worth losing — the first ones are where it started going wrong. */
 const EVENTS_OF_TRACE: &str = "SELECT \
      lower(hex(span_id)) AS span_id, \
      name AS name, \
      toUnixTimestamp64Nano(time) AS time, \
      attributes AS attributes \
-   FROM span_events \
+   FROM span_events FINAL \
    WHERE tenant_id = ? AND trace_id = unhex(?) \
    ORDER BY time, name \
    LIMIT 10000";
@@ -159,9 +150,6 @@ impl SpanReader for ClickhouseReader {
         tenant: TenantId,
         filter: &TraceFilter,
     ) -> Result<Vec<TraceSummary>, ReadError> {
-        /* Both filters are switched off by an empty string rather than by a flag, because an
-        empty name is not something anybody can be looking for. A service, likewise: the spans
-        carry one always, so no span can be named by the absence of it. */
         let service = filter.service.as_deref().unwrap_or_default();
         let name = filter.name.as_deref().unwrap_or_default();
         let rows: Vec<SummaryRow> = self
@@ -186,9 +174,6 @@ impl SpanReader for ClickhouseReader {
         rows.into_iter().map(read_summary).collect()
     }
 
-    /* Two reads, and the events one is not allowed to lose the trace. A trace that rendered
-    without its exception would be the most misleading thing this screen could show, so a store
-    that refuses the second read refuses the whole trace rather than answering a quieter one. */
     async fn trace(&self, tenant: TenantId, id: TraceId) -> Result<Vec<Span>, ReadError> {
         let rows: Vec<SpanRow> = self
             .client
@@ -238,9 +223,6 @@ fn read_service(row: ServiceRow) -> ServiceSummary {
     }
 }
 
-/* quantiles() answers Float64 nanoseconds, in the order they were asked for. A latency is never
-negative and never longer than the window, so the clamp only has to answer for a store that
-contradicts itself rather than for arithmetic we expect. */
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn quantile(latency: &[f64], at: usize) -> u64 {
     let Some(value) = latency.get(at).copied().filter(|value| value.is_finite()) else {
@@ -332,9 +314,6 @@ fn read_status(spelling: &str) -> SpanStatus {
     }
 }
 
-/* ClickHouse has no nullable bind here, so the predicate is switched off by a flag and the uuid
-only read when it is on. The zero uuid is also what a span with no project carries, so it must
-not double as "no filter". */
 fn uuid_of(project: Option<ProjectId>) -> Uuid {
     project.map(ProjectId::as_uuid).unwrap_or_default()
 }
