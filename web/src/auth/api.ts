@@ -19,7 +19,6 @@ export const methodsQuery = queryOptions({
     try {
       return await json<Methods>(await get('/auth/methods'))
     } catch {
-      /* A deployment that does not answer this yet still has to let someone sign in. */
       return { local_password: true, oidc: false }
     }
   },
@@ -39,8 +38,6 @@ export const signOut = () => post('/auth/sign-out')
 export const requestReset = (email: string) => post('/auth/reset/request', { email })
 export const confirmReset = (token: string, password: string) => post('/auth/reset/confirm', { token, password })
 
-/* An emptied box takes the name off, the way an emptied filter box is no filter: the server trims
-   what it is sent and answers with the standing it kept. */
 export const renameMe = (name: string) => patch('/auth/me', { name })
 
 export const OIDC_START = '/auth/oidc/start'
@@ -48,8 +45,6 @@ export const OIDC_START = '/auth/oidc/start'
 export const PASSWORD_MIN = 12
 const PASSWORD_MAX_BYTES = 128
 
-/* The server owns the policy and answers 422 with the rule in plain text; this is the same policy
-   checked early so the form can answer without a round trip. */
 export function passwordProblem(password: string): string | null {
   if (password.trim().length === 0) return 'a password cannot be only whitespace'
   if (password.length < PASSWORD_MIN) return `a password needs at least ${PASSWORD_MIN} characters`

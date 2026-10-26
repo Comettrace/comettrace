@@ -354,8 +354,6 @@ async fn the_last_owner_stays_an_owner_however_it_asks() {
     assert_eq!(kept.roll()[0].role, OrgRole::Owner);
 }
 
-/* The row the complaint was about: an owner that is not the last one may step down, and may walk
-out afterwards. Nothing about it being your own row refuses it any more. */
 #[tokio::test]
 async fn an_owner_steps_down_from_its_own_row_once_another_owner_stays() {
     let kept = Kept::of(vec![
@@ -474,8 +472,6 @@ async fn an_unknown_address_is_admitted_with_the_one_token_that_sets_its_passwor
     );
 }
 
-/* Choosing a password for an address somebody already signs in with is that account handed over,
-so an invitation to one carries no token at all. */
 #[tokio::test]
 async fn an_address_that_already_has_an_account_joins_without_a_token() {
     let kept = Kept::admitting(Admitted::Standing(a_member(SOMEBODY, OrgRole::Admin)));

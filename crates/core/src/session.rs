@@ -45,9 +45,6 @@ impl SessionLifetime {
 pub struct Session {
     pub account: AccountId,
     pub email: Email,
-    /* Both absent until somebody fills a profile in, and then the address names them and the
-    initials stand in for the face. They ride here for the reason the address does: resolving a
-    token already reads the account row, and a standing is wanted on nearly every request. */
     pub name: Option<Box<str>>,
     pub photo: Option<Portrait>,
     pub org: Option<TenantId>,

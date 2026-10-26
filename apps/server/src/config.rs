@@ -84,9 +84,6 @@ pub struct MailConfig {
     pub base_url: String,
 }
 
-/* Cloudflare R2 is what this was built against, and the protocol is S3, so an S3 bucket or a
-MinIO answer it too. R2 has one region and calls it "auto", which is what the store assumes when
-none is named here. */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectsConfig {
     pub endpoint: String,
@@ -303,9 +300,6 @@ mod tests {
         });
     }
 
-    /* A bucket with no credentials is a deployment that would fail on the first upload rather
-    than at startup, so the four that matter are required together and the region is the only one
-    with a sensible default. */
     #[test]
     fn a_photo_store_needs_its_endpoint_bucket_and_credentials() {
         figment::Jail::expect_with(|jail| {

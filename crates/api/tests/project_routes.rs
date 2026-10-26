@@ -251,8 +251,6 @@ async fn a_member_reads_the_projects_with_their_team_and_their_keys() {
     );
 }
 
-/* The switcher reads this list too and belongs to no team, so a project with no owner must come
-back with a null rather than with the field missing. */
 #[tokio::test]
 async fn a_project_no_team_owns_carries_a_null_team() {
     let kept = Kept::holding();
@@ -324,8 +322,6 @@ async fn an_administrator_creates_a_project_and_is_answered_with_the_catalogue()
     assert_eq!(kept.written().created, vec!["payments-eu".to_owned()]);
 }
 
-/* A name is a slug, and a person typing one into a dialog types it the way they say it. Lowering
-it is kinder than refusing it, and the answer carries what was kept. */
 #[tokio::test]
 async fn a_name_is_lowered_rather_than_refused_for_its_case() {
     let kept = Kept::holding();
@@ -507,8 +503,6 @@ async fn a_project_is_handed_to_a_team() {
     );
 }
 
-/* Belonging to no team is a thing to ask for, so a null is an answer rather than a field somebody
-forgot to send. */
 #[tokio::test]
 async fn a_null_team_takes_the_project_back_from_whoever_held_it() {
     let kept = Kept::holding();

@@ -17,9 +17,6 @@ use crate::explore_routes::{NotCarried, carried};
 
 const NANOS_PER_MILLI: u64 = 1_000_000;
 
-/* Every change answers with the teams as they now stand rather than with the one that changed.
-Claiming a project takes it off the team that held it, so one team is never the whole of what
-moved, and a screen written from one row would be wrong about another. */
 #[derive(Debug, Serialize)]
 pub struct Arranged {
     teams: Vec<Listed>,
@@ -95,8 +92,6 @@ where
             "/api/orgs/{org}/teams/{team}",
             patch(rename::<S, G, Q>).delete(disband::<S, G, Q>),
         )
-        /* Both of these replace a whole list rather than adding to one, so they are a put: asking
-        twice with the same list leaves the team as it was after the first. */
         .route("/api/orgs/{org}/teams/{team}/members", put(seat::<S, G, Q>))
         .route("/api/orgs/{org}/teams/{team}/projects", put(own::<S, G, Q>))
         .with_state(squad)
@@ -230,9 +225,6 @@ pub enum TeamRefused {
     Unavailable,
 }
 
-/* A session with no membership of the organisation is told there is none, so the ids of other
-organisations stay unguessable. Everybody past that point already knows it exists, so they are
-told the real reason instead. */
 impl From<TeamError> for TeamRefused {
     fn from(error: TeamError) -> Self {
         match error {

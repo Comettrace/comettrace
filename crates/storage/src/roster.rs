@@ -14,8 +14,6 @@ use crate::memberships::read_role;
 
 const NANOS_PER_SECOND: i64 = 1_000_000_000;
 
-/* As long as the way in a new account is given by the command line, because an invitation by one
-route and an invitation by the other should not last different lengths of time. */
 const WAY_IN_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Debug, Clone)]
@@ -34,9 +32,6 @@ impl<C: Clock> PostgresRoster<C> {
         }
     }
 
-    /* A hash of bytes nobody holds, so the row satisfies the constraint that every account
-    carries a way in while no password matches it. Hashing costs a tenth of a second of cpu, so
-    it happens off the runtime rather than in front of the other requests. */
     async fn locked(&self) -> Result<String, ReadError> {
         let hasher = self.hasher.clone();
         task::spawn_blocking(move || hasher.locked())
@@ -52,8 +47,6 @@ impl<C: Clock> PostgresRoster<C> {
 
 impl<C: Clock + Send + Sync> Roll for PostgresRoster<C> {
     async fn of(&self, org: TenantId) -> Result<Vec<Member>, ReadError> {
-        /* The enum is declared owner first, so ordering by it puts the organisation in the order
-        the screen reads it in: who answers for it, then who runs it, then everybody else. */
         let rows = sqlx::query(
             "SELECT m.account_id AS account_id, a.email AS email, a.name AS name, \
              a.photo_token AS photo_token, a.photo_type AS photo_type, \
@@ -110,9 +103,6 @@ impl<C: Clock + Send + Sync> Roll for PostgresRoster<C> {
             })
     }
 
-    /* One transaction, because the three halves of an admission are worthless apart: an account
-    with no membership is a stranger with a password, and a membership whose account carries no
-    way in is somebody who was invited and cannot answer. */
     async fn admit(
         &self,
         org: TenantId,
@@ -134,9 +124,6 @@ impl<C: Clock + Send + Sync> Roll for PostgresRoster<C> {
             .await
             .map_err(|error| unreachable(&error))?;
 
-        /* The name comes back with the id because an account that already carried the address
-        may already carry a name, and the member this answers with is the row the screen shows.
-        An account created here has none: nobody has written one yet. */
         let standing = sqlx::query(
             "SELECT id AS id, name AS name, photo_token AS photo_token, \
              photo_type AS photo_type FROM accounts WHERE email = $1",
@@ -161,8 +148,6 @@ impl<C: Clock + Send + Sync> Roll for PostgresRoster<C> {
             ),
         };
 
-        /* Nothing comes back when the membership is already there, and that is the answer: a
-        second invitation must not quietly change the role somebody already holds. */
         let joined = sqlx::query(
             "INSERT INTO org_members (org_id, account_id, role) VALUES ($1, $2, $3::org_role) \
              ON CONFLICT (org_id, account_id) DO NOTHING \
@@ -260,7 +245,6 @@ fn known_role(row: &PgRow) -> Result<OrgRole, ReadError> {
     })
 }
 
-/* The column is signed and this is not, which only matters for a row dated before 1970. */
 fn read_nanos(row: &PgRow) -> u64 {
     u64::try_from(row.get::<i64, _>("created_at")).unwrap_or_default()
 }

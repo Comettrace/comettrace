@@ -39,7 +39,6 @@ import { ProjectApiKeys } from '@/pages/settings/ProjectApiKeys'
 
 declare module '@tanstack/react-router' {
   interface StaticDataRouteOption {
-    /* Screens still rendering bundled samples; the shell marks them for whoever is looking. */
     mock?: boolean
   }
   interface Register {
@@ -58,7 +57,6 @@ const signInRoute = createRoute({
   path: '/sign-in',
   component: SignIn,
   validateSearch: (search: Record<string, unknown>): { redirect?: string } => ({
-    /* Only a path of this app, so a crafted link cannot bounce someone off site after signing in. */
     redirect: typeof search.redirect === 'string' && search.redirect.startsWith('/') ? search.redirect : undefined,
   }),
 })
@@ -83,7 +81,6 @@ const shellRoute = createRoute({
       await context.queryClient.ensureQueryData(accountQuery)
     } catch (error) {
       if (isUnauthorized(error)) throw redirect({ to: '/sign-in', search: { redirect: location.href } })
-      /* A server that is merely unreachable leaves the shell standing, with its own banner. */
     }
   },
 })

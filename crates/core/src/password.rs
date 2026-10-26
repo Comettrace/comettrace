@@ -75,10 +75,6 @@ where
         self
     }
 
-    /* The current password is checked before the chosen one is judged, so somebody who mistypes
-    the one they already have is told that and nothing else. Nothing is written until both
-    answers are in, and then every session goes, this one included: a password that may have
-    leaked is a reason to start over everywhere rather than to keep the window you are in. */
     pub async fn change(
         &self,
         token: &SessionToken,

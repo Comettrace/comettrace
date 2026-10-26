@@ -63,21 +63,12 @@ impl<T: UsageReader + Send + Sync> UsageReader for std::sync::Arc<T> {
     }
 }
 
-/* One finished hour of ingestion. The hour is the grain the counters are rolled up at, so it is
-the grain this reads at too; a screen that wants days adds them up, which is cheaper than asking
-the store for a second shape of the same numbers. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Consumed {
     pub started_at_unix_nanos: u64,
     pub ingested_bytes: u64,
 }
 
-/* What the usage screen is. The running total is read from the live counter rather than added up
-from the hours, because the hour in progress has not been rolled up yet and a month-to-date figure
-that lags by up to an hour is the one number here nobody would forgive.
-
-`included_bytes` is what the organisation's plan allows, and nothing when the plan sets no
-ceiling. A self-hosted deployment is on the seeded plan, which sets none. */
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Consumption {
     pub ingested_bytes: u64,
@@ -92,7 +83,6 @@ pub trait UsageHistory {
         window: Window,
     ) -> impl Future<Output = Result<Vec<Consumed>, ReadError>> + Send;
 
-    /// What the plan allows, or nothing when it sets no ceiling.
     fn included(
         &self,
         org: TenantId,
@@ -133,12 +123,6 @@ impl<T: UsageHistory + Send + Sync> UsageHistory for std::sync::Arc<T> {
     }
 }
 
-/* The three answers this gives are the ones Explore gives — no session, not your organisation, a
-store out of reach — so it carries that error rather than a second enum spelling them again.
-
-Reading is any member's. What an organisation has ingested is not a secret kept from the people
-who put it there, and the screen that shows it sits beside the rest of the organisation settings
-that a member may read. */
 #[derive(Debug)]
 pub struct Metering<S, G, R, H> {
     whoami: Whoami<S, G>,
@@ -297,8 +281,6 @@ mod tests {
         SessionToken::from_plaintext(TOKEN)
     }
 
-    /* The running total is the counter's, not the sum of the hours: the hour in progress has not
-    been rolled up, so adding the rows would read short by up to an hour. */
     #[tokio::test]
     async fn the_month_to_date_total_comes_from_the_live_counter() {
         let rolled = Rolled {

@@ -9,10 +9,6 @@ use crate::secret::{ResetToken, SecretHash, SessionToken};
 use crate::session::SessionStore;
 use crate::tenant::TenantId;
 
-/* One row of the members screen: the account, the address it signs in with, the name and face it
-goes by if somebody filled those in, what it may do here, and when it joined. Both are absent on
-every row of a deployment nobody has filled a profile in on, and then the address is what names
-them and their initials stand in for the face. */
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Member {
     pub account: AccountId,
@@ -23,16 +19,9 @@ pub struct Member {
     pub joined_at_unix_nanos: u64,
 }
 
-/* What admitting an address did, which is not the same thing every time, and which decides
-whether a way in comes back with it. */
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Admitted {
-    /* No account carried the address, so one was created that cannot sign in until the way in
-    handed back with it is spent. */
     Awaiting(Member),
-    /* An account already carried the address, so it joins with the password it already has.
-    Opening a way in here would let an administrator choose a password for an account somebody
-    else signs in with, which is that account handed over rather than an invitation. */
     Standing(Member),
     AlreadyIn,
 }
@@ -40,7 +29,6 @@ pub enum Admitted {
 pub trait Roll {
     fn of(&self, org: TenantId) -> impl Future<Output = Result<Vec<Member>, ReadError>> + Send;
 
-    /// The member as it now stands, or nothing if this organisation holds no such membership.
     fn grant(
         &self,
         org: TenantId,
@@ -48,15 +36,12 @@ pub trait Roll {
         role: OrgRole,
     ) -> impl Future<Output = Result<Option<Member>, ReadError>> + Send;
 
-    /// Whether a membership was there to remove.
     fn remove(
         &self,
         org: TenantId,
         account: AccountId,
     ) -> impl Future<Output = Result<bool, ReadError>> + Send;
 
-    /* The account, the membership and the way in are one write: half an admission is an account
-    nobody can sign in to and nobody asked for. */
     fn admit(
         &self,
         org: TenantId,
@@ -132,9 +117,6 @@ impl<T: Roll + Send + Sync> Roll for std::sync::Arc<T> {
     }
 }
 
-/* An invitation carries a way in only when this is the first anybody here hears of the address.
-The token is the one thing on this screen that is never stored in the clear and never shown
-twice. */
 #[derive(Debug)]
 pub struct Invitation {
     pub member: Member,
@@ -274,9 +256,6 @@ where
         }
     }
 
-    /* Read before written, because what a member is today decides who may change it, and how many
-    owners there are decides whether this one may stop being one. An organisation holds tens of
-    members, so the whole roll costs about what one row of it would. */
     async fn standing_in(
         &self,
         org: TenantId,
@@ -298,13 +277,6 @@ fn owners_among(roll: &[Member]) -> usize {
         .count()
 }
 
-/* The one invariant worth holding: an organisation that has lost its last owner is one nobody
-inside it can hand the role back out in, because the rule below holds every administrator off it.
-Only the command line could rescue it. So the last owner stays, whoever is asking, themselves
-included — and everything else an owner might want is allowed: stepping down once somebody else
-answers for the organisation, handing the role on, leaving afterwards.
-
-`wanted` is the role being granted, or nothing when the membership is going away. */
 fn keeps_an_owner(
     held: OrgRole,
     wanted: Option<OrgRole>,
@@ -317,8 +289,6 @@ fn keeps_an_owner(
     Ok(())
 }
 
-/* Only an owner may hand out the owner role, change an owner, or show one the door. An
-administrator that could do any of those could promote itself through a colleague. */
 fn owners_only<const N: usize>(
     who: &Who,
     org: TenantId,
@@ -637,8 +607,6 @@ mod tests {
         assert_eq!(changed.role, OrgRole::Owner);
     }
 
-    /* The only account that could leave an organisation ownerless is the last owner itself, and
-    this is the refusal that stops it. Nothing short of the command line could put the role back. */
     #[tokio::test]
     async fn the_last_owner_cannot_stop_being_one() {
         let held = Held::of(vec![a_member(ME, OrgRole::Owner)]);
@@ -666,8 +634,6 @@ mod tests {
         assert_eq!(changed.role, OrgRole::Admin);
     }
 
-    /* Handing the role on and then leaving is two changes, and both of them are allowed in that
-    order. It is the whole reason the rule counts owners rather than refusing your own row. */
     #[tokio::test]
     async fn an_owner_hands_the_role_on_and_then_leaves() {
         let held = Held::of(vec![
@@ -766,8 +732,6 @@ mod tests {
         );
     }
 
-    /* Choosing a password for an address somebody already signs in with is that account handed
-    over, so an invitation to one carries no way in at all. */
     #[tokio::test]
     async fn an_address_that_already_has_an_account_joins_without_a_new_way_in() {
         let held = Held::admitting(Admitted::Standing(a_member(SOMEBODY, OrgRole::Admin)));

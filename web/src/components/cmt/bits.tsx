@@ -97,7 +97,6 @@ export function EmptyState({ icon, title, children, code, actions }: { icon?: Re
   )
 }
 
-/* Maps the shorthand class names used in the signal mock data to Tailwind utilities. */
 const MAP: Record<string, string> = {
   mono: 'font-mono', strong: 'font-semibold', sm: 'text-control', small: 'text-caption', muted: 'text-muted-foreground',
   'warn-text': 'text-warning-text', 'ok-text': 'text-success-text', 'err-text': 'text-destructive-text', 'accent-text': 'text-accent-text',

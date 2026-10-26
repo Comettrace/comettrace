@@ -29,9 +29,6 @@ impl fmt::Display for TenantId {
 #[error("the ingest key matches no tenant")]
 pub struct UnknownKey;
 
-/* What a key names. A key issued before a project could be named resolves to none, and a span
-written under it carries no project, which is the only honest answer a project filter can be
-given about it. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Scope {
     pub tenant: TenantId,

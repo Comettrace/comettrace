@@ -4,10 +4,6 @@ use core::future::Future;
 use crate::identity::AccountId;
 use crate::tenant::TenantId;
 
-/* What the screen promised before anything backed it -- "PNG or JPG, square, up to 1 MB" -- and
-what an avatar actually needs: low enough that a photo is never the reason a page is slow, high
-enough for a picture somebody cropped on a phone. Nothing is re-encoded on the way in, because a
-ceiling this low makes a resizer a dependency rather than a saving. */
 pub const MAX_PHOTO_BYTES: usize = 1024 * 1024;
 
 const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
@@ -23,8 +19,6 @@ pub enum PhotoKind {
 }
 
 impl PhotoKind {
-    /* The media type is the spelling, because it is what the column holds and what the answer
-    carries: one name rather than a short one beside a header value. */
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Png => "image/png",
@@ -50,9 +44,6 @@ impl PhotoKind {
         }
     }
 
-    /* Sniffed from the first bytes rather than believed from the request. A content type is what
-    a sender claims, and an avatar that is really a script is a file we would hand back to every
-    reader's browser with our own origin on it. */
     fn sniffed(bytes: &[u8]) -> Option<Self> {
         if bytes.starts_with(PNG) {
             return Some(Self::Png);
@@ -87,7 +78,6 @@ pub struct Photo {
     bytes: Vec<u8>,
 }
 
-/* The bytes are somebody's face. Their count is what a log or a panic has any use for. */
 impl fmt::Debug for Photo {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -99,9 +89,6 @@ impl fmt::Debug for Photo {
 }
 
 impl Photo {
-    /* The ceiling is checked before the bytes are sniffed, so somebody who sent a film is told
-    the size rather than that a film is not a png. Empty bytes are no image: there is nothing to
-    sniff, and nothing to keep. */
     pub fn examined(bytes: Vec<u8>) -> Result<Self, BadPhoto> {
         if bytes.len() > MAX_PHOTO_BYTES {
             return Err(BadPhoto::TooLarge(MAX_PHOTO_BYTES));
@@ -119,20 +106,12 @@ impl Photo {
     }
 }
 
-/* What the control plane keeps about a photo: what it is, and the token the store named the
-object after. The token changes with every upload, so a url carrying it can be cached for ever
-and still change the moment the photo does. */
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Portrait {
     pub token: Box<str>,
     pub kind: PhotoKind,
 }
 
-/* Whose picture this is. The store namespaces its objects by the variant, so an account and an
-organisation that happen to carry the same uuid never name the same object, and a bucket can still
-be read by eye. The two kinds answer the same three questions, which is why there is one port here
-rather than one per kind: what differs between them is a key prefix, and the signing underneath it
-is the expensive half. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pictured {
     Account(AccountId),
@@ -147,8 +126,6 @@ pub enum PhotoError {
     Unreachable,
 }
 
-/* Where the bytes live. The store names its own objects and hands back the token it used, so
-nothing above it has to know how a key is spelt or where the randomness comes from. */
 pub trait Photos {
     fn put(
         &self,
@@ -221,9 +198,6 @@ impl<T: Photos + Send + Sync> Photos for std::sync::Arc<T> {
     }
 }
 
-/* A deployment with no object store configured. It refuses rather than being absent, so somebody
-who presses the control is told why instead of meeting a route that is not there -- the way
-NoProvider refuses a sign in nobody enabled. */
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NoPhotos;
 
@@ -284,8 +258,6 @@ mod tests {
         );
     }
 
-    /* The one that matters: a sender says what it likes in a content type, and we would hand
-    whatever it sent back to every reader's browser under our own origin. */
     #[test]
     fn anything_that_is_not_an_image_is_refused_however_it_is_announced() {
         assert_eq!(
@@ -327,7 +299,6 @@ mod tests {
         assert_eq!(rendered, "Photo { kind: Png, bytes: 42 }");
     }
 
-    /* The column holds the media type, so the spelling has to survive a round trip through it. */
     #[test]
     fn a_kind_is_read_back_from_the_spelling_it_is_stored_under() {
         for kind in [PhotoKind::Png, PhotoKind::Jpeg, PhotoKind::Webp] {

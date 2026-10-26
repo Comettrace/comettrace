@@ -1,5 +1,4 @@
 /* eslint-disable */
-/* Mock data for the Backend and Frontend views. Generated values are seeded, so every reload looks the same. */
 export type Col = { label: string; cls: string; sort: 'none' | 'ascending' | 'descending' }
 export type Cell = { v: string; cls: string; title: string; warn: boolean; bar?: number; barColor?: string }
 export type SignalView = {

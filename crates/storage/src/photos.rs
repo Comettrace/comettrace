@@ -7,21 +7,11 @@ use reqwest::{Client, Method, StatusCode, Url};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 
-/* Signature Version 4, by hand. The project already carries reqwest, sha2, hex, time and rand,
-and hmac is already in the tree, so signing three request shapes costs nothing new -- where an
-aws sdk would bring its own runtime, its own http stack and some fifty crates to put a megabyte
-somewhere. R2 is what this was built against; the protocol is S3, so an S3 bucket or a MinIO also
-answer it. */
 const ALGORITHM: &str = "AWS4-HMAC-SHA256";
 const SERVICE: &str = "s3";
-/* The hash of no bytes at all, which a GET and a DELETE both carry. */
 const NOTHING: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-/* R2 has one region and calls it this. A real S3 bucket names its own. */
 const ANY_REGION: &str = "auto";
 const TOKEN_BYTES: usize = 8;
-/* Two prefixes in one bucket rather than a bucket per kind: a bucket is an operator's to create,
-and a deployment should need exactly one. The prefix is what keeps an account's face and an
-organisation's mark from ever naming the same object when the two ids happen to collide. */
 const AVATARS: &str = "avatars";
 const LOGOS: &str = "logos";
 
@@ -53,7 +43,6 @@ pub struct S3Photos<C> {
     clock: C,
 }
 
-/* The endpoint and the bucket, because those are what an operator mistyped. Never the key. */
 impl<C> fmt::Debug for S3Photos<C> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -86,8 +75,6 @@ impl<C: Clock> S3Photos<C> {
         })
     }
 
-    /* Path style, with the bucket ahead of the object: R2 answers it, a MinIO answers it, and an
-    S3 bucket whose name is not a legal hostname answers only this. */
     fn canonical_uri(&self, object: &str) -> String {
         format!("/{}/{}", self.bucket, object)
     }
@@ -200,8 +187,6 @@ impl<C: Clock + Send + Sync> Photos for S3Photos<C> {
         let object = object_of(of, portrait);
         let (status, body) = self.send(Method::GET, &object, None).await?;
         if status == StatusCode::NOT_FOUND {
-            /* The column pointed at an object the store no longer holds. That is a photo that is
-            gone rather than a store that is broken, so the screen falls back to initials. */
             tracing::warn!(object = %object, "the photo store holds no such object any more");
             return Ok(None);
         }
@@ -217,8 +202,6 @@ impl<C: Clock + Send + Sync> Photos for S3Photos<C> {
         Ok(Some(body))
     }
 
-    /* A delete that finds nothing has done its job: what was asked for is an object that is not
-    there. */
     async fn remove(&self, of: Pictured, portrait: &Portrait) -> Result<(), PhotoError> {
         let object = object_of(of, portrait);
         let (status, body) = self.send(Method::DELETE, &object, None).await?;
@@ -235,10 +218,6 @@ impl<C: Clock + Send + Sync> Photos for S3Photos<C> {
     }
 }
 
-/* One object per picture rather than one per owner, because the token is what lets a url be
-cached for ever: a replacement is a different object, so no reader is ever served the face
-somebody deleted. The owner is in the path, under the prefix its kind answers to, so a bucket can
-be read by eye and the two kinds never collide. */
 fn object_of(of: Pictured, portrait: &Portrait) -> String {
     let (prefix, owner) = match of {
         Pictured::Account(account) => (AVATARS, account.as_uuid()),
@@ -258,9 +237,6 @@ fn mint() -> String {
 
 fn authority(endpoint: &Url) -> Option<String> {
     let host = endpoint.host_str()?;
-    /* The port only belongs in the header when the url carries one that is not the scheme's
-    default, which is exactly when `Url::port` answers. A signature over the wrong host is a 403
-    nobody can read. */
     Some(match endpoint.port() {
         Some(port) => format!("{host}:{port}"),
         None => host.to_owned(),
@@ -286,9 +262,6 @@ fn signed_headers(headers: &[(&str, String)]) -> String {
     names.join(";")
 }
 
-/* The canonical request, as the signature algorithm spells it: the method, the path, the query
-string, every signed header in order, the names of those headers, and the hash of the body. The
-query string is empty here because none of the three requests carries one. */
 fn canonical_request(method: &str, uri: &str, headers: &[(&str, String)], payload: &str) -> String {
     let mut sorted: Vec<&(&str, String)> = headers.iter().collect();
     sorted.sort_by(|left, right| left.0.cmp(right.0));
@@ -363,7 +336,6 @@ mod tests {
         assert!(format!("{:?}", store()).contains("auto"));
     }
 
-    /* The one thing that must never be renderable. */
     #[test]
     fn a_store_never_renders_its_secret() {
         let rendered = format!("{:?}", store());
@@ -380,8 +352,6 @@ mod tests {
         );
     }
 
-    /* The prefix is the whole of what separates the two kinds, so the one case that would be a
-    silent mix-up is pinned: the same uuid worn by an account and by an organisation. */
     #[test]
     fn an_account_and_an_organisation_of_the_same_id_never_name_the_same_object() {
         let face = object_of(an_account(), &a_portrait());
@@ -419,8 +389,6 @@ mod tests {
         assert_eq!(day, "20231114");
     }
 
-    /* The shape the algorithm hashes. Everything below the signature is arithmetic; this is where
-    a mistake turns into a 403 nobody can read, so it is pinned by eye. */
     #[test]
     fn the_canonical_request_is_the_shape_the_algorithm_hashes() {
         let headers = vec![
@@ -465,8 +433,6 @@ mod tests {
         assert_eq!(lines[3].len(), 64, "the canonical request arrives hashed");
     }
 
-    /* The payload hash is the body's, and a request with no body carries the hash of no bytes --
-    not the words, the hash. */
     #[test]
     fn a_body_is_hashed_and_an_empty_one_has_a_known_hash() {
         let photo = Photo::examined(vec![

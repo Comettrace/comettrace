@@ -385,8 +385,6 @@ async fn a_services_window_that_ends_before_it_starts_is_refused() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-/* The offset is relative to the start of the trace, like the span offsets beside it, so the
-screen can place an exception on the waterfall without doing arithmetic on nanoseconds. */
 #[tokio::test]
 async fn an_exception_on_a_span_reaches_the_waterfall_with_its_place_in_it() {
     let uri = format!("/api/orgs/{}/traces/{TRACE}", org(MINE));
@@ -401,16 +399,12 @@ async fn an_exception_on_a_span_reaches_the_waterfall_with_its_place_in_it() {
     assert_eq!(events[0]["name"], "exception");
     assert_eq!(events[0]["offset_us"], 900_000);
     assert_eq!(events[0]["attributes"]["exception.type"], "PspTimeoutError");
-    /* A span that recorded nothing says so with an empty list rather than with a missing field,
-    so the screen has one shape to read. */
     assert_eq!(
         trace["spans"][0]["events"].as_array().map(Vec::len),
         Some(0)
     );
 }
 
-/* A reader that keeps what it was asked, so the test can say what reached the store rather than
-what the route appeared to accept. The screen's controls are only real if they arrive here. */
 #[derive(Debug, Default)]
 struct Remembering(Mutex<Option<TraceFilter>>);
 
@@ -438,9 +432,6 @@ impl SpanReader for Remembering {
     }
 }
 
-/* The screen used to filter the rows it had already fetched, which meant "errors only" showed
-the errors among fifty traces rather than the errors in the window. This is the test that says
-every control reaches the store instead. */
 #[tokio::test]
 async fn every_filter_the_screen_offers_reaches_the_store() {
     let asked = Arc::new(Remembering::default());
@@ -466,8 +457,6 @@ async fn every_filter_the_screen_offers_reaches_the_store() {
     assert_eq!(filter.project, Some(ProjectId::new(Uuid::from_u128(7))));
 }
 
-/* A box somebody typed into and then emptied is no search. Sent as an empty string, it must not
-become a filter that matches every span name — or nothing at all. */
 #[tokio::test]
 async fn a_name_that_was_typed_and_cleared_is_not_a_filter() {
     let asked = Arc::new(Remembering::default());
@@ -491,8 +480,6 @@ async fn a_name_that_was_typed_and_cleared_is_not_a_filter() {
     );
 }
 
-/* Nothing asked for is the default, so a screen that sends only a window gets the newest traces
-of that window rather than a refusal or an arbitrary order. */
 #[tokio::test]
 async fn a_window_on_its_own_filters_nothing_and_orders_by_when_it_started() {
     let asked = Arc::new(Remembering::default());

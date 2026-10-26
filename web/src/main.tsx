@@ -9,8 +9,6 @@ import { ThemeProvider, useTheme } from '@/lib/theme'
 import { createAppRouter } from './routes'
 import './styles/globals.css'
 
-/* A session can end under any request, so the answer is the same wherever the 401 came from:
-   go to sign-in once, carrying the path to come back to. */
 function toSignIn(error: unknown) {
   if (!isUnauthorized(error)) return
   const { pathname, href } = router.state.location

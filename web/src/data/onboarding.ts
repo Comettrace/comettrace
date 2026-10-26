@@ -3,9 +3,6 @@ import { useMock } from './seam'
 export type Arrival = 'unknown' | 'waiting' | 'arrived'
 export type FirstSignals = { traces: Arrival; logs: Arrival; metrics: Arrival }
 
-/* Issue #117 wants onboarding to wait for the first trace, log and metric and confirm each one.
-   The server has no endpoint that answers whether anything has been received, so the question
-   cannot be asked yet: give this loader one and the screen starts confirming arrivals. */
 export function useFirstSignals(): FirstSignals {
   return useMock(['onboarding', 'first-signals'], () => ({ traces: 'unknown', logs: 'unknown', metrics: 'unknown' }) as FirstSignals)
 }

@@ -476,8 +476,6 @@ async fn who_is_on_a_team_is_put_whole() {
     );
 }
 
-/* An empty list is a team with nobody on it, which is a thing somebody may well want, so it must
-not read as a list that failed to arrive. */
 #[tokio::test]
 async fn seating_nobody_empties_the_team_rather_than_being_refused() {
     let kept = Kept::of(vec![backend()]);

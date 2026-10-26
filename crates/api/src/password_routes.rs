@@ -69,9 +69,6 @@ impl From<ChangeError> for ChangeRefused {
 }
 
 impl IntoResponse for ChangeRefused {
-    /* A wrong current password answers 422 rather than 401. 401 is what a browser treats as a
-    session that has gone, so a mistyped password would sign the person out instead of telling
-    them what they mistyped. */
     fn into_response(self) -> Response {
         let (status, message) = match self {
             Self::Reaching(refused) => return refused.into_response(),

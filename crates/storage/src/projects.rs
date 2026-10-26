@@ -25,8 +25,6 @@ impl PostgresProjects {
         Self { pool }
     }
 
-    /* The command line route in, which answers with the id so that a key can be drawn for the
-    project in the next breath. */
     pub async fn claim(
         &self,
         org: TenantId,
@@ -51,9 +49,6 @@ impl PostgresProjects {
         Ok(ProjectId::new(id))
     }
 
-    /* The only project of an organisation is the one a key belongs to when nobody named one, which
-    is the single project case every self-hosted deployment is. More than one and the choice is
-    the operator's to make. */
     pub async fn only(&self, org: TenantId) -> Result<Option<ProjectId>, ProjectError> {
         let found = sqlx::query(
             "SELECT id AS id FROM projects WHERE org_id = $1 ORDER BY created_at LIMIT 2",
@@ -70,8 +65,6 @@ impl PostgresProjects {
 }
 
 impl Projects for PostgresProjects {
-    /* The owner team and the count of keys that still authenticate are read alongside, because
-    the screen that lists a project shows all three in one row. */
     async fn of(&self, tenant: TenantId) -> Result<Vec<Project>, ReadError> {
         let rows = sqlx::query(
             "SELECT p.id AS id, p.name AS name, p.created_at AS created_at, \
@@ -122,8 +115,6 @@ impl Projects for PostgresProjects {
         })
     }
 
-    /* Renaming keeps the id, so the keys drawn for the project keep working and the spans already
-    written stay reachable: nothing anywhere holds the name. */
     async fn rename(
         &self,
         org: TenantId,
@@ -156,9 +147,6 @@ impl Projects for PostgresProjects {
             .map_err(|error| unreachable(&error, "forget a project"))
     }
 
-    /* The team is matched against this organisation in the statement itself, so a team of another
-    organisation writes nothing rather than being refused after the fact. The two answers are told
-    apart by asking whether the project was there at all. */
     async fn assign(
         &self,
         org: TenantId,

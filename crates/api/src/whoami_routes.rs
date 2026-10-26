@@ -20,20 +20,13 @@ use crate::session_cookie;
 
 const REQUESTED_WITH: HeaderName = HeaderName::from_static("x-requested-with");
 
-/* The url of a photo carries the token the store named it after, so it is a different url every
-time somebody replaces their face. That is what lets it be cached for a year: no reader is ever
-served the photo somebody deleted, and no screen has to ask whether the one it holds is current.
-Private, because a live session is what the route asks for. */
 const FOR_EVER: &str = "private, max-age=31536000, immutable";
 
 #[derive(Debug, Serialize)]
 pub struct Standing {
     account: Uuid,
     email: String,
-    /* Absent until somebody writes one. The screens fall back to the address rather than showing
-    an empty line, so the absence has to survive the wire instead of becoming "". */
     name: Option<String>,
-    /* A url rather than a flag beside an id, so no screen has to know how one is spelt. */
     photo: Option<String>,
     active_org: Option<Uuid>,
     memberships: Vec<Belonging>,
@@ -95,8 +88,6 @@ where
             "/auth/me/photo",
             post(keep::<S, G, A, P>)
                 .delete(forget::<S, G, A, P>)
-                /* The ceiling the core type enforces, said again here so a body past it is
-                refused as it arrives rather than after a megabyte of it is held. */
                 .layer(DefaultBodyLimit::max(MAX_PHOTO_BYTES)),
         )
         .route("/auth/accounts/{account}/photo", get(served::<S, G, A, P>))
@@ -118,9 +109,6 @@ where
     Ok(Json(profile.read(&token).await?.into()))
 }
 
-/* The whole standing comes back rather than the name alone, for the reason the organisation
-rename answers with its card: the screen beside the field shows the role and the organisations,
-and a rename that answered with a name would leave the rest of it a request behind. */
 async fn rename<S, G, A, P>(
     State(profile): State<Arc<Profile<S, G, A, P>>>,
     headers: HeaderMap,
@@ -133,9 +121,6 @@ where
     P: Photos + Send + Sync + 'static,
 {
     let token = carried(&headers)?;
-    /* An emptied box is no name rather than a blank one, the way an emptied filter box is no
-    filter: somebody who clears the field is taking their name off, and the address names them
-    again. So the absence needs no flag of its own beside the field. */
     let chosen = asked.name.trim();
     let name = if chosen.is_empty() {
         None
@@ -144,15 +129,10 @@ where
     };
 
     let who = profile.rename(&token, name.as_ref()).await?;
-    /* The account, not the name: what somebody calls themselves is theirs, and a log is the one
-    place it would outlive the row. */
     tracing::info!(account = %who.account, named = who.name.is_some(), "an account was renamed");
     Ok(Json(who.into()))
 }
 
-/* The bytes are the body, and what they are is read from the bytes themselves rather than from
-the content type the sender announced: an avatar is handed back to every reader's browser under
-our own origin, so a file that is really a script must not get that far. */
 async fn keep<S, G, A, P>(
     State(profile): State<Arc<Profile<S, G, A, P>>>,
     headers: HeaderMap,
@@ -190,10 +170,6 @@ where
     Ok(Json(who.into()))
 }
 
-/* The one route here that cannot ask for the x-requested-with header: this is what an <img src>
-fetches, and an image element sends no headers of its own. The session cookie is SameSite=Lax, so
-a page on another site that embeds one of these urls has no cookie attached to it and is answered
-401 -- the header would be guarding a door that is already shut. */
 async fn served<S, G, A, P>(
     State(profile): State<Arc<Profile<S, G, A, P>>>,
     Path(account): Path<Uuid>,
@@ -258,8 +234,6 @@ impl IntoResponse for StandingRefused {
             Self::NoSession => StatusCode::UNAUTHORIZED,
             Self::Name(_) | Self::Picture(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::NoPhoto => StatusCode::NOT_FOUND,
-            /* A deployment that keeps no photos is a deployment that is missing a part, which is
-            an operator's to fix rather than a reader's: the sentence says which part. */
             Self::NoStore(_) | Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         };
         if status.is_server_error() {
