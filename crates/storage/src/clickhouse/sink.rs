@@ -30,10 +30,6 @@ impl Default for BatchLimits {
 
 pub struct ClickhouseSink<C> {
     spans: Mutex<Inserter<SpanRow<'static>>>,
-    /* A second inserter rather than a second table written from the first, because the two
-    buffers fill at wildly different rates: a deployment whose spans carry no events should not
-    be holding an empty events batch open, and one whose spans carry twenty each should not be
-    committing spans twenty times as often. */
     events: Mutex<Inserter<EventRow<'static>>>,
     clock: C,
     retention: Duration,
@@ -61,9 +57,6 @@ impl<C: Clock> ClickhouseSink<C> {
         }
     }
 
-    /* Both, and the spans first. If the second commit is refused the batch is lost either way,
-    and spans without their events read as a trace that recorded none — which is wrong but
-    legible. Events without their spans would be rows nothing can reach. */
     pub async fn flush(&self) -> Result<u64, SinkError> {
         let spans = self.spans.lock().await.force_commit().await;
         let events = self.events.lock().await.force_commit().await;
@@ -76,7 +69,6 @@ impl<C: Clock> ClickhouseSink<C> {
         self.spans.lock().await.pending().rows + self.events.lock().await.pending().rows
     }
 
-    /* The sooner of the two, so the flush loop wakes for whichever deadline arrives first. */
     pub async fn time_left(&self) -> Option<Duration> {
         let spans = self.spans.lock().await.time_left();
         let events = self.events.lock().await.time_left();
@@ -94,34 +86,34 @@ impl<C: Clock + Send + Sync> SpanSink for ClickhouseSink<C> {
             .now()
             .saturating_add_secs(self.retention.as_secs());
 
+        let mut span_rows = Vec::with_capacity(spans.len());
+        for span in &spans {
+            span_rows.push(SpanRow::of(scope, span, expire_at)?);
+        }
+
+        let carried = spans.iter().map(|span| span.events.len()).sum();
+        let mut event_rows = Vec::with_capacity(carried);
+        for span in &spans {
+            for event in &span.events {
+                event_rows.push(EventRow::of(scope, span, event, expire_at)?);
+            }
+        }
+
         {
             let mut inserter = self.spans.lock().await;
-            for span in &spans {
-                let row = SpanRow::of(scope, span, expire_at)?;
-                inserter
-                    .write(&row)
-                    .await
-                    .map_err(|error| refused(&error))?;
+            for row in &span_rows {
+                inserter.write(row).await.map_err(|error| refused(&error))?;
             }
             inserter.commit().await.map_err(|error| refused(&error))?;
         }
 
-        /* Nothing is committed when there is nothing to commit. Most spans carry no events, and
-        a deployment where none of them do should not be opening and closing an empty batch on
-        every export. */
-        if spans.iter().all(|span| span.events.is_empty()) {
+        if event_rows.is_empty() {
             return Ok(());
         }
 
         let mut inserter = self.events.lock().await;
-        for span in &spans {
-            for event in &span.events {
-                let row = EventRow::of(scope, span, event, expire_at)?;
-                inserter
-                    .write(&row)
-                    .await
-                    .map_err(|error| refused(&error))?;
-            }
+        for row in &event_rows {
+            inserter.write(row).await.map_err(|error| refused(&error))?;
         }
         inserter.commit().await.map_err(|error| refused(&error))?;
         Ok(())
