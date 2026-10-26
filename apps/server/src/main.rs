@@ -1,3 +1,4 @@
+mod cli;
 mod config;
 
 use std::collections::BTreeMap;
@@ -8,19 +9,17 @@ use std::time::Duration;
 
 use anyhow::Context;
 use axum::Router;
-use clap::{Parser, Subcommand, ValueEnum};
 use comettrace_api::{
     SessionCookie, SignInMethods, auth_router, catalogue_router, explore_router, health_router,
     me_router, methods_router, oidc_router, org_router, password_router, reset_router,
     roster_router, router, team_router, trace_server, usage_router, web_router,
 };
 use comettrace_core::{
-    AccountId, AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
-    FederatedSignIn, Ingest, IngestKey, Mailer, Metering, NoPhotos, NoProvider, OrgRole,
-    OrgSettings, Photo, PhotoError, Photos, Pictured, Portrait, Profile, ProjectId, ProjectName,
-    ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken, Roster, Scope,
-    SessionLifetime, SignIn, SinkError, Span, SpanSink, Squad, TenantDirectory, TenantId,
-    UnknownKey, UsageMeter, UsageReader, Whoami,
+    AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
+    FederatedSignIn, Ingest, IngestKey, Mailer, Metering, NoPhotos, NoProvider, OrgSettings, Photo,
+    PhotoError, Photos, Pictured, Portrait, Profile, ProvisionPolicy, ResetError, ResetPassword,
+    ResetToken, Roster, Scope, SessionLifetime, SignIn, SinkError, Span, SpanSink, Squad,
+    TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink,
@@ -35,8 +34,8 @@ use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
 use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
-use uuid::Uuid;
 
+use crate::cli::{Cli, Command, health, run_command};
 use crate::config::Config;
 
 const SECONDS_PER_HOUR: u64 = 3600;
@@ -78,9 +77,6 @@ impl Mailer for Relay {
     }
 }
 
-/* The bytes of a face live outside the control plane, and a deployment that was never given a
-bucket keeps none. It refuses rather than being absent, the way the relay above does: somebody
-who presses the control is told which part is missing. */
 #[derive(Debug)]
 enum Gallery {
     Objects(Box<S3Photos<SystemClock>>),
@@ -141,323 +137,6 @@ impl UsageReader for Meter {
     }
 }
 
-#[derive(Debug, Parser)]
-#[command(name = "comettrace", about = "OTLP ingestion and its control plane")]
-struct Cli {
-    #[command(subcommand)]
-    command: Option<Command>,
-}
-
-#[derive(Debug, Subcommand)]
-enum Command {
-    /// Draw a new ingest key for an organisation and print it once
-    IssueKey {
-        #[arg(long)]
-        org: Uuid,
-        #[arg(long)]
-        project: Option<Uuid>,
-    },
-    /// Stop a key from authenticating, named by its clear prefix
-    RevokeKey {
-        #[arg(long)]
-        prefix: String,
-    },
-    /// Ask the server on this host whether it is serving, for a healthcheck
-    Health,
-    /// Give a fresh deployment one account, one organisation, and the way in
-    Bootstrap {
-        #[arg(long)]
-        email: String,
-        #[arg(long, default_value = "Default")]
-        org: String,
-    },
-    /// Create an account with no password and print the link that sets one
-    CreateAccount {
-        #[arg(long)]
-        email: String,
-    },
-    /// Print a fresh link that sets the password of an existing account
-    ResetPassword {
-        #[arg(long)]
-        email: String,
-    },
-    /// Add a project to an organisation
-    CreateProject {
-        #[arg(long)]
-        org: Uuid,
-        #[arg(long)]
-        name: String,
-    },
-    /// Create an organisation and make an existing account its owner
-    CreateOrg {
-        #[arg(long)]
-        name: String,
-        #[arg(long)]
-        owner: String,
-    },
-    /// Give an existing account a role in an organisation
-    GrantRole {
-        #[arg(long)]
-        org: Uuid,
-        #[arg(long)]
-        member: String,
-        #[arg(long)]
-        role: Role,
-    },
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum Role {
-    Owner,
-    Admin,
-    Member,
-}
-
-impl From<Role> for OrgRole {
-    fn from(role: Role) -> Self {
-        match role {
-            Role::Owner => Self::Owner,
-            Role::Admin => Self::Admin,
-            Role::Member => Self::Member,
-        }
-    }
-}
-
-const INVITE_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
-
-async fn invite(pool: &PgPool, account: AccountId) -> anyhow::Result<ResetToken> {
-    let token = ResetToken::random();
-    PostgresResets::new(pool.clone(), SystemClock)
-        .with_window(INVITE_WINDOW)
-        .begin(account, token.hash())
-        .await
-        .context("opening the password reset")?;
-    Ok(token)
-}
-
-fn print_the_way_in(token: &ResetToken) {
-    eprintln!(
-        "The token printed below lasts {} hours and can be spent once:",
-        INVITE_WINDOW.as_secs() / 3600
-    );
-    eprintln!(
-        "  curl -X POST <base>/auth/reset/confirm -H 'x-requested-with: cli' \\\n    \
-         -H 'content-type: application/json' \\\n    \
-         -d '{{\"token\":\"<token>\",\"password\":\"<chosen>\"}}'"
-    );
-    println!("{}", token.exposed());
-}
-
-const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
-
-async fn health(config: &Config) -> anyhow::Result<()> {
-    let url = format!("http://127.0.0.1:{}/health", config.http_address.port());
-    let answer = reqwest::Client::builder()
-        .timeout(HEALTH_TIMEOUT)
-        .build()
-        .context("preparing the request")?
-        .get(&url)
-        .send()
-        .await
-        .with_context(|| format!("asking {url}"))?;
-    anyhow::ensure!(
-        answer.status().is_success(),
-        "{url} answered {}",
-        answer.status()
-    );
-    Ok(())
-}
-
-async fn run_command(command: Command, config: &Config) -> anyhow::Result<()> {
-    let pool = control_plane_pool(config)
-        .await?
-        .context("this command needs a control plane, so set database_url")?;
-
-    match command {
-        /* Answered before a control plane is opened, so it does not reach here. Kept as itself
-        rather than as a panic: an arm that cannot run should still be the right answer if it
-        ever does. */
-        Command::Health => health(config).await,
-        Command::IssueKey { org, project } => issue_key(pool, org, project).await,
-        Command::RevokeKey { prefix } => revoke_key(pool, &prefix).await,
-        Command::Bootstrap { email, org } => {
-            bootstrap(pool, &email, &org, config.local_password).await
-        }
-        Command::CreateAccount { email } => create_account(pool, &email).await,
-        Command::ResetPassword { email } => reset_password(pool, &email).await,
-        Command::CreateProject { org, name } => create_project(pool, org, &name).await,
-        Command::CreateOrg { name, owner } => create_org(pool, &name, &owner).await,
-        Command::GrantRole { org, member, role } => {
-            grant_role(pool, org, &member, role.into()).await
-        }
-    }
-}
-
-/* A span carries the project of the key that brought it, so a key with no project writes spans no
-project filter can match. When the organisation holds exactly one there is nothing to choose
-between, so the key gets it; with several the operator has to say which. */
-async fn issue_key(pool: PgPool, org: Uuid, project: Option<Uuid>) -> anyhow::Result<()> {
-    let tenant = TenantId::new(org);
-    let project = match project {
-        Some(named) => Some(named),
-        None => PostgresProjects::new(pool.clone())
-            .only(tenant)
-            .await
-            .context("looking for the only project")?
-            .map(ProjectId::as_uuid),
-    };
-    if project.is_none() {
-        eprintln!(
-            "This organisation holds no single project, so this key names none \
-             and its spans will match no project. Name one with --project."
-        );
-    }
-    let key = PostgresDirectory::new(pool, SystemClock)
-        .issue(tenant, project)
-        .await
-        .context("issuing the key")?;
-    eprintln!("This key is shown once. Store it now; it cannot be read back.");
-    println!("{}", key.exposed());
-    Ok(())
-}
-
-async fn revoke_key(pool: PgPool, prefix: &str) -> anyhow::Result<()> {
-    let stopped = PostgresDirectory::new(pool, SystemClock)
-        .revoke(prefix)
-        .await
-        .context("revoking the key")?;
-    if stopped {
-        eprintln!("{prefix} will not authenticate the next payload.");
-    } else {
-        eprintln!("{prefix} matched no live key.");
-    }
-    Ok(())
-}
-
-async fn bootstrap(
-    pool: PgPool,
-    email: &str,
-    org: &str,
-    local_password: bool,
-) -> anyhow::Result<()> {
-    let memberships = PostgresMemberships::new(pool.clone());
-    if let Some(existing) = memberships
-        .founded()
-        .await
-        .context("looking for an organisation")?
-    {
-        eprintln!(
-            "This deployment already holds an organisation ({existing}), \
-             so nothing was changed."
-        );
-        return Ok(());
-    }
-
-    let email = Email::try_from(email).context("reading the address")?;
-    let account = account_for_or_create(&pool, &email).await?;
-    let tenant = memberships
-        .found(org, email.as_str())
-        .await
-        .context("creating the organisation")?;
-    let first = ProjectName::try_from("default").expect("a slug");
-    let project = PostgresProjects::new(pool.clone())
-        .claim(tenant, &first)
-        .await
-        .context("creating the first project")?;
-
-    eprintln!("{} owns {org} ({tenant}).", email.as_str());
-    eprintln!("It holds one project, {} ({project}).", first.as_str());
-    eprintln!("Draw its first ingest key with:");
-    eprintln!("  comettrace issue-key --org {tenant} --project {project}");
-
-    if !local_password {
-        eprintln!("Local passwords are off, so sign in through the identity provider.");
-        return Ok(());
-    }
-    print_the_way_in(&invite(&pool, account).await?);
-    Ok(())
-}
-
-async fn account_for_or_create(pool: &PgPool, email: &Email) -> anyhow::Result<AccountId> {
-    let found = PostgresResets::new(pool.clone(), SystemClock)
-        .account_for(email)
-        .await
-        .context("looking the account up")?;
-    if let Some(account) = found {
-        return Ok(account);
-    }
-    create_locked_account(pool, email).await
-}
-
-async fn create_locked_account(pool: &PgPool, email: &Email) -> anyhow::Result<AccountId> {
-    let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
-    let locked = hasher.locked().context("locking the new account")?;
-    PostgresAccounts::new(pool.clone())
-        .create(email, &locked)
-        .await
-        .context("creating the account")
-}
-
-async fn create_account(pool: PgPool, email: &str) -> anyhow::Result<()> {
-    let email = Email::try_from(email).context("reading the address")?;
-    let account = create_locked_account(&pool, &email).await?;
-    let token = invite(&pool, account).await?;
-    eprintln!(
-        "{} cannot sign in until it carries a password.",
-        email.as_str()
-    );
-    print_the_way_in(&token);
-    Ok(())
-}
-
-async fn reset_password(pool: PgPool, email: &str) -> anyhow::Result<()> {
-    let email = Email::try_from(email).context("reading the address")?;
-    let account = PostgresResets::new(pool.clone(), SystemClock)
-        .account_for(&email)
-        .await
-        .context("looking the account up")?
-        .with_context(|| format!("no account carries {}", email.as_str()))?;
-    let token = invite(&pool, account).await?;
-    eprintln!(
-        "Every session of {} ends once the password changes.",
-        email.as_str()
-    );
-    print_the_way_in(&token);
-    Ok(())
-}
-
-async fn create_project(pool: PgPool, org: Uuid, name: &str) -> anyhow::Result<()> {
-    let name = ProjectName::try_from(name).context("reading the name")?;
-    let project = PostgresProjects::new(pool)
-        .claim(TenantId::new(org), &name)
-        .await
-        .context("creating the project")?;
-    eprintln!("{org} now holds {}. Draw a key for it with:", name.as_str());
-    eprintln!("  comettrace issue-key --org {org} --project {project}");
-    println!("{project}");
-    Ok(())
-}
-
-async fn create_org(pool: PgPool, name: &str, owner: &str) -> anyhow::Result<()> {
-    let org = PostgresMemberships::new(pool)
-        .found(name, owner)
-        .await
-        .context("creating the organisation")?;
-    eprintln!("{owner} now owns {name}. Issue its first key with:");
-    eprintln!("  comettrace issue-key --org {org}");
-    println!("{org}");
-    Ok(())
-}
-
-async fn grant_role(pool: PgPool, org: Uuid, member: &str, role: OrgRole) -> anyhow::Result<()> {
-    PostgresMemberships::new(pool)
-        .grant(TenantId::new(org), member, role)
-        .await
-        .context("granting the role")?;
-    eprintln!("{member} is now {role} of {org}.");
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -467,8 +146,6 @@ async fn main() -> anyhow::Result<()> {
 
     let config = config::load().context("reading the configuration")?;
     match Cli::parse().command {
-        /* A healthcheck needs no control plane, and asking for one would make it fail on
-        exactly the deployment it is being asked about. */
         Some(Command::Health) => return health(&config).await,
         Some(command) => return run_command(command, &config).await,
         None => {}
@@ -482,8 +159,6 @@ async fn main() -> anyhow::Result<()> {
     let (sink, reader) = spans_of(&config).await?;
     let sink = Arc::new(sink);
     tokio::spawn(flush_spans(Arc::clone(&sink)));
-    /* One gallery for both services: the object store is the same bucket and only the owner of a
-    key differs, and S3Photos holds an http client there is no reason to keep two of. */
     let gallery = Arc::new(gallery_of(&config)?);
     let identity = identity_routes(&config, pool.as_ref(), Arc::clone(&gallery))
         .await?
@@ -620,8 +295,6 @@ type Enrolling = Roster<Arc<Sessions>, PostgresMemberships, PostgresRoster<Syste
 type Arranging = Squad<Arc<Sessions>, PostgresMemberships, PostgresTeams>;
 type Measuring = Metering<Arc<Sessions>, PostgresMemberships, Arc<Meter>, PostgresUsage>;
 
-/* The hasher is here because admitting an address can create the account it names, and an account
-with no reachable password is still an account that carries a hash. */
 fn roster_routes(pool: Option<&PgPool>) -> anyhow::Result<Router> {
     let Some(pool) = pool else {
         return Ok(Router::new());
@@ -639,9 +312,6 @@ fn roster_routes(pool: Option<&PgPool>) -> anyhow::Result<Router> {
     Ok(roster_router(roster))
 }
 
-/* The live total comes from the counter the quota already reads on every payload, and the shape
-over time from the table the rollup writes. Two stores, because they answer two different
-questions: what has been ingested this minute, and what was ingested last Tuesday. */
 fn usage_routes(pool: Option<&PgPool>, meter: Arc<Meter>) -> Router {
     let Some(pool) = pool else {
         return Router::new();
@@ -815,8 +485,6 @@ async fn identity_routes(
         SystemClock,
         SessionLifetime::default(),
     ));
-    /* The standing reader and the two things a person may change about themselves ride together:
-    /auth/me answers the first and takes the others. */
     let me: Arc<Me> = Arc::new(Profile::new(
         Whoami::new(
             Arc::clone(&sessions),

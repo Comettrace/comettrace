@@ -12,6 +12,7 @@ mod organisation;
 mod password;
 mod photo;
 mod profile;
+mod provisioning;
 mod quota;
 mod reset;
 mod roster;
@@ -23,6 +24,9 @@ mod span;
 mod teams;
 mod tenant;
 mod usage;
+
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 pub use catalogue::{
     Assigned, BadProjectName, Catalogue, CatalogueError, Created, OwnerTeam, Project, ProjectId,
@@ -51,6 +55,9 @@ pub use photo::{
     BadPhoto, MAX_PHOTO_BYTES, NoPhotos, Photo, PhotoError, PhotoKind, Photos, Pictured, Portrait,
 };
 pub use profile::{AccountName, Accounts, BadAccountName, Profile, ProfileError};
+pub use provisioning::{
+    Bootstrapped, ControlPlane, DEFAULT_PROJECT, Founded, Issued, ProvisionError, Provisioning,
+};
 pub use quota::{Admission, QuotaPolicy, Unmetered};
 pub use reset::{Mailer, ResetError, ResetPassword, ResetStore};
 pub use roster::{Admitted, Invitation, Member, Roll, Roster, RosterError};
