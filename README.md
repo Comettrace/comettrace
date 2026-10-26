@@ -65,6 +65,17 @@ A tag `vX.Y.Z` publishes two images for linux/amd64 and linux/arm64:
 `ghcr.io/comettrace/comettrace:X.Y.Z` is the community build and
 `:X.Y.Z-ee` the cloud one. Both carry provenance and an SBOM.
 
+## Contributing
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the development setup, how to run the
+tests that need a real backend, what the code is held to, and what a pull
+request needs. Contributions come in under a sign-off, the
+[DCO](DCO), with no CLA.
+
+Everybody taking part is held to the
+[code of conduct](CODE_OF_CONDUCT.md). A vulnerability goes to
+[SECURITY.md](SECURITY.md), not to an issue.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
