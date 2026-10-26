@@ -1,4 +1,5 @@
 use core::fmt;
+use core::fmt::Write as _;
 
 use comettrace_core::{Clock, Photo, PhotoError, Photos, Pictured, Portrait};
 use hmac::{Hmac, KeyInit, Mac};
@@ -291,10 +292,10 @@ query string is empty here because none of the three requests carries one. */
 fn canonical_request(method: &str, uri: &str, headers: &[(&str, String)], payload: &str) -> String {
     let mut sorted: Vec<&(&str, String)> = headers.iter().collect();
     sorted.sort_by(|left, right| left.0.cmp(right.0));
-    let named: String = sorted
-        .iter()
-        .map(|(name, value)| format!("{name}:{}\n", value.trim()))
-        .collect();
+    let mut named = String::new();
+    for (name, value) in &sorted {
+        let _ = writeln!(named, "{name}:{}", value.trim());
+    }
     format!(
         "{method}\n{uri}\n\n{named}\n{}\n{payload}",
         signed_headers(headers)
