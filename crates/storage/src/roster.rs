@@ -74,8 +74,9 @@ impl<C: Clock + Send + Sync> Roll for PostgresRoster<C> {
         let found = sqlx::query(
             "UPDATE org_members m SET role = $3::org_role FROM accounts a \
              WHERE m.org_id = $1 AND m.account_id = $2 AND a.id = m.account_id \
-             RETURNING m.account_id AS account_id, a.email AS email, m.role::text AS role, \
-             m.created_at AS created_at",
+             RETURNING m.account_id AS account_id, a.email AS email, a.name AS name, \
+             a.photo_token AS photo_token, a.photo_type AS photo_type, \
+             m.role::text AS role, m.created_at AS created_at",
         )
         .bind(org.as_uuid())
         .bind(account.as_uuid())
