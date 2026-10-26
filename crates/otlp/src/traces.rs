@@ -88,12 +88,6 @@ fn convert(span: ProtoSpan, service: &str) -> Result<Span, DecodeError> {
     })
 }
 
-/* The OTLP span limits default to 128 events per span, so a conforming sdk never sends more and
-this only answers for one that does not. Rows are what events cost, and nothing upstream bounds
-them: the quota counts decompressed bytes and the meter counts spans, so a single span carrying a
-hundred thousand events would be storage nobody was charged for. Keeping the first is the right
-end to keep — a span records them in order, and what a reader wants is where it started going
-wrong, not where it gave up. */
 const MOST_EVENTS: usize = 128;
 
 fn events_of(events: Vec<ProtoEvent>) -> Vec<SpanEvent> {
@@ -312,8 +306,6 @@ mod tests {
         );
     }
 
-    /* The order is the span's, because an exception is usually the last thing that happened and a
-    reader walking down the list is walking forwards in time. */
     #[test]
     fn events_keep_the_order_the_span_recorded_them_in() {
         let mut span = a_proto_span();
@@ -344,8 +336,6 @@ mod tests {
         assert!(spans[0].events.is_empty());
     }
 
-    /* Rows are what events cost and nothing upstream bounds them, so the door does. A conforming
-    sdk is under the limit already; this answers for one that is not. */
     #[test]
     fn a_span_carrying_more_events_than_the_limit_keeps_the_first_of_them() {
         let mut span = a_proto_span();
@@ -364,8 +354,6 @@ mod tests {
         );
     }
 
-    /* An event's attributes go through the same renderer as a span's, so a stack trace in bytes
-    rather than text is dropped the same way and does not take the event with it. */
     #[test]
     fn an_event_attribute_that_does_not_render_is_dropped_and_the_event_stays() {
         let mut span = a_proto_span();
@@ -387,5 +375,193 @@ mod tests {
             spans[0].events[0].attributes.get("exception.stacktrace"),
             None
         );
+    }
+
+    mod proptests {
+        use comettrace_core::{InvalidId, SpanId, TraceId};
+        use proptest::prelude::*;
+
+        use super::*;
+
+        fn nonzero_id(width: usize) -> impl Strategy<Value = Vec<u8>> {
+            (1u8..=u8::MAX, prop::collection::vec(any::<u8>(), width - 1)).map(
+                |(first, rest)| {
+                    let mut bytes = vec![first];
+                    bytes.extend(rest);
+                    bytes
+                },
+            )
+        }
+
+        fn id_of_the_wrong_length(correct: usize) -> impl Strategy<Value = Vec<u8>> {
+            (0usize..32)
+                .prop_filter("the correct width is not a wrong one", move |length| {
+                    *length != correct
+                })
+                .prop_flat_map(|length| prop::collection::vec(any::<u8>(), length))
+        }
+
+        fn short_text() -> impl Strategy<Value = String> {
+            "[a-zA-Z0-9 /_.-]{0,12}"
+        }
+
+        fn short_key() -> impl Strategy<Value = String> {
+            "[a-z][a-z0-9._]{0,10}"
+        }
+
+        fn near_a_numeric_ceiling() -> impl Strategy<Value = u64> {
+            prop_oneof![
+                (u64::MAX - 10..=u64::MAX),
+                ((i64::MAX as u64 - 10)..=(i64::MAX as u64)),
+            ]
+        }
+
+        fn a_well_formed_span() -> impl Strategy<Value = ProtoSpan> {
+            (
+                nonzero_id(TraceId::WIDTH),
+                nonzero_id(SpanId::WIDTH),
+                short_text(),
+                0i32..6,
+                any::<u64>(),
+                any::<u64>(),
+            )
+                .map(|(trace_id, span_id, name, kind, start, end)| ProtoSpan {
+                    trace_id,
+                    span_id,
+                    name,
+                    kind,
+                    start_time_unix_nano: start,
+                    end_time_unix_nano: end,
+                    ..ProtoSpan::default()
+                })
+        }
+
+        fn a_request_of_many(spans: Vec<ProtoSpan>) -> ExportTraceServiceRequest {
+            ExportTraceServiceRequest {
+                resource_spans: vec![ResourceSpans {
+                    resource: None,
+                    scope_spans: vec![ScopeSpans {
+                        spans,
+                        ..ScopeSpans::default()
+                    }],
+                    ..ResourceSpans::default()
+                }],
+            }
+        }
+
+        proptest! {
+            #[test]
+            fn every_well_formed_span_the_request_carries_arrives_exactly_once(
+                spans in prop::collection::vec(a_well_formed_span(), 1..5)
+            ) {
+                let request = a_request_of_many(spans.clone());
+
+                let decoded = decode_traces(&request.encode_to_vec()).expect("every span is well formed");
+
+                prop_assert_eq!(decoded.len(), spans.len());
+                for (found, sent) in decoded.iter().zip(spans.iter()) {
+                    prop_assert_eq!(found.span_id.as_bytes().as_slice(), sent.span_id.as_slice());
+                    prop_assert_eq!(found.trace_id.as_bytes().as_slice(), sent.trace_id.as_slice());
+                    prop_assert_eq!(&*found.name, sent.name.as_str());
+                    prop_assert_eq!(found.start_unix_nanos, sent.start_time_unix_nano);
+                    prop_assert_eq!(found.end_unix_nanos, sent.end_time_unix_nano);
+                }
+            }
+
+            #[test]
+            fn a_span_id_of_the_wrong_byte_length_is_refused_rather_than_coerced(
+                bad_span_id in id_of_the_wrong_length(SpanId::WIDTH)
+            ) {
+                let mut span = a_proto_span();
+                span.span_id = bad_span_id.clone();
+                let request = a_request(span, None);
+
+                let outcome = decode_traces(&request.encode_to_vec());
+
+                match &outcome {
+                    Err(DecodeError::Id(InvalidId::Length { expected, actual })) => {
+                        prop_assert_eq!(*expected, SpanId::WIDTH);
+                        prop_assert_eq!(*actual, bad_span_id.len());
+                    }
+                    other => prop_assert!(false, "{other:?}"),
+                }
+            }
+
+            #[test]
+            fn a_trace_id_of_the_wrong_byte_length_is_refused_rather_than_coerced(
+                bad_trace_id in id_of_the_wrong_length(TraceId::WIDTH)
+            ) {
+                let mut span = a_proto_span();
+                span.trace_id = bad_trace_id.clone();
+                let request = a_request(span, None);
+
+                let outcome = decode_traces(&request.encode_to_vec());
+
+                match &outcome {
+                    Err(DecodeError::Id(InvalidId::Length { expected, actual })) => {
+                        prop_assert_eq!(*expected, TraceId::WIDTH);
+                        prop_assert_eq!(*actual, bad_trace_id.len());
+                    }
+                    other => prop_assert!(false, "{other:?}"),
+                }
+            }
+
+            #[test]
+            fn an_attribute_key_survives_the_conversion(
+                key in short_key(),
+                value in short_text(),
+            ) {
+                let mut span = a_proto_span();
+                span.attributes = vec![text(&key, &value)];
+                let request = a_request(span, None);
+
+                let decoded = decode_traces(&request.encode_to_vec()).expect("a well formed span");
+
+                prop_assert_eq!(
+                    decoded[0].attributes.get(key.as_str()).map(|v| &**v),
+                    Some(value.as_str())
+                );
+            }
+
+            #[test]
+            fn a_repeated_attribute_key_resolves_the_same_way_every_time(
+                key in short_key(),
+                first in short_text(),
+                second in short_text(),
+            ) {
+                let mut span = a_proto_span();
+                span.attributes = vec![text(&key, &first), text(&key, &second)];
+                let request = a_request(span, None);
+
+                let once = decode_traces(&request.encode_to_vec()).expect("a well formed span");
+                let twice = decode_traces(&request.encode_to_vec()).expect("a well formed span");
+
+                prop_assert_eq!(
+                    once[0].attributes.get(key.as_str()),
+                    twice[0].attributes.get(key.as_str())
+                );
+                prop_assert_eq!(
+                    once[0].attributes.get(key.as_str()).map(|v| &**v),
+                    Some(second.as_str())
+                );
+                prop_assert_eq!(once[0].attributes.len(), 1);
+            }
+
+            #[test]
+            fn a_timestamp_near_a_numeric_ceiling_does_not_panic_or_wrap(
+                start in near_a_numeric_ceiling(),
+                end in near_a_numeric_ceiling(),
+            ) {
+                let mut span = a_proto_span();
+                span.start_time_unix_nano = start;
+                span.end_time_unix_nano = end;
+                let request = a_request(span, None);
+
+                let decoded = decode_traces(&request.encode_to_vec()).expect("a well formed span");
+
+                prop_assert_eq!(decoded[0].start_unix_nanos, start);
+                prop_assert_eq!(decoded[0].end_unix_nanos, end);
+            }
+        }
     }
 }

@@ -298,4 +298,93 @@ mod tests {
             Err(WeakPassword::TooLong(64))
         );
     }
+
+    mod proptests {
+        use proptest::prelude::*;
+
+        use super::super::{MAX_PASSWORD_BYTES, MIN_PASSWORD_CHARS};
+        use super::{Email, InvalidCredential, Password, PasswordPolicy, WeakPassword};
+
+        fn an_ascii_token() -> impl Strategy<Value = String> {
+            "[a-zA-Z0-9]{1,8}"
+        }
+
+        proptest! {
+            #[test]
+            fn an_email_with_a_dot_bounded_domain_round_trips_lowercased(
+                local in an_ascii_token(),
+                left in an_ascii_token(),
+                right in an_ascii_token(),
+            ) {
+                let raw = format!("{local}@{left}.{right}");
+
+                let email = Email::try_from(raw.as_str()).expect("a shaped address");
+
+                prop_assert_eq!(email.as_str(), raw.to_ascii_lowercase());
+            }
+
+            #[test]
+            fn differently_cased_and_padded_spellings_of_the_same_address_agree(
+                local in an_ascii_token(),
+                left in an_ascii_token(),
+                right in an_ascii_token(),
+            ) {
+                let raw = format!("{local}@{left}.{right}");
+                let padded = format!("  {}  ", raw.to_ascii_uppercase());
+
+                let email = Email::try_from(padded.as_str()).expect("a padded, differently cased address");
+
+                prop_assert_eq!(email.as_str(), raw.to_ascii_lowercase());
+            }
+
+            #[test]
+            fn a_domain_without_a_dot_is_refused_whatever_the_rest_looks_like(
+                local in an_ascii_token(),
+                domain in an_ascii_token(),
+            ) {
+                let raw = format!("{local}@{domain}");
+
+                prop_assert_eq!(Email::try_from(raw.as_str()), Err(InvalidCredential::Email));
+            }
+
+            #[test]
+            fn a_password_with_at_least_the_floor_of_printable_characters_is_admitted(
+                chars in prop::collection::vec(
+                    0x21u8..=0x7eu8,
+                    MIN_PASSWORD_CHARS..=MIN_PASSWORD_CHARS + 40
+                )
+            ) {
+                let spelling = String::from_utf8(chars).expect("ascii bytes");
+                let password = Password::new(&spelling);
+
+                prop_assert_eq!(PasswordPolicy::default().admits(&password), Ok(()));
+            }
+
+            #[test]
+            fn a_password_shorter_than_the_floor_is_refused_whatever_it_contains(
+                chars in prop::collection::vec(0x21u8..=0x7eu8, 1..MIN_PASSWORD_CHARS)
+            ) {
+                let spelling = String::from_utf8(chars).expect("ascii bytes");
+                let password = Password::new(&spelling);
+
+                prop_assert_eq!(
+                    PasswordPolicy::default().admits(&password),
+                    Err(WeakPassword::TooShort(MIN_PASSWORD_CHARS))
+                );
+            }
+
+            #[test]
+            fn a_password_of_only_whitespace_is_refused_whatever_its_length(
+                length in MIN_PASSWORD_CHARS..=MAX_PASSWORD_BYTES,
+                space in prop_oneof![Just(' '), Just('\t'), Just('\n')],
+            ) {
+                let password = Password::new(&space.to_string().repeat(length));
+
+                prop_assert_eq!(
+                    PasswordPolicy::default().admits(&password),
+                    Err(WeakPassword::Blank)
+                );
+            }
+        }
+    }
 }

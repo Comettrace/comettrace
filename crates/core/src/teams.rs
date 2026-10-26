@@ -11,8 +11,6 @@ use crate::secret::SessionToken;
 use crate::session::SessionStore;
 use crate::tenant::TenantId;
 
-/* Shorter than an organisation name because a team name is read in a table and spoken out loud,
-not shown in a top bar. The ceiling counts bytes because that is what the column holds. */
 const MAX_NAME_BYTES: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -66,9 +64,6 @@ impl fmt::Display for TeamId {
     }
 }
 
-/* One row of the teams screen. The members are the accounts on the team and the projects are the
-ones it owns, both carried whole rather than counted, because the screen that lists them is also
-the screen that changes them and a count would have to be re-read to do anything. */
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Team {
     pub id: TeamId,
@@ -93,7 +88,6 @@ pub enum Named {
 pub trait Squads {
     fn of(&self, org: TenantId) -> impl Future<Output = Result<Vec<Team>, ReadError>> + Send;
 
-    /// `Taken` when the organisation already holds a team under that name.
     fn create(
         &self,
         org: TenantId,
@@ -107,16 +101,12 @@ pub trait Squads {
         name: &TeamName,
     ) -> impl Future<Output = Result<Named, ReadError>> + Send;
 
-    /// Whether a team was there to disband. Its projects stay, with no owner.
     fn disband(
         &self,
         org: TenantId,
         team: TeamId,
     ) -> impl Future<Output = Result<bool, ReadError>> + Send;
 
-    /* The whole of who is on a team, written at once: the screen hands back a list, and a row at
-    a time would leave the team half changed if the second write never landed. Accounts that
-    belong to no such organisation are not written. */
     fn seat(
         &self,
         org: TenantId,
@@ -124,8 +114,6 @@ pub trait Squads {
         members: &[AccountId],
     ) -> impl Future<Output = Result<bool, ReadError>> + Send;
 
-    /* The whole of what a team owns, likewise. A project claimed here stops belonging to whatever
-    team held it, because a project has one owner team or none. */
     fn own(
         &self,
         org: TenantId,
@@ -286,9 +274,6 @@ where
         Ok(self.squads.of(org).await?)
     }
 
-    /* Every change answers with the teams as they now stand. One team is never the whole of what
-    changed: claiming a project takes it off the team that held it, and the screen would be wrong
-    about that team until it asked again. */
     pub async fn create(
         &self,
         token: &SessionToken,
@@ -788,5 +773,45 @@ mod tests {
             Err(BadTeamName::TooLong(MAX_NAME_BYTES))
         );
         assert!(TeamName::try_from("a".repeat(MAX_NAME_BYTES).as_str()).is_ok());
+    }
+
+    mod proptests {
+        use proptest::prelude::*;
+
+        use super::super::MAX_NAME_BYTES;
+        use super::{BadTeamName, TeamName};
+
+        fn a_printable_run(bytes: usize) -> impl Strategy<Value = String> {
+            prop::collection::vec(0x21u8..=0x7eu8, 1..=bytes)
+                .map(|bytes| String::from_utf8(bytes).expect("ascii bytes"))
+        }
+
+        proptest! {
+            #[test]
+            fn a_name_the_constructor_admits_round_trips_once_padding_is_stripped(
+                inner in a_printable_run(MAX_NAME_BYTES),
+                leading in prop::collection::vec(prop_oneof![Just(' '), Just('\t')], 0..3),
+                trailing in prop::collection::vec(prop_oneof![Just(' '), Just('\t')], 0..3),
+            ) {
+                let leading: String = leading.into_iter().collect();
+                let trailing: String = trailing.into_iter().collect();
+                let padded = format!("{leading}{inner}{trailing}");
+
+                let name = TeamName::try_from(padded.as_str()).expect("a name within the ceiling");
+
+                prop_assert_eq!(name.as_str(), inner.as_str());
+            }
+
+            #[test]
+            fn a_name_one_byte_past_the_ceiling_is_refused_whatever_it_contains(
+                over in prop::collection::vec(0x21u8..=0x7eu8, MAX_NAME_BYTES + 1)
+                    .map(|bytes| String::from_utf8(bytes).expect("ascii bytes"))
+            ) {
+                prop_assert_eq!(
+                    TeamName::try_from(over.as_str()),
+                    Err(BadTeamName::TooLong(MAX_NAME_BYTES))
+                );
+            }
+        }
     }
 }

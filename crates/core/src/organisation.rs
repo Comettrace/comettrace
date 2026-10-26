@@ -7,9 +7,6 @@ use crate::secret::SessionToken;
 use crate::session::SessionStore;
 use crate::tenant::TenantId;
 
-/* The ceiling counts bytes because that is what the column holds; the name is trimmed first
-because surrounding space is invisible in the top bar and on an invitation, and two organisations
-that differ only by it would look like one. */
 const MAX_NAME_BYTES: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -44,17 +41,12 @@ impl TryFrom<&str> for OrgName {
     }
 }
 
-/* What the settings screen calls the organisation card. The version is a fact about the binary
-rather than about the organisation, and it rides here because the screen shows it in the same
-table: a route and a query of its own would carry two constants. */
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Organisation {
     pub id: TenantId,
     pub name: Box<str>,
     pub plan: Box<str>,
     pub created_at_unix_nanos: u64,
-    /* Absent until an administrator keeps one. What is held is the token the store named the
-    object after rather than the bytes, so the card can carry a url built from it. */
     pub logo: Option<Portrait>,
 }
 
@@ -70,8 +62,6 @@ pub trait Orgs {
         name: &OrgName,
     ) -> impl Future<Output = Result<(), ReadError>> + Send;
 
-    /* `None` says the organisation keeps no logo. The bytes are the store's to forget, not this
-    one's: all that is written here is whether there is anything to find. */
     fn set_logo(
         &self,
         org: TenantId,
@@ -164,8 +154,6 @@ impl From<ReadError> for SettingError {
     }
 }
 
-/* A store that cannot be reached is the same failure whichever store it was, but one that was
-never configured is a sentence somebody has to read, so it stays whole. */
 impl From<PhotoError> for SettingError {
     fn from(error: PhotoError) -> Self {
         match error {
@@ -206,9 +194,6 @@ where
         self.card(org).await
     }
 
-    /* The card is read back rather than assembled from what was asked for: the trimming the name
-    went through is what the screen should show, and so is a change an administrator made in
-    another tab a moment ago. */
     pub async fn rename(
         &self,
         token: &SessionToken,
@@ -220,11 +205,6 @@ where
         self.card(org).await
     }
 
-    /* The bytes reach the store before the column points at them: a store that refuses leaves the
-    organisation as it was rather than naming an object nobody can fetch. The mark this one
-    replaces is forgotten afterwards, and only as well as it can be -- a leftover object costs a
-    few kilobytes, and the store has already written its own log if it refused, so it is no reason
-    to tell an administrator their new logo did not arrive. */
     pub async fn put_logo(
         &self,
         token: &SessionToken,
@@ -241,9 +221,6 @@ where
         self.card(org).await
     }
 
-    /* The other way round from keeping one: the column is cleared first, because what was asked
-    for is an organisation with no logo, and bytes nobody can reach any more are a tidier failure
-    than a mark that will not go away. Asking twice is not an error. */
     pub async fn remove_logo(
         &self,
         token: &SessionToken,
@@ -258,9 +235,6 @@ where
         self.card(org).await
     }
 
-    /* A plain member reads it, because this is what an <img> on every screen that names the
-    organisation fetches. A session holding no membership is told there is no such organisation,
-    the way the card tells it, so the ids of other organisations stay unguessable. */
     pub async fn logo(
         &self,
         token: &SessionToken,
@@ -435,9 +409,6 @@ mod tests {
         OrgSettings::new(Whoami::new(OneSession, MemberOfMine(role)), kept, NoPhotos)
     }
 
-    /* The store the logo tests put bytes in. It records the owner each call named, because the
-    one thing the service must not get wrong is keeping an organisation's mark under an account's
-    key. */
     #[derive(Debug, Default)]
     struct Shelf {
         minted: Mutex<u32>,
@@ -632,8 +603,6 @@ mod tests {
         assert!(OrgName::try_from("a".repeat(MAX_NAME_BYTES).as_str()).is_ok());
     }
 
-    /* The ceiling is about the column, so a name well inside it in characters can still be past
-    it in bytes. That is the intent, not an oversight. */
     #[test]
     fn the_ceiling_counts_bytes_rather_than_characters() {
         let wide = "\u{e9}".repeat(MAX_NAME_BYTES / 2 + 1);
@@ -645,9 +614,6 @@ mod tests {
         );
     }
 
-    /* The card is read back rather than assembled, so the token the store minted is what the
-    screen is handed -- and the owner it was kept under is the organisation, never the account
-    that happened to be signed in. */
     #[tokio::test]
     async fn an_administrator_keeps_a_logo_and_the_card_carries_it() {
         let kept = Kept::holding("Acme");
@@ -664,8 +630,6 @@ mod tests {
         assert_eq!(shelf.owners(), vec![Pictured::Org(an_org(MINE))]);
     }
 
-    /* A replacement is a different object, which is what lets the url be cached for ever. The
-    one before it is forgotten, so a bucket does not fill with marks nobody asks for. */
     #[tokio::test]
     async fn a_replacement_changes_the_token_and_forgets_the_one_before_it() {
         let kept = Kept::holding("Acme");
@@ -684,8 +648,6 @@ mod tests {
         assert_eq!(shelf.forgotten(), vec!["token1".to_owned()]);
     }
 
-    /* The same floor the rename sits behind: a member who is not an administrator is told the
-    truth, because it already knows the organisation exists. */
     #[tokio::test]
     async fn a_plain_member_may_not_keep_a_logo() {
         let kept = Kept::holding("Acme");
@@ -723,9 +685,6 @@ mod tests {
         assert_eq!(shelf.forgotten(), vec!["token1".to_owned()]);
     }
 
-    /* A member reads the bytes, because that is what an <img> on its own screens fetches. A
-    session holding no membership is told there is no such organisation rather than that it may
-    not look, so the ids of other organisations stay unguessable. */
     #[tokio::test]
     async fn a_member_reads_the_logo_and_a_stranger_is_told_there_is_no_such_organisation() {
         let kept = Kept::holding("Acme");
@@ -749,8 +708,6 @@ mod tests {
         assert_eq!(refused, SettingError::NotYours);
     }
 
-    /* An organisation that keeps none is not a failure to explain, it is a card with no logo on
-    it. The screen shows the initial instead. */
     #[tokio::test]
     async fn an_organisation_that_keeps_no_logo_is_not_an_error_on_its_card() {
         let kept = Kept::holding("Acme");
@@ -763,8 +720,6 @@ mod tests {
         assert!(card.logo.is_none());
     }
 
-    /* A deployment that was never given a bucket is missing a part, and that is an operator's to
-    fix. The refusal stays whole so the sentence can say which part. */
     #[tokio::test]
     async fn a_deployment_with_no_object_store_says_which_part_is_missing() {
         let kept = Kept::holding("Acme");
@@ -775,5 +730,45 @@ mod tests {
             .expect_err("there is no store");
 
         assert_eq!(refused, SettingError::Photos(PhotoError::NotOffered));
+    }
+
+    mod proptests {
+        use proptest::prelude::*;
+
+        use super::super::MAX_NAME_BYTES;
+        use super::{BadName, OrgName};
+
+        fn a_printable_run(bytes: usize) -> impl Strategy<Value = String> {
+            prop::collection::vec(0x21u8..=0x7eu8, 1..=bytes)
+                .map(|bytes| String::from_utf8(bytes).expect("ascii bytes"))
+        }
+
+        proptest! {
+            #[test]
+            fn a_name_the_constructor_admits_round_trips_once_padding_is_stripped(
+                inner in a_printable_run(MAX_NAME_BYTES),
+                leading in prop::collection::vec(prop_oneof![Just(' '), Just('\t')], 0..3),
+                trailing in prop::collection::vec(prop_oneof![Just(' '), Just('\t')], 0..3),
+            ) {
+                let leading: String = leading.into_iter().collect();
+                let trailing: String = trailing.into_iter().collect();
+                let padded = format!("{leading}{inner}{trailing}");
+
+                let name = OrgName::try_from(padded.as_str()).expect("a name within the ceiling");
+
+                prop_assert_eq!(name.as_str(), inner.as_str());
+            }
+
+            #[test]
+            fn a_name_one_byte_past_the_ceiling_is_refused_whatever_it_contains(
+                over in prop::collection::vec(0x21u8..=0x7eu8, MAX_NAME_BYTES + 1)
+                    .map(|bytes| String::from_utf8(bytes).expect("ascii bytes"))
+            ) {
+                prop_assert_eq!(
+                    OrgName::try_from(over.as_str()),
+                    Err(BadName::TooLong(MAX_NAME_BYTES))
+                );
+            }
+        }
     }
 }
