@@ -1,0 +1,84 @@
+name: conventional
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+env:
+  TYPES: feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert
+
+jobs:
+  title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: the title reads as a conventional commit
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -eu
+          if printf '%s' "$TITLE" | grep -qE "^($TYPES)(\([a-z0-9._/-]+\))?!?: [a-z0-9].*"; then
+            echo "ok   $TITLE"
+            exit 0
+          fi
+          echo "::error::the title is not a conventional commit: $TITLE"
+          echo "Expected <type>(<scope>)?!?: <description starting lowercase>"
+          echo "Types: $TYPES"
+          echo "A rebase merge keeps the commit subjects, so this title is what"
+          echo "the pull request list shows rather than what the changelog reads."
+          exit 1
+
+  commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: every commit subject reads as a conventional commit
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          wrong=0
+          for sha in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            subject=$(git show --no-patch --format='%s' "$sha")
+            short=$(git show --no-patch --format='%h' "$sha")
+            if printf '%s' "$subject" | grep -qE "^($TYPES)(\([a-z0-9._/-]+\))?!?: [a-z0-9].*"; then
+              echo "ok   $short $subject"
+            else
+              echo "::error::$short is not a conventional commit: $subject"
+              wrong=$((wrong + 1))
+            fi
+          done
+          if [ "$wrong" -ne 0 ]; then
+            echo "$wrong commit subject(s) to reword. See CONTRIBUTING.md."
+            echo "git rebase -i $BASE, then reword the ones named above."
+            exit 1
+          fi
+          echo "Every commit subject is conventional."
+
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: the changelog configuration still renders
+        id: cliff
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4
+        with:
+          config: cliff.toml
+          args: --unreleased --strip header
+      - name: what the next release would say
+        env:
+          NOTES: ${{ steps.cliff.outputs.content }}
+        run: |
+          set -eu
+          {
+            echo "### What the next release would say"
+            echo
+            printf '%s\n' "$NOTES"
+          } >> "$GITHUB_STEP_SUMMARY"
