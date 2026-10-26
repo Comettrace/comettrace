@@ -65,6 +65,12 @@ A tag `vX.Y.Z` publishes two images for linux/amd64 and linux/arm64:
 `ghcr.io/comettrace/comettrace:X.Y.Z` is the community build and
 `:X.Y.Z-ee` the cloud one. Both carry provenance and an SBOM.
 
+The number follows SemVer read for a pre-1.0 product: a breaking change bumps
+the minor, everything else the patch. What counts as breaking, and why the
+changelog is generated from the commits rather than kept in a file, is
+[ADR 0018](docs/adr/0018-a-version-is-cut-from-a-tag-that-matches-the-manifest.md).
+The runbook is [docs/releasing.md](docs/releasing.md).
+
 ## Contributing
 
 [CONTRIBUTING.md](CONTRIBUTING.md) has the development setup, how to run the
