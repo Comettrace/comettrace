@@ -10,6 +10,7 @@ mod membership;
 mod oidc;
 mod organisation;
 mod password;
+mod photo;
 mod quota;
 mod reset;
 mod roster;
@@ -45,6 +46,9 @@ pub use membership::{Membership, Memberships, OrgRole, Who, Whoami, WhoamiError}
 pub use oidc::{CodeVerifier, FlowError, OidcFlows, PendingFlow};
 pub use organisation::{BadName, OrgName, OrgSettings, Organisation, Orgs, SettingError};
 pub use password::{ChangeError, ChangePassword};
+pub use photo::{
+    BadPhoto, MAX_PHOTO_BYTES, NoPhotos, Photo, PhotoError, PhotoKind, Photos, Pictured, Portrait,
+};
 pub use quota::{Admission, QuotaPolicy, Unmetered};
 pub use reset::{Mailer, ResetError, ResetPassword, ResetStore};
 pub use roster::{Admitted, Invitation, Member, Roll, Roster, RosterError};
