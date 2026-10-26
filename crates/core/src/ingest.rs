@@ -45,8 +45,6 @@ where
         }
     }
 
-    /* An allowance and a usage count belong to the organisation that pays for them, so the quota
-    and the meter are asked about the tenant while the sink is told the whole scope. */
     pub async fn accept(&self, key: &IngestKey, payload: Payload) -> Result<TenantId, IngestError> {
         let scope = self.directory.resolve(key).await?;
         if let Admission::Capped { allowance } =
@@ -54,10 +52,10 @@ where
         {
             return Err(IngestError::Capped { allowance });
         }
+        self.sink.accept(scope, payload.spans).await?;
         self.meter
             .record_ingest(scope.tenant, payload.decompressed)
             .await;
-        self.sink.accept(scope, payload.spans).await?;
         Ok(scope.tenant)
     }
 }
@@ -75,6 +73,7 @@ mod tests {
     use crate::sink::{SinkError, SpanSink};
     use crate::span::{Span, SpanId, SpanKind, SpanStatus, TraceId};
     use crate::tenant::{Scope, TenantDirectory, TenantId, UnknownKey};
+    use crate::testing;
     use crate::usage::{DecompressedBytes, UsageMeter};
 
     #[derive(Debug, Default)]
@@ -253,6 +252,25 @@ mod tests {
         assert_eq!(outcome, Err(IngestError::Sink(SinkError::Unavailable)));
     }
 
+    #[tokio::test]
+    async fn a_sink_failure_meters_nothing() {
+        let tenant = TenantId::new(Uuid::from_u128(1));
+        let meter = RecordingMeter::default();
+        let ingest = Ingest::new(
+            FakeDirectory::holding("live", tenant),
+            Unmetered,
+            UnavailableSink,
+            &meter,
+        );
+
+        let outcome = ingest
+            .accept(&IngestKey::from_plaintext("live"), a_payload(4096))
+            .await;
+
+        assert!(outcome.is_err());
+        assert_eq!(meter.readings(), Vec::new());
+    }
+
     #[derive(Debug, Clone, Copy)]
     struct HardCap(u64);
 
@@ -364,5 +382,17 @@ mod tests {
 
         assert_eq!(sink.batches().len(), 1);
         assert_eq!(meter.readings().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_fake_directory_honours_the_directory_contract() {
+        let tenant = TenantId::new(Uuid::from_u128(9));
+        let directory = FakeDirectory::holding("live", tenant);
+        let held = IngestKey::from_plaintext("live");
+        let absent = IngestKey::from_plaintext("absent");
+
+        testing::a_directory_resolves_the_key_it_holds(&directory, &held, tenant).await;
+        testing::a_directory_refuses_a_key_it_does_not_hold(&directory, &absent).await;
+        testing::a_directory_answers_the_same_key_the_same_way_twice(&directory, &held).await;
     }
 }
