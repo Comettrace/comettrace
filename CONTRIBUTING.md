@@ -118,7 +118,9 @@ existing ones use. If a change makes an ADR wrong, the change fixes the ADR.
 3. Commits are conventional and lowercase: `feat(orgs): ...`,
    `fix(photos): ...`, `test(storage): ...`, `docs: ...`, with `!` for a
    breaking change. Write what the commit does, and why if that is not
-   obvious.
+   obvious. CI checks the pull request title and every commit subject: a
+   rebase merge keeps the subjects, and the changelog of the next release is
+   generated from them.
 4. Every commit signed off, see above.
 5. The description says what breaks if the change is wrong, and how you
    checked it. Link the issue it closes.
