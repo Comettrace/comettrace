@@ -84,7 +84,10 @@ impl ControlPlane for PostgresControlPlane {
     }
 
     async fn account_for(&self, email: &Email) -> Result<Option<AccountId>, ProvisionError> {
-        self.resets().account_for(email).await.map_err(|error| unreachable(&error))
+        self.resets()
+            .account_for(email)
+            .await
+            .map_err(|error| unreachable(&error))
     }
 
     async fn create_locked_account(&self, email: &Email) -> Result<AccountId, ProvisionError> {
@@ -107,10 +110,7 @@ impl ControlPlane for PostgresControlPlane {
         org: TenantId,
         name: &ProjectName,
     ) -> Result<ProjectId, ProvisionError> {
-        self.projects()
-            .claim(org, name)
-            .await
-            .map_err(of_project)
+        self.projects().claim(org, name).await.map_err(of_project)
     }
 
     async fn only_project(&self, org: TenantId) -> Result<Option<ProjectId>, ProvisionError> {
@@ -129,7 +129,10 @@ impl ControlPlane for PostgresControlPlane {
     }
 
     async fn revoke_key(&self, prefix: &str) -> Result<bool, ProvisionError> {
-        self.keys().revoke(prefix).await.map_err(|error| unreachable(&error))
+        self.keys()
+            .revoke(prefix)
+            .await
+            .map_err(|error| unreachable(&error))
     }
 }
 

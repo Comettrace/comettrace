@@ -72,7 +72,8 @@ pub trait ControlPlane {
         project: Option<ProjectId>,
     ) -> impl Future<Output = Result<IngestKey, ProvisionError>> + Send;
 
-    fn revoke_key(&self, prefix: &str) -> impl Future<Output = Result<bool, ProvisionError>> + Send;
+    fn revoke_key(&self, prefix: &str)
+    -> impl Future<Output = Result<bool, ProvisionError>> + Send;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
