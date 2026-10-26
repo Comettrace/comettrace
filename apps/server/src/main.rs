@@ -17,7 +17,7 @@ use comettrace_api::{
 use comettrace_core::{
     AccountId, AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
     FederatedSignIn, Ingest, IngestKey, Mailer, Metering, NoPhotos, NoProvider, OrgRole,
-    OrgSettings, Photo, PhotoError, Photos, Portrait, Profile, ProjectId, ProjectName,
+    OrgSettings, Photo, PhotoError, Photos, Pictured, Portrait, Profile, ProjectId, ProjectName,
     ProvisionPolicy, ResetError, ResetPassword, ResetStore, ResetToken, Roster, Scope,
     SessionLifetime, SignIn, SinkError, Span, SpanSink, Squad, TenantDirectory, TenantId,
     UnknownKey, UsageMeter, UsageReader, Whoami,
@@ -88,31 +88,31 @@ enum Gallery {
 }
 
 impl Photos for Gallery {
-    async fn put(&self, account: AccountId, photo: &Photo) -> Result<Portrait, PhotoError> {
+    async fn put(&self, of: Pictured, photo: &Photo) -> Result<Portrait, PhotoError> {
         match self {
-            Self::Objects(store) => store.put(account, photo).await,
+            Self::Objects(store) => store.put(of, photo).await,
             Self::Nowhere => {
                 tracing::warn!("a photo was offered but no object store is configured");
-                NoPhotos.put(account, photo).await
+                NoPhotos.put(of, photo).await
             }
         }
     }
 
     async fn fetch(
         &self,
-        account: AccountId,
+        of: Pictured,
         portrait: &Portrait,
     ) -> Result<Option<Vec<u8>>, PhotoError> {
         match self {
-            Self::Objects(store) => store.fetch(account, portrait).await,
-            Self::Nowhere => NoPhotos.fetch(account, portrait).await,
+            Self::Objects(store) => store.fetch(of, portrait).await,
+            Self::Nowhere => NoPhotos.fetch(of, portrait).await,
         }
     }
 
-    async fn remove(&self, account: AccountId, portrait: &Portrait) -> Result<(), PhotoError> {
+    async fn remove(&self, of: Pictured, portrait: &Portrait) -> Result<(), PhotoError> {
         match self {
-            Self::Objects(store) => store.remove(account, portrait).await,
-            Self::Nowhere => NoPhotos.remove(account, portrait).await,
+            Self::Objects(store) => store.remove(of, portrait).await,
+            Self::Nowhere => NoPhotos.remove(of, portrait).await,
         }
     }
 }
