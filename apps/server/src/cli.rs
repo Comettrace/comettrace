@@ -69,7 +69,7 @@ pub(crate) enum Command {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum Role {
+pub(crate) enum Role {
     Owner,
     Admin,
     Member,
