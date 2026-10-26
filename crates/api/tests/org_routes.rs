@@ -364,8 +364,8 @@ async fn an_administrator_keeps_a_logo_and_the_card_carries_its_url() {
     .await;
 
     assert_eq!(status, StatusCode::OK);
-    let card: serde_json::Value = serde_json::from_str(&String::from_utf8(body).expect("text"))
-        .expect("json");
+    let card: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(body).expect("text")).expect("json");
     assert_eq!(
         card["logo"],
         format!("/api/orgs/{}/logo?v=token1", org(MINE))
@@ -511,8 +511,8 @@ async fn a_logo_is_dropped_and_the_card_comes_back_without_one() {
     .await;
 
     assert_eq!(status, StatusCode::OK);
-    let card: serde_json::Value = serde_json::from_str(&String::from_utf8(body).expect("text"))
-        .expect("json");
+    let card: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(body).expect("text")).expect("json");
     assert!(card["logo"].is_null());
     assert!(
         shelf.0.lock().expect("the lock").is_empty(),

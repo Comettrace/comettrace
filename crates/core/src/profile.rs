@@ -217,10 +217,16 @@ where
     ) -> Result<Who, ProfileError> {
         let who = self.read(token).await?;
         let before = self.accounts.portrait_of(who.account).await?;
-        let kept = self.photos.put(Pictured::Account(who.account), photo).await?;
+        let kept = self
+            .photos
+            .put(Pictured::Account(who.account), photo)
+            .await?;
         self.accounts.set_portrait(who.account, Some(&kept)).await?;
         if let Some(before) = before.filter(|before| before.token != kept.token) {
-            let _ = self.photos.remove(Pictured::Account(who.account), &before).await;
+            let _ = self
+                .photos
+                .remove(Pictured::Account(who.account), &before)
+                .await;
         }
         self.read(token).await
     }
@@ -234,7 +240,10 @@ where
             return Ok(who);
         };
         self.accounts.set_portrait(who.account, None).await?;
-        let _ = self.photos.remove(Pictured::Account(who.account), &kept).await;
+        let _ = self
+            .photos
+            .remove(Pictured::Account(who.account), &kept)
+            .await;
         self.read(token).await
     }
 
