@@ -104,9 +104,6 @@ impl<'a> SpanRow<'a> {
     }
 }
 
-/* One row per event of one span. The scope, the service and the trace are copied off the span
-rather than joined back to it: a trace view reads the events of a trace without touching the
-spans table, and anything counting exceptions in a window never has to. */
 #[derive(Debug, Row, Serialize)]
 pub(crate) struct EventRow<'a> {
     #[serde(with = "clickhouse::serde::uuid")]

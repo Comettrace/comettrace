@@ -15,8 +15,6 @@ use uuid::Uuid;
 const TOKEN: &str = "ct_ss_0123456789";
 const MINE: u128 = 1;
 const THEIRS: u128 = 2;
-/* An hour that is a round number of milliseconds, so the conversion the route does is visible in
-the assertion rather than hidden by rounding. */
 const AN_HOUR_MS: u64 = 3_600_000;
 
 fn id(seed: u128) -> String {
@@ -81,8 +79,6 @@ struct Rolled {
 
 impl UsageHistory for Rolled {
     async fn hours(&self, _org: TenantId, window: Window) -> Result<Vec<Consumed>, ReadError> {
-        /* The window the route built, handed back as a row, so a test can see the milliseconds it
-        was asked for reach the store as nanoseconds. */
         Ok(vec![Consumed {
             started_at_unix_nanos: window.from_unix_nanos(),
             ingested_bytes: 4_096,
@@ -150,8 +146,6 @@ async fn a_member_reads_what_its_organisation_ingested() {
     );
 }
 
-/* Null, not zero: a zero ceiling would read as one already passed, and the plan every
-self-hosted deployment is seeded with sets none at all. */
 #[tokio::test]
 async fn a_plan_with_no_ceiling_answers_null_rather_than_zero() {
     let (status, body) = served(9_999, None, asking(MINE, &a_month(), Some(TOKEN), true)).await;

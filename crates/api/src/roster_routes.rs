@@ -18,8 +18,6 @@ use crate::whoami_routes::photo_url;
 
 const NANOS_PER_MILLI: u64 = 1_000_000;
 
-/* The spellings the schema holds and the screen shows, which are also the ones /auth/me already
-carries, so one word means the same thing everywhere. */
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Standing {
@@ -43,10 +41,6 @@ pub struct Members {
     members: Vec<Listed>,
 }
 
-/* Milliseconds, like every other instant this api carries. The name and the photo are absent
-until somebody fills a profile in, and the table shows the address and a pair of initials then,
-so both absences travel as null rather than as an empty string. The photo is a url for the
-reason the standing's is: no screen should have to know how one is spelt. */
 #[derive(Debug, Serialize)]
 struct Listed {
     account: Uuid,
@@ -73,9 +67,6 @@ impl From<Member> for Listed {
     }
 }
 
-/* The token is the one thing here the control plane keeps only as a digest, so this is the only
-moment anybody can read it. It is absent when an account already carried the address: choosing a
-password for one somebody else signs in with would hand that account over. */
 #[derive(Debug, Serialize)]
 pub struct Welcomed {
     member: Listed,
@@ -230,9 +221,6 @@ impl From<InvalidCredential> for MemberRefused {
     }
 }
 
-/* A session with no membership of the organisation is told there is none, so the ids of other
-organisations stay unguessable. Everybody past that point already knows it exists, so they are
-told the real reason instead. */
 impl From<RosterError> for MemberRefused {
     fn from(error: RosterError) -> Self {
         match error {

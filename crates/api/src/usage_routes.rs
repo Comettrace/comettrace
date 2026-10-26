@@ -15,19 +15,12 @@ use crate::explore_routes::{LookRefused, carried};
 
 const NANOS_PER_MILLI: u64 = 1_000_000;
 
-/// Milliseconds, like every other instant this api carries.
 #[derive(Debug, Deserialize)]
 pub struct Asked {
     from: u64,
     to: u64,
 }
 
-/* Decompressed payload bytes, which is the one thing this system meters. There is no count of
-spans, log records or metric points here because nothing counts them, and no breakdown by project
-because the counter is keyed by organisation.
-
-`included_bytes` is null when the plan sets no ceiling, which is the plan a self-hosted
-deployment is seeded with. */
 #[derive(Debug, Serialize)]
 pub struct Metered {
     ingested_bytes: u64,
@@ -35,7 +28,6 @@ pub struct Metered {
     hours: Vec<Hour>,
 }
 
-/* Milliseconds, like every other instant this api carries. */
 #[derive(Debug, Serialize)]
 struct Hour {
     started_at_ms: u64,

@@ -87,8 +87,6 @@ impl Orgs for Kept {
     }
 }
 
-/* The object store the logo tests put bytes in. One object per token, so a replacement and the
-removal that follows it can both be seen. */
 #[derive(Debug, Default)]
 struct Shelf(Mutex<Vec<(String, Vec<u8>)>>);
 
@@ -177,8 +175,6 @@ fn a_png() -> Vec<u8> {
     bytes
 }
 
-/* The logo routes sit on a path of their own, and the one that an <img> fetches is asked without
-the x-requested-with header on purpose. */
 fn asking_logo(method: Method, seed: u128, body: Option<Vec<u8>>, scripted: bool) -> Request<Body> {
     let mut request = Request::builder()
         .method(method)
@@ -299,8 +295,6 @@ async fn an_administrator_renames_it_and_is_answered_with_the_card() {
     assert_eq!(*kept.0.lock().expect("the lock"), "Acme Payments");
 }
 
-/* A member can see the organisation, so hiding it behind a 404 would only puzzle it. The one
-thing it cannot do is change it, and that is what it is told. */
 #[tokio::test]
 async fn a_member_is_told_plainly_that_renaming_is_not_its_to_do() {
     let kept = holding("Acme");
@@ -348,8 +342,6 @@ async fn a_name_is_kept_without_the_space_around_it() {
     assert_eq!(card["name"], "Acme");
 }
 
-/* The card is what a rename answers with, and keeping a logo answers the same way: the url
-carries the token the store minted, so the screen beside the control is never a request behind. */
 #[tokio::test]
 async fn an_administrator_keeps_a_logo_and_the_card_carries_its_url() {
     let kept = holding("Acme");
@@ -373,8 +365,6 @@ async fn an_administrator_keeps_a_logo_and_the_card_carries_its_url() {
     assert_eq!(shelf.0.lock().expect("the lock").len(), 1);
 }
 
-/* The same floor the rename sits behind. A member can see the organisation, so it is told the
-truth rather than hidden behind a 404. */
 #[tokio::test]
 async fn a_member_may_not_keep_a_logo() {
     let kept = holding("Acme");
@@ -395,8 +385,6 @@ async fn a_member_may_not_keep_a_logo() {
     );
 }
 
-/* The one that matters: a sender says what it likes in a content type, and we would hand whatever
-it sent back to every reader's browser under our own origin. */
 #[tokio::test]
 async fn a_script_announced_as_an_image_is_refused_with_the_rule_that_refused_it() {
     let kept = holding("Acme");
@@ -421,9 +409,6 @@ async fn a_script_announced_as_an_image_is_refused_with_the_rule_that_refused_it
     assert!(shelf.0.lock().expect("the lock").is_empty());
 }
 
-/* An image element sends no headers of its own, so this is the one route here that cannot ask for
-x-requested-with. The cookie is SameSite=Lax, which is what keeps another site's page from
-carrying a session into it. */
 #[tokio::test]
 async fn an_image_element_fetches_the_logo_without_the_header_a_form_must_carry() {
     let kept = holding("Acme");
@@ -520,8 +505,6 @@ async fn a_logo_is_dropped_and_the_card_comes_back_without_one() {
     );
 }
 
-/* A deployment that was never given a bucket is missing a part, and that is an operator's to fix
-rather than a reader's. The sentence says which part. */
 #[tokio::test]
 async fn a_deployment_with_no_object_store_says_which_part_is_missing() {
     let kept = holding("Acme");

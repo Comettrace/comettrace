@@ -145,9 +145,6 @@ impl AccountDirectory for PostgresAccounts {
 }
 
 impl Accounts for PostgresAccounts {
-    /* `None` writes the column null rather than an empty string, so an account with no name is
-    one state in the schema as well as one in the code. The check on the column refuses the
-    other spelling. */
     async fn rename(
         &self,
         account: AccountId,
@@ -180,7 +177,6 @@ impl Accounts for PostgresAccounts {
         Ok(found.as_ref().and_then(read_portrait))
     }
 
-    /* Both columns move together or neither does, which is what the check on them says too. */
     async fn set_portrait(
         &self,
         account: AccountId,
@@ -200,9 +196,6 @@ impl Accounts for PostgresAccounts {
     }
 }
 
-/* The token and the media type are one fact, and the schema holds them that way. Half of one is
-a row nothing can serve -- a media type this build does not know included -- and no photo is the
-honest reading of it: the screen falls back to initials rather than to an error. */
 pub(crate) fn read_portrait(row: &PgRow) -> Option<Portrait> {
     let token: Option<String> = row.get("photo_token");
     let kind = row

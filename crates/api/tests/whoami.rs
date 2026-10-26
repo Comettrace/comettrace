@@ -19,9 +19,6 @@ const OTHER: u128 = 12;
 const SOMEBODY_ELSE: u128 = 13;
 const MAX_NAME_BYTES: usize = 128;
 
-/* The one account, as the control plane holds it. The session double reads the name and the
-portrait from here rather than carrying its own, because the query behind it joins the accounts
-table: that is what makes a standing read back after a change worth asserting. */
 #[derive(Debug, Default)]
 struct Kept {
     name: Mutex<Option<String>>,
@@ -63,7 +60,6 @@ impl Accounts for Kept {
         Ok(())
     }
 
-    /* Only this one account keeps a photo here, so any other id reads as a face nobody has. */
     async fn portrait_of(&self, account: AccountId) -> Result<Option<Portrait>, ReadError> {
         if account != AccountId::new(Uuid::from_u128(ACCOUNT)) {
             return Ok(None);
@@ -246,7 +242,6 @@ fn dropping() -> Request<Body> {
         .expect("a request")
 }
 
-/* What an <img src> sends: a cookie, no headers of its own, and whatever query the url carried. */
 fn looking(at: u128, cookie: Option<&str>) -> Request<Body> {
     let account = Uuid::from_u128(at);
     let mut request = Request::builder().uri(format!("/auth/accounts/{account}/photo?v=token1"));
@@ -309,7 +304,6 @@ where
     (status, String::from_utf8(body).expect("text"))
 }
 
-/* The photo routes need the store to outlive the request, so these hand one in and keep it. */
 async fn with_shelf(
     kept: &Arc<Kept>,
     shelf: &Arc<Shelf>,
@@ -444,8 +438,6 @@ async fn a_chosen_name_is_written_and_the_whole_standing_comes_back() {
     assert_eq!(kept.writes(), vec![Some("Ines Martin".to_owned())]);
 }
 
-/* A box somebody typed into and emptied is no name, the way an emptied filter box is no filter.
-The address names them again, so nothing beside the field has to say so. */
 #[tokio::test]
 async fn an_emptied_name_is_taken_off_the_account() {
     let kept = Arc::new(Kept::named("Ines Martin"));
@@ -528,8 +520,6 @@ async fn a_photo_is_kept_and_the_standing_points_at_a_url_that_carries_its_token
     assert_eq!(kept.portrait().expect("a portrait").kind, PhotoKind::Png);
 }
 
-/* The one that matters: whatever a sender announces, the bytes decide. An avatar is handed back
-to every reader's browser under our own origin. */
 #[tokio::test]
 async fn a_photo_that_is_not_an_image_is_refused_and_nothing_is_kept() {
     let (kept, shelf) = (Arc::new(Kept::default()), Arc::new(Shelf::default()));
@@ -577,8 +567,6 @@ async fn a_kept_photo_is_served_with_what_it_is_and_a_year_of_cache() {
     assert!(cache.contains("private"), "{cache}");
 }
 
-/* An image element sends no headers of its own, so this route cannot ask for the one every other
-/auth route asks for. The cookie is SameSite=Lax, which is what shuts the door instead. */
 #[tokio::test]
 async fn a_photo_is_served_without_the_header_but_never_without_a_session() {
     let (kept, shelf) = (Arc::new(Kept::default()), Arc::new(Shelf::default()));
@@ -618,8 +606,6 @@ async fn a_dropped_photo_leaves_the_standing_without_one() {
     );
 }
 
-/* A deployment nobody gave a bucket says which part is missing, rather than failing in a way an
-operator has to guess at. */
 #[tokio::test]
 async fn a_deployment_with_no_object_store_says_so() {
     let kept = Arc::new(Kept::default());

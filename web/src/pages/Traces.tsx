@@ -15,22 +15,15 @@ import { shortId } from '@/lib/format'
 import { useSettled } from '@/lib/settle'
 import { cn } from '@/lib/utils'
 
-/* Everything here is asked of the server. The screen used to fetch the newest fifty traces and
-   sift those, which made every control narrower than it looked: "errors only" showed the errors
-   among fifty, and the service list offered only the services those fifty happened to mention. */
 export function Traces() {
   const navigate = useNavigate()
   const [sift, setSift] = useState<Sift>(ANY)
   const [typed, setTyped] = useState('')
   const [density, setDensity] = useState<'compact' | 'comfy'>('compact')
   const [cursor, setCursor] = useState(0)
-  /* The name goes to the server, so it waits for typing to stop. Held separately from the rest
-     of the sift because the box has to stay responsive while the query does not. */
   const name = useSettled(typed)
   const asked = useMemo(() => ({ ...sift, name }), [sift, name])
   const { rows, loading, failed } = useTraces(asked)
-  /* Over the window being browsed, so the list offers the services that actually have traffic
-     in it rather than the ones the current page mentions. */
   const { names, unreachable } = useServiceNames(sift.rangeMs)
   const change = (part: Partial<Sift>) => { setSift((was) => ({ ...was, ...part })); setCursor(0) }
   const clear = () => { setTyped(''); setSift((was) => ({ ...ANY, rangeMs: was.rangeMs, order: was.order, limit: was.limit })) }
@@ -78,8 +71,6 @@ export function Traces() {
         <Switch checked={sift.errorsOnly} onCheckedChange={(on) => change({ errorsOnly: on })} label="Errors only" />
         <Button variant="ghost" size="sm" disabled={!sifting} onClick={clear}>Clear</Button>
       </div>
-      {/* The service list and the traces come from two reads, and one can fail without the
-          other: saying so beats a dropdown that silently offers nothing. */}
       {unreachable ? <p className="m-0 text-caption text-muted-foreground">{because(unreachable, 'The services could not be listed, so that filter is empty')}</p> : null}
       {failed ? (
         <EmptyState title="The traces could not be read">{because(failed, 'The span store did not answer')}</EmptyState>
@@ -105,9 +96,6 @@ export function Traces() {
               ))}
             </tbody>
           </Table>
-          {/* How many the server was asked for, rather than a "Load older" that paged nowhere.
-              Reaching the number means there are probably more, and the next step is a narrower
-              window or a bigger count — both of which are here. */}
           <div className="flex flex-wrap items-center gap-3 px-5 py-3">
             <span className="text-caption text-muted-foreground">
               {rows.length === sift.limit ? `The newest ${sift.limit} of this window.` : `${rows.length} trace${rows.length === 1 ? '' : 's'} in this window.`}

@@ -53,8 +53,6 @@ impl Orgs for PostgresOrgs {
         Ok(())
     }
 
-    /* Both columns move together or neither does, which is what the check on them says too. The
-    bytes are the object store's to hold; this is only where to find them. */
     async fn set_logo(&self, org: TenantId, logo: Option<&Portrait>) -> Result<(), ReadError> {
         sqlx::query("UPDATE orgs SET logo_token = $2, logo_type = $3 WHERE id = $1")
             .bind(org.as_uuid())

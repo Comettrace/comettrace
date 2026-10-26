@@ -1,9 +1,5 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 
-/* Which organisation and project the screens are reading. It is kept per viewer rather than in the
-   path, because every screen's url comes from the demo without an organisation in it and a link
-   that carries one would be a different app. The cost is that a link to a trace does not say which
-   project it was read under; putting both in the path is what fixes that, when it matters. */
 type Chosen = { org: string | undefined; project: string | undefined }
 type Ctx = Chosen & { chooseOrg: (org: string) => void; chooseProject: (project: string | undefined) => void }
 
@@ -24,7 +20,6 @@ function remember(key: string, value: string | undefined) {
     if (value === undefined) localStorage.removeItem(key)
     else localStorage.setItem(key, value)
   } catch {
-    /* A private window refuses storage; the choice then lasts as long as the tab. */
   }
 }
 

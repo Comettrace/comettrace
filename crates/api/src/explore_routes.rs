@@ -110,20 +110,12 @@ struct Laid {
     start_offset_us: u64,
     duration_us: u64,
     attributes: BTreeMap<String, String>,
-    /* In the span's own order, which is forwards in time. Empty for most spans, so it costs
-    nothing to carry and means a screen never has to ask a second question to find out. */
     events: Vec<Happened>,
 }
 
-/* An exception is one of these, named `exception` by OTLP with its type, message and stacktrace
-in the attributes. The route does not pick them out: what counts as worth showing is the
-screen's to decide, and a route that filtered here would have thrown away the log line that
-explains the exception. */
 #[derive(Debug, Serialize)]
 struct Happened {
     name: String,
-    /* Relative to the start of the trace, like the span offsets beside it, so a reader can place
-    an event on the waterfall without arithmetic. */
     offset_us: u64,
     attributes: BTreeMap<String, String>,
 }
@@ -229,8 +221,6 @@ where
     let mut filter = TraceFilter::over(window);
     filter.project = asked.project.map(ProjectId::new);
     filter.service = asked.service.map(Into::into);
-    /* A box that somebody typed into and then emptied arrives as an empty string, which is not
-    a search for nothing: it is no search. */
     filter.name = asked
         .name
         .filter(|typed| !typed.trim().is_empty())
@@ -276,8 +266,6 @@ where
     Ok(Json(laid_out(id, spans)))
 }
 
-/* Every organisation-scoped router needs this and each spells its own refusals, so the two
-answers it can give are a type of their own rather than one router's enum the others borrow. */
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum NotCarried {
     #[error("the request carries no x-requested-with header")]

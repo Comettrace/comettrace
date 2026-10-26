@@ -10,8 +10,6 @@ import { ApiError } from '@/auth/client'
 import { Link, useNavigate, useSearchParam } from '@/lib/router'
 import { AuthFrame } from './frame'
 
-/* A 422 carries the rule that refused the password as plain text, which is better than anything
-   this screen could word on its own, so it is shown as it arrives. */
 const refusal = (error: unknown) => {
   if (!(error instanceof ApiError)) return 'The server could not be reached.'
   if (error.status === 422) return error.body

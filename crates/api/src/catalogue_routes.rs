@@ -22,9 +22,6 @@ pub struct Held {
     projects: Vec<Kept>,
 }
 
-/* The switcher at the top of every screen reads this same list and uses the first two fields,
-which is why the rest are facts rather than a second request: the settings table shows the owner
-team, the count of keys that still authenticate, and when the project was made. */
 #[derive(Debug, Serialize)]
 struct Kept {
     id: Uuid,
@@ -66,8 +63,6 @@ pub struct Naming {
     name: String,
 }
 
-/* Nothing is the project belonging to no team, which is a thing to ask for rather than a field
-left out by accident, so it is spelt as a null the route reads. */
 #[derive(Debug, Deserialize)]
 pub struct Owning {
     team: Option<Uuid>,
@@ -205,9 +200,6 @@ pub enum ProjectRefused {
     Unavailable,
 }
 
-/* A session with no membership of the organisation is told there is none, so the ids of other
-organisations stay unguessable. Everybody past that point already knows it exists, so they are
-told the real reason instead. */
 impl From<CatalogueError> for ProjectRefused {
     fn from(error: CatalogueError) -> Self {
         match error {

@@ -1,8 +1,6 @@
 import { Link as RouterLink, Outlet, useLocation as useRouterLocation, useNavigate as useRouterNavigate, useParams as useRouterParams } from '@tanstack/react-router'
 import type { ComponentProps } from 'react'
 
-/* Screens carry plain paths, built from the ids they render; this is the single place that steps
-   outside the router's typed `to`, so the route tree stays the one source of path patterns. */
 type AnchorProps = Omit<ComponentProps<'a'>, 'href'>
 
 export { Outlet }

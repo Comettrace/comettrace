@@ -18,9 +18,6 @@ impl PostgresTeams {
 }
 
 impl Squads for PostgresTeams {
-    /* Three reads rather than one join: a team with four members and three projects would come
-    back twelve times over, and the rows would then have to be folded back into one team anyway.
-    They are folded here instead, where it is obvious. */
     async fn of(&self, org: TenantId) -> Result<Vec<Team>, ReadError> {
         let rows = sqlx::query(
             "SELECT id AS id, name AS name, created_at AS created_at \
@@ -96,8 +93,6 @@ impl Squads for PostgresTeams {
         Ok(named(written.is_some()))
     }
 
-    /* Renaming a team onto its own name is not a conflict, so the clash is told apart from the
-    row simply not moving by asking whether anything else holds the name. */
     async fn rename(
         &self,
         org: TenantId,
@@ -116,9 +111,6 @@ impl Squads for PostgresTeams {
             return Ok(Named::Taken);
         }
 
-        /* The constraint is the one that actually decides, and it answers a rename that raced
-        another one. The read above is what tells a clash apart from a team renamed to the name it
-        already had, which the constraint cannot. */
         match sqlx::query("UPDATE teams SET name = $3 WHERE org_id = $1 AND id = $2")
             .bind(org.as_uuid())
             .bind(team.as_uuid())
@@ -144,10 +136,6 @@ impl Squads for PostgresTeams {
             .map_err(|error| unreachable(&error, "disband a team"))
     }
 
-    /* One transaction, and the old seats go first: anybody left off the list asked for is off the
-    team, and a team half reseated is a team nobody asked for. The insert selects from org_members
-    rather than from the ids as given, so an account that belongs to another organisation — or to
-    none — is dropped rather than written. */
     async fn seat(
         &self,
         org: TenantId,
@@ -192,8 +180,6 @@ impl Squads for PostgresTeams {
         Ok(true)
     }
 
-    /* Likewise: whatever this team held and was not asked for again is let go, and a project
-    claimed here is taken off the team that held it, because the column holds one team. */
     async fn own(
         &self,
         org: TenantId,
@@ -239,10 +225,6 @@ impl Squads for PostgresTeams {
     }
 }
 
-/* Asked inside the transaction that is about to write, so a team disbanded in between is a team
-not found rather than a foreign key the insert trips over. Scoped by the organisation as well as
-the id, so a team of another organisation reads as one that does not exist rather than as one
-somebody else may arrange. */
 async fn holds<'c, E>(executor: E, org: TenantId, team: TeamId) -> Result<bool, ReadError>
 where
     E: sqlx::Executor<'c, Database = sqlx::Postgres>,

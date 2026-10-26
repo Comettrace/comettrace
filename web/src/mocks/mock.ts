@@ -1,5 +1,3 @@
-/* Sample records the scaffolded screens render, reached only through the seams in src/data. */
-
 import type { Sev } from '@/lib/otel'
 import { makeSeries } from './series'
 
@@ -9,7 +7,6 @@ export const PROJECTS = [
   { name: 'data-pipeline', team: 'Data', keys: 1, created: '2026-07-19' },
 ]
 
-// ---------- services ----------
 export type Service = { name: string; project: string; rps: string; err: number | null; p50: string; p95: string; p99: string; seen: string; spark: number[] }
 export const SERVICES: Service[] = [
   ['checkout-api', 'storefront', '41.7/s', 4.1, '96 ms', '1.28 s', '2.9 s', '2 s ago', 0.55, 0.3],
@@ -26,7 +23,6 @@ export const SERVICES: Service[] = [
   spark: amp ? makeSeries(24, 7 + i, (_, r) => (base as number) + (r() - 0.5) * (amp as number)) : [],
 }))
 
-// ---------- traces ----------
 export type TraceRow = { id: string; root: string; svc: string; start: string; dur: string; spans: number; errors: number }
 export const TRACES: TraceRow[] = [
   ['4bf92f3577b34da6a3ce929d0e0e4736', 'POST /api/checkout', 'api-gateway', '14:32:07.418', '1.284 s', 12, 3],
@@ -88,7 +84,6 @@ export function traceSpans(t: TraceRow): Span[] {
   }))
 }
 
-// ---------- logs ----------
 export type LogRow = { time: string; sev: Sev; svc: string; body: string; trace: string; attrs: [string, string][] }
 export const LOGS: LogRow[] = ([
   ['14:32:08.702', 'error', 'api-gateway', 'upstream checkout returned 502 for POST /api/checkout after 1284ms', '4bf92f3577b34da6a3ce929d0e0e4736'],
@@ -116,7 +111,6 @@ export const LOGS: LogRow[] = ([
   attrs: [['service.name', svc], ['severity_text', sev.toUpperCase()], ['deployment.environment', 'production'], ['host.name', svc === 'payments' ? 'app-4' : 'app-3'], ...(trace ? [['trace_id', trace]] as [string, string][] : [])],
 }))
 
-// ---------- metrics ----------
 export const METRICS = [
   { name: 'http.server.active_requests', kind: 'Sum', unit: '{request}', desc: 'Number of active HTTP server requests.' },
   { name: 'http.server.request.duration', kind: 'Histogram', unit: 's', desc: 'Duration of HTTP server requests.' },
@@ -132,7 +126,6 @@ export const METRIC_SERIES = [
   { label: '{http.request.method="GET", http.route="/api/orders/{id}"}', f: (i: number) => 2 + Math.sin(i / 4) * 0.8 },
 ]
 
-// ---------- notifications ----------
 export type Notif = { id: string; kind: 'warn' | 'info' | 'muted'; title: string; meta: string; time: string; unread: boolean; to: string }
 export const NOTIFICATIONS: Notif[] = [
   { id: 'n1', kind: 'warn', title: 'checkout-api error rate above 2 %', meta: '4.1 % for 27 min · most errors from calls to payments', time: '14:32 · alert', unread: true, to: '/services/checkout-api' },
@@ -143,7 +136,6 @@ export const NOTIFICATIONS: Notif[] = [
   { id: 'n6', kind: 'muted', title: 'nadia@acme.dev accepted the invitation', meta: 'member · storefront access', time: 'Oct 22', unread: false, to: '/settings/members' },
 ]
 
-// ---------- settings ----------
 export const MEMBERS = [
   { email: 'ines@acme.dev', name: 'Inès Martin', role: 'admin', joined: '2026-03-02', you: true },
   { email: 'marc@acme.dev', name: 'Marc Dubois', role: 'member', joined: '2026-04-11' },
@@ -167,7 +159,6 @@ export const ALERT_RULES = [
   { name: 'Service stops sending', cond: 'No spans for 10 min from a service seen in the last day', notify: 'Data · Slack #data-oncall', last: 'never', on: false, fired: false },
 ]
 
-// ---------- status page ----------
 export const STATUS_GROUPS = [
   { name: 'Storefront', items: [{ name: 'Website', desc: 'acme.dev and the product pages', bad: { 17: 'deg' } }, { name: 'Checkout', desc: 'Cart, payment form and order confirmation', bad: { 0: 'deg', 33: 'out' }, live: true }] },
   { name: 'Payments', items: [{ name: 'Card payments', desc: 'Authorisation and capture in the EU', bad: { 33: 'deg' } }, { name: 'Payouts', desc: 'Daily transfers to merchants', bad: {} }] },

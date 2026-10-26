@@ -5,11 +5,6 @@ import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
 import { Field, Input } from '@/components/ui/input'
 
-/* The furniture every settings screen is built out of: a heading, a labelled row, a danger card
-   and the dialog that makes you type a name before deleting something. It lives here rather than
-   in components/ui because none of it has been wanted anywhere else — the day one of these is
-   asked for by a screen outside this folder is the day it belongs there instead. */
-
 export function H({ title, sub, children }: { title: string; sub?: string; children?: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-end gap-3">
@@ -41,8 +36,6 @@ export function Danger({ title, text, action, onClick }: { title: string; text: 
   )
 }
 
-/* Without `onConfirm` nothing deletes this kind of thing yet, and the dialog says so rather than
-   pretending: it is the one way a screen can offer the button honestly before the route exists. */
 export function ConfirmDelete({ open, onOpenChange, name, what, body, onConfirm, busy }: { open: boolean; onOpenChange: (o: boolean) => void; name: string; what: string; body: string; onConfirm?: () => void; busy?: boolean }) {
   const [v, setV] = useState('')
   return (

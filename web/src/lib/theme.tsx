@@ -31,7 +31,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.setItem('cmt-theme', p)
     } catch {
-      /* storage blocked: keep it in memory */
     }
   }
   return <ThemeContext.Provider value={{ pref, setPref, dark }}>{children}</ThemeContext.Provider>
