@@ -10,10 +10,6 @@ use crate::session::SessionStore;
 use crate::teams::TeamId;
 use crate::tenant::TenantId;
 
-/* A project name is a slug: it is typed into a configuration file beside an ingest key, read out
-of a url, and grepped for in a terminal. So it holds what survives all three — lowercase letters,
-digits and dashes — and anything a person types is lowered rather than refused, because `Storefront`
-plainly means `storefront` and refusing it teaches nothing. */
 const MAX_NAME_BYTES: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -78,8 +74,6 @@ impl fmt::Display for ProjectId {
     }
 }
 
-/* The team and the key count are facts about the project that the screen listing it shows in the
-same table, and reading them separately would be two more requests for two more columns. */
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
     pub id: ProjectId,
@@ -102,8 +96,6 @@ pub enum Created {
     Taken,
 }
 
-/* A project can both not exist and not be allowed the name it asked for, so renaming answers
-which of the two happened rather than a bare yes. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Renamed {
     Done,
@@ -134,14 +126,12 @@ pub trait Projects {
         name: &ProjectName,
     ) -> impl Future<Output = Result<Renamed, ReadError>> + Send;
 
-    /// Whether a project was there to forget. Its keys go with it; its spans wait out their TTL.
     fn forget(
         &self,
         org: TenantId,
         project: ProjectId,
     ) -> impl Future<Output = Result<bool, ReadError>> + Send;
 
-    /// `None` takes the project away from whatever team held it without handing it to another.
     fn assign(
         &self,
         org: TenantId,
@@ -265,8 +255,6 @@ impl From<ReadError> for CatalogueError {
     }
 }
 
-/* What an organisation holds telemetry under. Reading it is any member's — the switcher at the
-top of every screen is this list — and arranging it is an administrator's. */
 #[derive(Debug)]
 pub struct Catalogue<S, G, P> {
     whoami: Whoami<S, G>,
@@ -292,9 +280,6 @@ where
         Ok(self.projects.of(org).await?)
     }
 
-    /* Every change answers with the catalogue as it now stands. One project is not always the
-    whole of what moved — handing it to a team is a thing the teams screen reads too — and the
-    list is short enough that answering with it costs less than asking again. */
     pub async fn create(
         &self,
         token: &SessionToken,
@@ -762,8 +747,6 @@ mod tests {
         }
     }
 
-    /* A name is read out of a url and typed beside a key, so a dash hanging off either end is the
-    kind of thing that gets lost in a copy and paste. */
     #[test]
     fn a_name_neither_starts_nor_ends_with_a_dash() {
         assert_eq!(
@@ -791,5 +774,44 @@ mod tests {
             Err(BadProjectName::TooLong(MAX_NAME_BYTES))
         );
         assert!(ProjectName::try_from("a".repeat(MAX_NAME_BYTES).as_str()).is_ok());
+    }
+
+    mod proptests {
+        use proptest::prelude::*;
+
+        use super::ProjectName;
+
+        fn a_shaped_name() -> impl Strategy<Value = String> {
+            "[a-z][a-z0-9-]{0,20}[a-z0-9]"
+        }
+
+        proptest! {
+            #[test]
+            fn a_name_the_constructor_admits_round_trips_and_keeps_its_shape(
+                chosen in a_shaped_name()
+            ) {
+                let name = ProjectName::try_from(chosen.as_str()).expect("a shaped name");
+
+                prop_assert_eq!(name.as_str(), chosen.as_str());
+                prop_assert!(
+                    name.as_str()
+                        .bytes()
+                        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+                );
+                prop_assert!(!name.as_str().starts_with('-'));
+                prop_assert!(!name.as_str().ends_with('-'));
+            }
+
+            #[test]
+            fn an_uppercase_name_is_admitted_lowered_rather_than_refused(
+                chosen in a_shaped_name()
+            ) {
+                let upper = chosen.to_ascii_uppercase();
+
+                let name = ProjectName::try_from(upper.as_str()).expect("a shaped name, differently cased");
+
+                prop_assert_eq!(name.as_str(), chosen.as_str());
+            }
+        }
     }
 }

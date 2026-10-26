@@ -7,9 +7,6 @@ use crate::photo::{Photo, PhotoError, PhotoKind, Photos, Pictured, Portrait};
 use crate::secret::SessionToken;
 use crate::session::SessionStore;
 
-/* The ceiling counts bytes because that is what the column holds; the name is trimmed first for
-the reason an organisation's is, that surrounding space is invisible in a top bar and in a members
-table, and two people who differ only by it would read as one. */
 const MAX_NAME_BYTES: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -20,8 +17,6 @@ pub enum BadAccountName {
     TooLong(usize),
 }
 
-/* A name somebody goes by, which is never blank: having no name at all is `None` beside this
-type rather than an empty one inside it, because the address is what names them then. */
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountName(Box<str>);
 
@@ -47,8 +42,6 @@ impl TryFrom<&str> for AccountName {
 }
 
 pub trait Accounts {
-    /* `None` takes the name off the account rather than writing an empty one: a box somebody
-    typed into and emptied is no name, and the address names them again. */
     fn rename(
         &self,
         account: AccountId,
@@ -60,8 +53,6 @@ pub trait Accounts {
         account: AccountId,
     ) -> impl Future<Output = Result<Option<Portrait>, ReadError>> + Send;
 
-    /* `None` says the account keeps no photo. The bytes are the store's to forget, not this
-    one's: all that is written here is whether there is anything to find. */
     fn set_portrait(
         &self,
         account: AccountId,
@@ -148,8 +139,6 @@ impl From<ReadError> for ProfileError {
     }
 }
 
-/* A store that cannot be reached is the same failure whichever store it was, but one that was
-never configured is a sentence somebody has to read, so it stays whole. */
 impl From<PhotoError> for ProfileError {
     fn from(error: PhotoError) -> Self {
         match error {
@@ -159,13 +148,6 @@ impl From<PhotoError> for ProfileError {
     }
 }
 
-/* What a person may change about themselves: the name they go by and the face beside it. Not the
-address -- that is how they sign in and how a reset reaches them, so moving it is a flow of its
-own rather than a field -- and not the password, which has one already in `ChangePassword`.
-
-It holds the standing reader because every answer here is a standing: the screen that renames you
-shows your role and your organisations beside the name, and an answer carrying the name alone
-would leave the rest of that screen a request behind. */
 #[derive(Debug)]
 pub struct Profile<S, G, A, P> {
     whoami: Whoami<S, G>,
@@ -192,9 +174,6 @@ where
         Ok(self.whoami.of(token).await?)
     }
 
-    /* The standing is read back rather than assembled from what was asked for, so the trimming
-    the name went through is what the screen shows. The session resolves before anything is
-    written, so a token no session carries never reaches the store. */
     pub async fn rename(
         &self,
         token: &SessionToken,
@@ -205,11 +184,6 @@ where
         self.read(token).await
     }
 
-    /* The bytes reach the store before the column points at them: a store that refuses leaves
-    the account as it was rather than naming an object nobody can fetch. The photo this one
-    replaces is forgotten afterwards, and only as well as it can be -- a leftover object costs a
-    few kilobytes, and the store has already written its own log if it refused, so it is no
-    reason to tell somebody their new photo did not arrive. */
     pub async fn put_photo(
         &self,
         token: &SessionToken,
@@ -231,9 +205,6 @@ where
         self.read(token).await
     }
 
-    /* The other way round from keeping one: the column is cleared first, because what was asked
-    for is an account with no photo, and bytes nobody can reach any more are a tidier failure
-    than a face that will not go away. Asking twice is not an error. */
     pub async fn remove_photo(&self, token: &SessionToken) -> Result<Who, ProfileError> {
         let who = self.read(token).await?;
         let Some(kept) = self.accounts.portrait_of(who.account).await? else {
@@ -247,10 +218,6 @@ where
         self.read(token).await
     }
 
-    /* Any live session may read any account's photo. An account id is a uuid nobody guesses, a
-    face is not a secret inside a deployment, and the alternative -- proving on every avatar that
-    the reader shares an organisation with it -- is a query per image on every screen that lists
-    people. */
     pub async fn photo(
         &self,
         token: &SessionToken,
@@ -310,9 +277,6 @@ mod tests {
         Photo::examined(bytes).expect("a png")
     }
 
-    /* The accounts, as the control plane holds them. The session double reads the name and the
-    portrait from here rather than carrying its own, because the session query joins the accounts
-    table: a standing read after a change is what tells us the change travels. */
     #[derive(Debug, Default)]
     struct Kept {
         name: Mutex<Option<String>>,
@@ -380,7 +344,6 @@ mod tests {
         }
     }
 
-    /* The object store: what it holds under each token, and every token it was asked to forget. */
     #[derive(Debug, Default)]
     struct Shelf {
         objects: Mutex<Vec<(String, Vec<u8>)>>,
@@ -534,8 +497,6 @@ mod tests {
         assert_eq!(kept.writes(), vec![Some("Inès Martin".to_owned())]);
     }
 
-    /* Somebody who wrote a name must be able to take it back, and then the address names them
-    again rather than an empty line doing it. */
     #[tokio::test]
     async fn emptying_the_name_takes_it_off_the_account() {
         let (kept, shelf) = (Kept::named("Inès Martin"), Shelf::default());
@@ -579,7 +540,6 @@ mod tests {
         assert_eq!(kept.portrait(), Some(portrait));
     }
 
-    /* The order that matters: nothing points at an object until the object is there. */
     #[tokio::test]
     async fn a_store_that_refuses_leaves_the_account_as_it_was() {
         let kept = Kept::default();
@@ -700,8 +660,6 @@ mod tests {
         assert_eq!(a_name("  Inès Martin \n").as_str(), "Inès Martin");
     }
 
-    /* The absence of a name is `None` beside the type, so an empty spelling is not one of these
-    at all: it is how the route spells taking the name off. */
     #[test]
     fn a_name_that_is_only_space_is_no_name() {
         assert_eq!(AccountName::try_from(""), Err(BadAccountName::Blank));
@@ -719,9 +677,6 @@ mod tests {
         assert!(AccountName::try_from("a".repeat(MAX_NAME_BYTES).as_str()).is_ok());
     }
 
-    /* The ceiling is about the column, so a name well inside it in characters can still be past
-    it in bytes. Names carry accents more often than organisations do, so this one earns its
-    keep. */
     #[test]
     fn the_ceiling_counts_bytes_rather_than_characters() {
         let wide = "é".repeat(MAX_NAME_BYTES / 2 + 1);
@@ -731,5 +686,45 @@ mod tests {
             AccountName::try_from(wide.as_str()),
             Err(BadAccountName::TooLong(MAX_NAME_BYTES))
         );
+    }
+
+    mod proptests {
+        use proptest::prelude::*;
+
+        use super::super::MAX_NAME_BYTES;
+        use super::{AccountName, BadAccountName};
+
+        fn a_printable_run(bytes: usize) -> impl Strategy<Value = String> {
+            prop::collection::vec(0x21u8..=0x7eu8, 1..=bytes)
+                .map(|bytes| String::from_utf8(bytes).expect("ascii bytes"))
+        }
+
+        proptest! {
+            #[test]
+            fn a_name_the_constructor_admits_round_trips_once_padding_is_stripped(
+                inner in a_printable_run(MAX_NAME_BYTES),
+                leading in prop::collection::vec(prop_oneof![Just(' '), Just('\t')], 0..3),
+                trailing in prop::collection::vec(prop_oneof![Just(' '), Just('\t')], 0..3),
+            ) {
+                let leading: String = leading.into_iter().collect();
+                let trailing: String = trailing.into_iter().collect();
+                let padded = format!("{leading}{inner}{trailing}");
+
+                let name = AccountName::try_from(padded.as_str()).expect("a name within the ceiling");
+
+                prop_assert_eq!(name.as_str(), inner.as_str());
+            }
+
+            #[test]
+            fn a_name_one_byte_past_the_ceiling_is_refused_whatever_it_contains(
+                over in prop::collection::vec(0x21u8..=0x7eu8, MAX_NAME_BYTES + 1)
+                    .map(|bytes| String::from_utf8(bytes).expect("ascii bytes"))
+            ) {
+                prop_assert_eq!(
+                    AccountName::try_from(over.as_str()),
+                    Err(BadAccountName::TooLong(MAX_NAME_BYTES))
+                );
+            }
+        }
     }
 }
