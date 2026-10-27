@@ -33,7 +33,17 @@ export const healthQuery = queryOptions({
   refetchInterval: 30_000,
 })
 
-export const signIn = (email: string, password: string) => post('/auth/sign-in', { email, password })
+export type FactorKind = 'app'
+export type Admitted = { kind: 'session' } | { kind: 'second-step'; offered: FactorKind[] }
+
+export async function signIn(email: string, password: string): Promise<Admitted> {
+  const response = await post('/auth/sign-in', { email, password })
+  if (response.status === 204) return { kind: 'session' }
+  const asked = await json<{ second_step: FactorKind[] }>(response)
+  return { kind: 'second-step', offered: asked.second_step }
+}
+
+export const verifySecondStep = (answer: { code: string } | { recovery: string }) => post('/auth/2fa/verify', answer)
 export const signOut = () => post('/auth/sign-out')
 export const requestReset = (email: string) => post('/auth/reset/request', { email })
 export const confirmReset = (token: string, password: string) => post('/auth/reset/confirm', { token, password })
