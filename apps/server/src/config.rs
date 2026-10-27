@@ -30,6 +30,8 @@ pub struct Config {
     pub mail: Option<MailConfig>,
     #[serde(default)]
     pub objects: Option<ObjectsConfig>,
+    #[serde(default)]
+    pub secrets: Option<SecretsConfig>,
     #[serde(default = "yes")]
     pub local_password: bool,
     #[serde(default = "yes")]
@@ -107,6 +109,11 @@ impl From<ObjectsConfig> for PhotoStoreSettings {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretsConfig {
+    pub at_rest_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OidcConfig {
     pub issuer: String,
     pub client_id: String,
@@ -153,6 +160,7 @@ impl Default for Config {
             oidc: None,
             mail: None,
             objects: None,
+            secrets: None,
             local_password: true,
             cookie_secure: true,
             after_sign_in: landing(),
@@ -332,6 +340,35 @@ mod tests {
             let config: Config = figment().extract()?;
 
             assert!(config.objects.is_none());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn a_deployment_keeps_no_second_factor_unless_a_key_at_rest_is_declared() {
+        figment::Jail::expect_with(|_jail| {
+            let config: Config = figment().extract()?;
+
+            assert!(config.secrets.is_none());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn a_key_at_rest_is_read_from_the_file() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                FILE,
+                r#"
+                [secrets]
+                at_rest_key = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+                "#,
+            )?;
+
+            let config: Config = figment().extract()?;
+            let secrets = config.secrets.expect("a key");
+
+            assert_eq!(secrets.at_rest_key.len(), 64);
             Ok(())
         });
     }

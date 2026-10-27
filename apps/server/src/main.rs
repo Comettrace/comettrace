@@ -13,22 +13,23 @@ use clap::Parser;
 use comettrace_api::{
     SessionCookie, SignInMethods, auth_router, catalogue_router, explore_router, health_router,
     me_router, methods_router, oidc_router, org_router, password_router, reset_router,
-    roster_router, router, team_router, trace_server, usage_router, web_router,
+    roster_router, router, second_factor_router, team_router, trace_server, usage_router,
+    web_router,
 };
 use comettrace_core::{
     AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
     FederatedSignIn, Ingest, IngestKey, Mailer, Metering, NoPhotos, NoProvider, OrgSettings, Photo,
     PhotoError, Photos, Pictured, Portrait, Profile, ProvisionPolicy, ResetError, ResetPassword,
-    ResetToken, Roster, Scope, SessionLifetime, SignIn, SinkError, Span, SpanSink, Squad,
-    TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
+    ResetToken, Roster, Scope, SecondFactors, SecondStep, SessionLifetime, SignIn, SinkError, Span,
+    SpanSink, Squad, TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink,
     LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink, OidcProvider, OidcSettings,
-    PhotoStoreSettings, PostgresAccounts, PostgresDirectory, PostgresFlows, PostgresMemberships,
-    PostgresOrgs, PostgresProjects, PostgresResets, PostgresRoster, PostgresSessions,
-    PostgresTeams, PostgresUsage, RedisMeter, S3Photos, SmtpMailer, SpanStoreSettings,
-    StaticDirectory, StaticQuota, SystemClock, load_allowances, open_span_store,
+    PhotoStoreSettings, PostgresAccounts, PostgresDirectory, PostgresFactors, PostgresFlows,
+    PostgresMemberships, PostgresOrgs, PostgresProjects, PostgresResets, PostgresRoster,
+    PostgresSessions, PostgresTeams, PostgresUsage, RedisMeter, S3Photos, SecretSeal, SmtpMailer,
+    SpanStoreSettings, StaticDirectory, StaticQuota, SystemClock, load_allowances, open_span_store,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -452,7 +453,10 @@ async fn flush_once(sink: &Sink) {
 
 type LocalSource = LocalPasswordProvider<Argon2Hasher>;
 type Sessions = PostgresSessions<SystemClock>;
-type PasswordSignIn = SignIn<LocalSource, NoProvider, PostgresAccounts, Arc<Sessions>>;
+type Factors = PostgresFactors<SystemClock>;
+type PasswordSignIn = SignIn<LocalSource, NoProvider, PostgresAccounts, Arc<Sessions>, Factors>;
+type Settings = SecondFactors<Factors, Arc<Sessions>, SystemClock>;
+type Steps = SecondStep<Factors, Arc<Sessions>, SystemClock>;
 type Resets = ResetPassword<PostgresResets<SystemClock>, Argon2Hasher, Relay>;
 type Changes =
     ChangePassword<Arc<Sessions>, LocalSource, PostgresResets<SystemClock>, Argon2Hasher>;
@@ -498,13 +502,24 @@ async fn identity_routes(
 
     if config.local_password {
         let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
+        let factors = PostgresFactors::new(pool.clone(), SystemClock, seal_of(config)?);
         let sign_in: Arc<PasswordSignIn> = Arc::new(SignIn::new(
             AuthSources::new(Some(LocalPasswordProvider::new(pool.clone(), hasher)), None),
             accounts.clone(),
             Arc::clone(&sessions),
+            factors.clone(),
             ProvisionPolicy::default(),
         ));
-        routes = routes.merge(auth_router(sign_in, cookie));
+        let settings: Arc<Settings> = Arc::new(SecondFactors::new(
+            factors.clone(),
+            Arc::clone(&sessions),
+            SystemClock,
+        ));
+        let steps: Arc<Steps> =
+            Arc::new(SecondStep::new(factors, Arc::clone(&sessions), SystemClock));
+        routes = routes
+            .merge(auth_router(sign_in, cookie))
+            .merge(second_factor_router(settings, steps, cookie));
         tracing::info!("local passwords accepted");
     }
 
@@ -565,6 +580,18 @@ fn gallery_of(config: &Config) -> anyhow::Result<Gallery> {
         .context("preparing the photo store")?;
     tracing::info!(%bucket, "profile photos are kept in an object store");
     Ok(Gallery::Objects(Box::new(store)))
+}
+
+fn seal_of(config: &Config) -> anyhow::Result<Option<SecretSeal>> {
+    let Some(secrets) = &config.secrets else {
+        tracing::warn!(
+            "no secrets.at_rest_key is configured, so nobody can keep a second factor; mint one with `openssl rand -hex 32`"
+        );
+        return Ok(None);
+    };
+    let seal = SecretSeal::from_hex(&secrets.at_rest_key).context("reading secrets.at_rest_key")?;
+    tracing::info!("second factors are sealed at rest");
+    Ok(Some(seal))
 }
 
 fn relay_of(config: &Config) -> anyhow::Result<Relay> {
