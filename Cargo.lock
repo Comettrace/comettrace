@@ -676,8 +676,10 @@ name = "comettrace-core"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "hmac 0.13.0",
  "proptest",
  "rand 0.10.3",
+ "sha1",
  "sha2 0.11.1",
  "subtle",
  "thiserror 2.0.21",
@@ -732,6 +734,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

@@ -16,6 +16,7 @@ mod provisioning;
 mod quota;
 mod reset;
 mod roster;
+mod second_factor;
 mod secret;
 mod session;
 mod signin;
@@ -23,6 +24,7 @@ mod sink;
 mod span;
 mod teams;
 mod tenant;
+mod totp;
 mod usage;
 
 #[cfg(any(test, feature = "testing"))]
@@ -61,16 +63,21 @@ pub use provisioning::{
 pub use quota::{Admission, QuotaPolicy, Unmetered};
 pub use reset::{Mailer, ResetError, ResetPassword, ResetStore};
 pub use roster::{Admitted, Invitation, Member, Roll, Roster, RosterError};
+pub use second_factor::{
+    Answer, ChallengeToken, Confirmed, Enrolment, FactorError, FactorKind, FactorStore, Gate, Kept,
+    NoSecondFactor, Pending, RecoveryCode, SecondFactors, SecondStep, Standing,
+};
 pub use secret::{RESET_PREFIX, ResetToken, SESSION_PREFIX, SecretHash, SessionToken};
 pub use session::{
     HashError, PasswordCheck, PasswordHash, PasswordHasher, Session, SessionError, SessionLifetime,
     SessionStore,
 };
-pub use signin::{AccountDirectory, SignIn, SignInError};
+pub use signin::{AccountDirectory, Opened, SignIn, SignInError};
 pub use sink::{SinkError, SpanSink};
 pub use span::{InvalidId, Span, SpanEvent, SpanId, SpanKind, SpanStatus, TraceId};
 pub use teams::{BadTeamName, Named, Owned, Squad, Squads, Team, TeamError, TeamId, TeamName};
 pub use tenant::{Scope, TenantDirectory, TenantId, UnknownKey};
+pub use totp::{NotACode, SECRET_BYTES, Step, TotpCode, TotpSecret};
 pub use usage::{
     Consumed, Consumption, DecompressedBytes, Metering, UsageHistory, UsageMeter, UsageReader,
 };
