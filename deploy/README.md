@@ -117,6 +117,7 @@ stores inside its own network rather than something to choose.
 | `RUST_LOG` | `info` | Log filter |
 | `POSTGRES_BIND` | `127.0.0.1` | Which address the control plane answers on |
 | `POSTGRES_PORT` | `5432` | Host port for the control plane |
+| `COMETTRACE_SECRETS__AT_REST_KEY` | unset | 32 bytes as hex, without which no second factor is offered |
 | `COMETTRACE_WEB_ROOT` | set in the image | Where the built web application lives |
 | `COMETTRACE_IMAGE` | built locally | A published image to run instead |
 
@@ -137,6 +138,36 @@ An account is provisioned the first time somebody signs in, so run
 organisation to own. It prints no reset token in that case: there is no
 password to set, and `/auth/reset/*` is not mounted when local passwords
 are off.
+
+## A second factor
+
+An account can keep an authenticator app as a second step after its
+password. The server will not offer one without a key to seal the shared
+secret with, because the alternative is a totp secret in clear in a column
+that lands in every backup:
+
+```sh
+COMETTRACE_SECRETS__AT_REST_KEY=$(openssl rand -hex 32)
+```
+
+Keep that key where the database password is kept. It is not derivable and
+it is not stored anywhere else: lose it and every enrolled account has to
+enrol again, because what is in `auth_factors` no longer opens. Rotating it
+is the same operation by hand — there is no rotation command yet.
+
+With the key set, `/auth/2fa/app` enrols, `/auth/2fa/app/confirm` turns the
+enrolment on and answers ten recovery codes, and a password for an account
+that keeps a confirmed factor answers `200` with a challenge cookie instead
+of a session. The sign-in screen drives that second step: the password form
+gives way to a field that takes six digits or a recovery code. Recovery codes
+are shown once, hashed at rest, and spent one at a time; `comettrace` has no
+command to clear a factor, so an account that loses both its app and its
+codes is unlocked with SQL:
+
+```sh
+docker compose exec postgres psql -U comettrace -d comettrace \
+  -c "DELETE FROM auth_factors WHERE account_id = (SELECT id FROM accounts WHERE email = 'person@example.com')"
+```
 
 ## Profile photos
 
