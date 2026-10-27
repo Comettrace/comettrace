@@ -41,6 +41,9 @@ importers:
       lucide-react:
         specifier: 0.468.0
         version: 0.468.0(react@19.1.0)
+      qrcode-generator:
+        specifier: 2.0.4
+        version: 2.0.4
       react:
         specifier: 19.1.0
         version: 19.1.0
@@ -1240,6 +1243,9 @@ packages:
     resolution: {integrity: sha512-YUbWYCgErwnMAVkjUnYa+KlMBzGpHwiIt/DE7f0G33AuX2LH9UcTk6KgWxd3zRU+pN3u/C+Xl3EnMLM4Hea7Sg==}
     engines: {node: ^10 || ^12 || >=14}
 
+  qrcode-generator@2.0.4:
+    resolution: {integrity: sha512-mZSiP6RnbHl4xL2Ap5HfkjLnmxfKcPWpWe/c+5XxCuetEenqmNFf1FH/ftXPCtFG5/TDobjsjz6sSNL0Sr8Z9g==}
+
   react-dom@19.1.0:
     resolution: {integrity: sha512-Xs1hdnE+DyKgeHJeJznQmYMIBG3TKIHJJT95Q58nHLSrElKlGQqDTR2HQ9fx5CN/Gk6Vh/kupBTDLU11/nDk/g==}
     peerDependencies:
@@ -2380,6 +2386,8 @@ snapshots:
       nanoid: 3.3.20
       picocolors: 1.1.1
       source-map-js: 1.2.2
+
+  qrcode-generator@2.0.4: {}
 
   react-dom@19.1.0(react@19.1.0):
     dependencies:
