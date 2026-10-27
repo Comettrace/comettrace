@@ -5,9 +5,9 @@ use axum::http::header::COOKIE;
 use axum::http::{Method, Request, StatusCode};
 use comettrace_api::catalogue_router;
 use comettrace_core::{
-    AccountId, Assigned, Catalogue, Created, Membership, Memberships, OrgRole, OwnerTeam, Project,
-    ProjectId, ProjectName, Projects, ReadError, Renamed, Session, SessionError, SessionStore,
-    SessionToken, TeamId, TenantId, UnixSeconds, Whoami, WhoamiError,
+    AccountId, Agent, Assigned, Catalogue, Created, Membership, Memberships, OrgRole, OwnerTeam,
+    Project, ProjectId, ProjectName, Projects, ReadError, Renamed, Session, SessionError,
+    SessionStore, SessionToken, TeamId, TenantId, UnixSeconds, Whoami, WhoamiError,
 };
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -30,6 +30,7 @@ impl SessionStore for OneSession {
         &self,
         _account: AccountId,
         _org: Option<TenantId>,
+        _from: Option<&Agent>,
     ) -> Result<SessionToken, SessionError> {
         Ok(SessionToken::from_plaintext(TOKEN))
     }

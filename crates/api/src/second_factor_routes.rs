@@ -185,7 +185,13 @@ where
     let challenge =
         session_cookie::challenged(&headers).ok_or(SecondFactorRefused::NoChallengeCarried)?;
     let answer = answer_of(&answered)?;
-    let session = step.verify(&challenge, &answer).await?;
+    let session = step
+        .verify(
+            &challenge,
+            &answer,
+            session_cookie::agent(&headers).as_ref(),
+        )
+        .await?;
     let (Some(opened), Some(cleared)) = (
         session_cookie::opened(&session, shape.cookie),
         session_cookie::answered(shape.cookie),

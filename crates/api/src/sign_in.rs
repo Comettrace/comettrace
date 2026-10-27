@@ -74,7 +74,10 @@ where
         password: Password::new(&credentials.password),
     };
 
-    match sign_in.begin(proof).await? {
+    match sign_in
+        .begin(proof, session_cookie::agent(&headers).as_ref())
+        .await?
+    {
         Opened::Session(token) => {
             let Some(cookie) = session_cookie::opened(&token, shape.cookie) else {
                 return Err(SignInRefused::Unavailable);

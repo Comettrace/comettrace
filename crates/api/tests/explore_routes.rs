@@ -6,10 +6,10 @@ use axum::http::header::COOKIE;
 use axum::http::{Request, StatusCode};
 use comettrace_api::explore_router;
 use comettrace_core::{
-    AccountId, Explore, Membership, Memberships, OrgRole, ProjectId, ReadError, ServiceSummary,
-    Session, SessionError, SessionStore, SessionToken, Span, SpanEvent, SpanId, SpanKind,
-    SpanReader, SpanStatus, TenantId, TraceFilter, TraceId, TraceOrder, TraceSummary, UnixSeconds,
-    Whoami, WhoamiError, Window,
+    AccountId, Agent, Explore, Membership, Memberships, OrgRole, ProjectId, ReadError,
+    ServiceSummary, Session, SessionError, SessionStore, SessionToken, Span, SpanEvent, SpanId,
+    SpanKind, SpanReader, SpanStatus, TenantId, TraceFilter, TraceId, TraceOrder, TraceSummary,
+    UnixSeconds, Whoami, WhoamiError, Window,
 };
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -26,6 +26,7 @@ impl SessionStore for OneSession {
         &self,
         _account: AccountId,
         _org: Option<TenantId>,
+        _from: Option<&Agent>,
     ) -> Result<SessionToken, SessionError> {
         Ok(SessionToken::from_plaintext(TOKEN))
     }

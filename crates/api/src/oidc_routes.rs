@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
 use axum::http::header::{LOCATION, SET_COOKIE};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use comettrace_core::{
@@ -64,6 +64,7 @@ where
 async fn callback<Z, W, A, S>(
     State(federated): State<Arc<FederatedSignIn<Z, W, A, S>>>,
     axum::Extension(landing): axum::Extension<Landing>,
+    headers: HeaderMap,
     Query(callback): Query<Callback>,
 ) -> Result<Response, FederatedRefused>
 where
@@ -72,7 +73,13 @@ where
     A: AccountDirectory + Send + Sync + 'static,
     S: SessionStore + Send + Sync + 'static,
 {
-    let token = federated.finish(callback.code, &callback.state).await?;
+    let token = federated
+        .finish(
+            callback.code,
+            &callback.state,
+            session_cookie::agent(&headers).as_ref(),
+        )
+        .await?;
     let Some(cookie) = session_cookie::opened(&token, landing.cookie) else {
         return Err(FederatedRefused::Unavailable);
     };

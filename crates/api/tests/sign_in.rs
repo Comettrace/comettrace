@@ -5,10 +5,10 @@ use axum::http::header::{CONTENT_TYPE, COOKIE, SET_COOKIE};
 use axum::http::{Request, StatusCode};
 use comettrace_api::{SessionCookie, auth_router};
 use comettrace_core::{
-    AccountDirectory, AccountId, AuthError, AuthProvider, AuthSources, FactorError, FactorKind,
-    Gate, Issuer, NoProvider, NoSecondFactor, ProvisionPolicy, ResolvedIdentity, SecretHash,
-    Session, SessionError, SessionStore, SessionToken, SignIn, SignInProof, Subject, TenantId,
-    UnixSeconds,
+    AccountDirectory, AccountId, Agent, AuthError, AuthProvider, AuthSources, FactorError,
+    FactorKind, Gate, Issuer, NoProvider, NoSecondFactor, ProvisionPolicy, ResolvedIdentity,
+    SecretHash, Session, SessionError, SessionStore, SessionToken, SignIn, SignInProof, Subject,
+    TenantId, UnixSeconds,
 };
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -67,8 +67,9 @@ impl SessionStore for MemorySessions {
         &self,
         account: AccountId,
         org: Option<TenantId>,
+        from: Option<&Agent>,
     ) -> Result<SessionToken, SessionError> {
-        let _ = (account, org);
+        let _ = (account, org, from);
         self.live
             .lock()
             .expect("the session lock")

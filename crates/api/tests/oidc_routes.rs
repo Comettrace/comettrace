@@ -5,7 +5,7 @@ use axum::http::header::{LOCATION, SET_COOKIE};
 use axum::http::{Request, StatusCode};
 use comettrace_api::{SessionCookie, oidc_router};
 use comettrace_core::{
-    AccountDirectory, AccountId, AuthError, AuthProvider, Authorizer, CodeVerifier,
+    AccountDirectory, AccountId, Agent, AuthError, AuthProvider, Authorizer, CodeVerifier,
     FederatedSignIn, FlowError, Issuer, OidcFlows, PendingFlow, ProvisionPolicy, ResolvedIdentity,
     Session, SessionError, SessionStore, SessionToken, SignInProof, Subject, TenantId,
 };
@@ -108,6 +108,7 @@ impl SessionStore for MemorySessions {
         &self,
         _account: AccountId,
         _org: Option<TenantId>,
+        _from: Option<&Agent>,
     ) -> Result<SessionToken, SessionError> {
         self.live
             .lock()

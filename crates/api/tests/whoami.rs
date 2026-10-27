@@ -5,8 +5,8 @@ use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, COOKIE};
 use axum::http::{Method, Request, StatusCode};
 use comettrace_api::me_router;
 use comettrace_core::{
-    AccountId, AccountName, Accounts, MAX_PHOTO_BYTES, Membership, Memberships, NoPhotos, OrgRole,
-    Photo, PhotoError, PhotoKind, Photos, Pictured, Portrait, Profile, ReadError, Session,
+    AccountId, AccountName, Accounts, Agent, MAX_PHOTO_BYTES, Membership, Memberships, NoPhotos,
+    OrgRole, Photo, PhotoError, PhotoKind, Photos, Pictured, Portrait, Profile, ReadError, Session,
     SessionError, SessionStore, SessionToken, TenantId, UnixSeconds, Whoami, WhoamiError,
 };
 use tower::ServiceExt;
@@ -128,8 +128,9 @@ impl SessionStore for OneSession {
         &self,
         account: AccountId,
         org: Option<TenantId>,
+        from: Option<&Agent>,
     ) -> Result<SessionToken, SessionError> {
-        let _ = (account, org);
+        let _ = (account, org, from);
         Ok(SessionToken::from_plaintext(TOKEN))
     }
 
