@@ -5,9 +5,10 @@ use axum::http::header::{CONTENT_TYPE, COOKIE, SET_COOKIE};
 use axum::http::{Request, StatusCode};
 use comettrace_api::{SessionCookie, auth_router};
 use comettrace_core::{
-    AccountDirectory, AccountId, AuthError, AuthProvider, AuthSources, Issuer, NoProvider,
-    ProvisionPolicy, ResolvedIdentity, Session, SessionError, SessionStore, SessionToken, SignIn,
-    SignInProof, Subject, TenantId, UnixSeconds,
+    AccountDirectory, AccountId, AuthError, AuthProvider, AuthSources, FactorError, FactorKind,
+    Gate, Issuer, NoProvider, NoSecondFactor, ProvisionPolicy, ResolvedIdentity, SecretHash,
+    Session, SessionError, SessionStore, SessionToken, SignIn, SignInProof, Subject, TenantId,
+    UnixSeconds,
 };
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -99,7 +100,37 @@ impl SessionStore for MemorySessions {
     }
 }
 
-type Service = SignIn<OnePassword, NoProvider, OneAccount, Arc<MemorySessions>>;
+#[derive(Clone, Default)]
+struct OneFactor {
+    opened: Arc<Mutex<Vec<SecretHash>>>,
+}
+
+impl OneFactor {
+    fn challenges(&self) -> usize {
+        self.opened.lock().expect("the challenge lock").len()
+    }
+}
+
+impl Gate for OneFactor {
+    async fn offered(&self, _account: AccountId) -> Result<Vec<FactorKind>, FactorError> {
+        Ok(vec![FactorKind::Authenticator])
+    }
+
+    async fn open(&self, _account: AccountId, digest: SecretHash) -> Result<(), FactorError> {
+        self.opened.lock().expect("the challenge lock").push(digest);
+        Ok(())
+    }
+}
+
+type Service = SignIn<OnePassword, NoProvider, OneAccount, Arc<MemorySessions>, NoSecondFactor>;
+type Guarded = SignIn<OnePassword, NoProvider, OneAccount, Arc<MemorySessions>, OneFactor>;
+
+fn cookie() -> SessionCookie {
+    SessionCookie {
+        secure: true,
+        max_age_seconds: 600,
+    }
+}
 
 fn harness() -> (axum::Router, Arc<MemorySessions>) {
     let sessions = Arc::new(MemorySessions::default());
@@ -107,16 +138,22 @@ fn harness() -> (axum::Router, Arc<MemorySessions>) {
         AuthSources::new(Some(OnePassword), None),
         OneAccount(AccountId::new(Uuid::from_u128(7))),
         Arc::clone(&sessions),
+        NoSecondFactor,
         ProvisionPolicy::default(),
     ));
-    let router = auth_router(
-        sign_in,
-        SessionCookie {
-            secure: true,
-            max_age_seconds: 600,
-        },
-    );
-    (router, sessions)
+    (auth_router(sign_in, cookie()), sessions)
+}
+
+fn guarded(gate: OneFactor) -> (axum::Router, Arc<MemorySessions>) {
+    let sessions = Arc::new(MemorySessions::default());
+    let sign_in: Arc<Guarded> = Arc::new(SignIn::new(
+        AuthSources::new(Some(OnePassword), None),
+        OneAccount(AccountId::new(Uuid::from_u128(7))),
+        Arc::clone(&sessions),
+        gate,
+        ProvisionPolicy::default(),
+    ));
+    (auth_router(sign_in, cookie()), sessions)
 }
 
 fn sign_in_request(password: &str, with_header: bool) -> Request<Body> {
@@ -230,6 +267,55 @@ async fn signing_out_without_a_cookie_still_clears_it() {
 
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(response.headers().get(SET_COOKIE).is_some());
+}
+
+#[tokio::test]
+async fn a_factor_turns_the_right_password_into_a_challenge_and_not_a_session() {
+    let gate = OneFactor::default();
+    let (router, sessions) = guarded(gate.clone());
+
+    let response = router
+        .oneshot(sign_in_request(GOOD, true))
+        .await
+        .expect("the router answers");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response
+        .headers()
+        .get(SET_COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .expect("a cookie");
+    assert!(cookie.starts_with("ct_second_step=ct_2f_"), "{cookie}");
+    assert!(cookie.contains("HttpOnly"), "{cookie}");
+    assert!(!cookie.contains("ct_session="), "{cookie}");
+    assert_eq!(gate.challenges(), 1);
+    assert!(
+        !sessions.holds(TOKEN),
+        "no session is issued before the second step"
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("a body");
+    assert_eq!(
+        String::from_utf8(body.to_vec()).expect("text"),
+        r#"{"second_step":["app"]}"#
+    );
+}
+
+#[tokio::test]
+async fn a_wrong_password_opens_no_challenge_either() {
+    let gate = OneFactor::default();
+    let (router, sessions) = guarded(gate.clone());
+
+    let response = router
+        .oneshot(sign_in_request("wrong horse", true))
+        .await
+        .expect("the router answers");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(response.headers().get(SET_COOKIE).is_none());
+    assert_eq!(gate.challenges(), 0);
+    assert!(!sessions.holds(TOKEN));
 }
 
 fn an_email() -> comettrace_core::Email {
