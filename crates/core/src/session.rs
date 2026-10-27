@@ -1,4 +1,7 @@
+use core::fmt;
 use core::future::Future;
+
+use uuid::Uuid;
 
 use crate::clock::UnixSeconds;
 use crate::credential::{Email, Password};
@@ -56,6 +59,7 @@ pub trait SessionStore {
         &self,
         account: AccountId,
         org: Option<TenantId>,
+        from: Option<&Agent>,
     ) -> impl Future<Output = Result<SessionToken, SessionError>> + Send;
 
     fn resolve(
@@ -72,8 +76,9 @@ impl<T: SessionStore + Sync> SessionStore for &T {
         &self,
         account: AccountId,
         org: Option<TenantId>,
+        from: Option<&Agent>,
     ) -> impl Future<Output = Result<SessionToken, SessionError>> + Send {
-        (*self).issue(account, org)
+        (*self).issue(account, org, from)
     }
 
     fn resolve(
@@ -96,8 +101,9 @@ impl<T: SessionStore + Send + Sync> SessionStore for std::sync::Arc<T> {
         &self,
         account: AccountId,
         org: Option<TenantId>,
+        from: Option<&Agent>,
     ) -> impl Future<Output = Result<SessionToken, SessionError>> + Send {
-        self.as_ref().issue(account, org)
+        self.as_ref().issue(account, org, from)
     }
 
     fn resolve(
@@ -112,6 +118,130 @@ impl<T: SessionStore + Send + Sync> SessionStore for std::sync::Arc<T> {
         token: &SessionToken,
     ) -> impl Future<Output = Result<(), SessionError>> + Send {
         self.as_ref().revoke(token)
+    }
+}
+
+const MAX_AGENT_BYTES: usize = 256;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Agent(Box<str>);
+
+impl Agent {
+    pub fn new(said: &str) -> Option<Self> {
+        let trimmed = said.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let mut end = trimmed.len().min(MAX_AGENT_BYTES);
+        while !trimmed.is_char_boundary(end) {
+            end -= 1;
+        }
+        Some(Self(trimmed[..end].into()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SessionId(Uuid);
+
+impl SessionId {
+    pub fn new(id: Uuid) -> Self {
+        Self(id)
+    }
+
+    pub fn as_uuid(self) -> Uuid {
+        self.0
+    }
+}
+
+impl fmt::Display for SessionId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveSession {
+    pub id: SessionId,
+    pub from: Option<Agent>,
+    pub created_at: UnixSeconds,
+    pub last_seen_at: UnixSeconds,
+    pub current: bool,
+}
+
+pub trait SessionRoll {
+    fn live(
+        &self,
+        account: AccountId,
+        current: &SessionToken,
+    ) -> impl Future<Output = Result<Vec<LiveSession>, SessionError>> + Send;
+
+    fn revoke_one(
+        &self,
+        account: AccountId,
+        id: SessionId,
+    ) -> impl Future<Output = Result<bool, SessionError>> + Send;
+
+    fn revoke_others(
+        &self,
+        account: AccountId,
+        current: &SessionToken,
+    ) -> impl Future<Output = Result<u64, SessionError>> + Send;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum RollError {
+    #[error("no live session carries this token")]
+    NoSession,
+    #[error("this account keeps no such session")]
+    NoSuchSession,
+    #[error("the sessions could not be reached")]
+    Unavailable,
+}
+
+impl From<SessionError> for RollError {
+    fn from(error: SessionError) -> Self {
+        match error {
+            SessionError::Unknown => Self::NoSession,
+            SessionError::StoreUnreachable => Self::Unavailable,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Sessions<S, R> {
+    sessions: S,
+    roll: R,
+}
+
+impl<S, R> Sessions<S, R>
+where
+    S: SessionStore,
+    R: SessionRoll,
+{
+    pub fn new(sessions: S, roll: R) -> Self {
+        Self { sessions, roll }
+    }
+
+    pub async fn live(&self, token: &SessionToken) -> Result<Vec<LiveSession>, RollError> {
+        let session = self.sessions.resolve(token).await?;
+        Ok(self.roll.live(session.account, token).await?)
+    }
+
+    pub async fn end_one(&self, token: &SessionToken, id: SessionId) -> Result<(), RollError> {
+        let session = self.sessions.resolve(token).await?;
+        if self.roll.revoke_one(session.account, id).await? {
+            return Ok(());
+        }
+        Err(RollError::NoSuchSession)
+    }
+
+    pub async fn end_others(&self, token: &SessionToken) -> Result<u64, RollError> {
+        let session = self.sessions.resolve(token).await?;
+        Ok(self.roll.revoke_others(session.account, token).await?)
     }
 }
 

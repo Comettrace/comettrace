@@ -6,7 +6,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use crate::clock::Clock;
 use crate::identity::AccountId;
 use crate::secret::{SecretHash, SessionToken};
-use crate::session::{SessionError, SessionStore};
+use crate::session::{Agent, SessionError, SessionStore};
 use crate::totp::{Step, TotpCode, TotpSecret};
 
 pub const CHALLENGE_PREFIX: &str = "ct_2f_";
@@ -422,6 +422,7 @@ where
         &self,
         challenge: &ChallengeToken,
         answer: &Answer,
+        from: Option<&Agent>,
     ) -> Result<SessionToken, FactorError> {
         let digest = challenge.hash();
         let pending = self.factors.answered(digest).await?;
@@ -433,7 +434,7 @@ where
             return Err(FactorError::Refused);
         }
         self.factors.close(digest).await?;
-        Ok(self.sessions.issue(pending.account, None).await?)
+        Ok(self.sessions.issue(pending.account, None, from).await?)
     }
 
     async fn admits(&self, account: AccountId, answer: &Answer) -> Result<bool, FactorError> {
@@ -474,7 +475,7 @@ mod tests {
     use crate::credential::Email;
     use crate::identity::AccountId;
     use crate::secret::{SecretHash, SessionToken};
-    use crate::session::{Session, SessionError, SessionStore};
+    use crate::session::{Agent, Session, SessionError, SessionStore};
     use crate::tenant::TenantId;
     use crate::totp::{Step, TotpCode, TotpSecret};
 
@@ -675,6 +676,7 @@ mod tests {
             &self,
             _account: AccountId,
             _org: Option<TenantId>,
+            _from: Option<&Agent>,
         ) -> Result<SessionToken, SessionError> {
             *self.0.lock().expect("the lock") += 1;
             Ok(SessionToken::from_plaintext("ct_ss_issued"))
@@ -954,7 +956,7 @@ mod tests {
         store.challenging(challenge.hash());
 
         let token = step
-            .verify(&challenge, &Answer::Code(code_now(&secret)))
+            .verify(&challenge, &Answer::Code(code_now(&secret)), None)
             .await
             .expect("a session");
 
@@ -974,10 +976,10 @@ mod tests {
         store.challenging(twice.hash());
 
         let code = code_now(&secret);
-        step.verify(&once, &Answer::Code(code))
+        step.verify(&once, &Answer::Code(code), None)
             .await
             .expect("a session");
-        let refused = step.verify(&twice, &Answer::Code(code)).await;
+        let refused = step.verify(&twice, &Answer::Code(code), None).await;
 
         assert_eq!(refused, Err(FactorError::Refused));
     }
@@ -992,7 +994,7 @@ mod tests {
         store.challenging(challenge.hash());
 
         let refused = step
-            .verify(&challenge, &Answer::Code(code_now(&secret)))
+            .verify(&challenge, &Answer::Code(code_now(&secret)), None)
             .await;
 
         assert_eq!(refused, Err(FactorError::Refused));
@@ -1008,6 +1010,7 @@ mod tests {
             .verify(
                 &ChallengeToken::random(),
                 &Answer::Code(TotpCode::new(1).expect("six digits")),
+                None,
             )
             .await;
 
@@ -1026,12 +1029,12 @@ mod tests {
 
         for _ in 0..MAX_ANSWERS {
             assert_eq!(
-                step.verify(&challenge, &wrong).await,
+                step.verify(&challenge, &wrong, None).await,
                 Err(FactorError::Refused)
             );
         }
         let exhausted = step
-            .verify(&challenge, &Answer::Code(code_now(&secret)))
+            .verify(&challenge, &Answer::Code(code_now(&secret)), None)
             .await;
 
         assert_eq!(exhausted, Err(FactorError::Exhausted));
@@ -1051,11 +1054,11 @@ mod tests {
         store.challenging(twice.hash());
 
         let opened = step
-            .verify(&once, &Answer::Recovery(codes[0].clone()))
+            .verify(&once, &Answer::Recovery(codes[0].clone()), None)
             .await
             .expect("a session");
         let refused = step
-            .verify(&twice, &Answer::Recovery(codes[0].clone()))
+            .verify(&twice, &Answer::Recovery(codes[0].clone()), None)
             .await;
 
         assert_eq!(opened.exposed(), "ct_ss_issued");
@@ -1073,10 +1076,10 @@ mod tests {
         store.challenging(challenge.hash());
 
         let refused = step
-            .verify(&challenge, &Answer::Code(a_wrong_code(&secret)))
+            .verify(&challenge, &Answer::Code(a_wrong_code(&secret)), None)
             .await;
         let opened = step
-            .verify(&challenge, &Answer::Code(code_now(&secret)))
+            .verify(&challenge, &Answer::Code(code_now(&secret)), None)
             .await;
 
         assert_eq!(refused, Err(FactorError::Refused));

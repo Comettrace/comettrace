@@ -378,7 +378,7 @@ mod tests {
     use crate::identity::AccountId;
     use crate::membership::{Membership, Memberships, OrgRole, Whoami, WhoamiError};
     use crate::secret::SessionToken;
-    use crate::session::{Session, SessionError, SessionStore};
+    use crate::session::{Agent, Session, SessionError, SessionStore};
     use crate::tenant::TenantId;
 
     const TOKEN: &str = "ct_ss_live";
@@ -414,6 +414,7 @@ mod tests {
             &self,
             _account: AccountId,
             _org: Option<TenantId>,
+            _from: Option<&Agent>,
         ) -> Result<SessionToken, SessionError> {
             Ok(SessionToken::from_plaintext(TOKEN))
         }

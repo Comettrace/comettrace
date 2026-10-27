@@ -69,8 +69,8 @@ pub use second_factor::{
 };
 pub use secret::{RESET_PREFIX, ResetToken, SESSION_PREFIX, SecretHash, SessionToken};
 pub use session::{
-    HashError, PasswordCheck, PasswordHash, PasswordHasher, Session, SessionError, SessionLifetime,
-    SessionStore,
+    Agent, HashError, LiveSession, PasswordCheck, PasswordHash, PasswordHasher, RollError, Session,
+    SessionError, SessionId, SessionLifetime, SessionRoll, SessionStore, Sessions,
 };
 pub use signin::{AccountDirectory, Opened, SignIn, SignInError};
 pub use sink::{SinkError, SpanSink};
