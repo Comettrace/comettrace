@@ -1,9 +1,9 @@
 use comettrace_core::{
     AccountId, AccountName, Accounts, AuthError, AuthProvider, AuthSources, CodeVerifier, Email,
-    FlowError, Issuer, Mailer, NoProvider, OidcFlows, Password, PasswordCheck, PasswordHasher,
-    PendingFlow, PhotoKind, Portrait, ProvisionPolicy, ResetError, ResetPassword, ResetStore,
-    ResetToken, ResolvedIdentity, SessionError, SessionLifetime, SessionStore, SignIn, SignInProof,
-    Subject,
+    FlowError, Issuer, Mailer, NoProvider, NoSecondFactor, OidcFlows, Opened, Password,
+    PasswordCheck, PasswordHasher, PendingFlow, PhotoKind, Portrait, ProvisionPolicy, ResetError,
+    ResetPassword, ResetStore, ResetToken, ResolvedIdentity, SessionError, SessionLifetime,
+    SessionStore, SignIn, SignInProof, Subject,
 };
 use comettrace_storage::{
     AccountError, Argon2Hasher, CONTROL_PLANE, FixedClock, LocalPasswordProvider, PostgresAccounts,
@@ -667,14 +667,18 @@ async fn a_local_password_opens_a_session_without_provisioning_anything() {
         ),
         PostgresAccounts::new(pool.clone()),
         Arc::clone(&sessions),
+        NoSecondFactor,
         ProvisionPolicy::default(),
     );
 
-    let token = sign_in
+    let admitted = sign_in
         .begin(a_proof("person@example.com", "correct horse"))
         .await
         .expect("the password opens a session");
 
+    let Opened::Session(token) = admitted else {
+        panic!("an account with no factor is admitted at once");
+    };
     let session = sessions.resolve(&token).await.expect("the session is live");
     assert_eq!(session.account, account);
     assert_eq!(
@@ -701,6 +705,7 @@ async fn a_wrong_local_password_opens_nothing_and_provisions_nothing() {
             FixedClock::at(NOW),
             lifetime(),
         )),
+        NoSecondFactor,
         ProvisionPolicy::default(),
     );
 

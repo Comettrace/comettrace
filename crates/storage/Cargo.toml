@@ -28,6 +28,7 @@ redis.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["sync", "rt"] }
 tracing.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
