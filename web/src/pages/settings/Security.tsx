@@ -11,6 +11,7 @@ import { Alert, Skeleton, Table, Td, Th, Tr } from '@/components/ui/misc'
 import { QrCode } from '@/components/cmt/QrCode'
 import { methodsQuery } from '@/auth/api'
 import { because } from '@/auth/client'
+import { MIN_PASSWORD_CHARS, passwordProblem, useChangePassword } from '@/data/password'
 import {
   KIND_LABEL,
   useConfirmFactor,
@@ -20,6 +21,8 @@ import {
   useSecondFactor,
   type Enrolment,
 } from '@/data/second-factor'
+import { ago, deviceOf, useEndOtherSessions, useEndSession, useSessions } from '@/data/sessions'
+import { stamp } from '@/lib/format'
 import { H, Row } from './parts'
 
 export function Security() {
@@ -82,23 +85,8 @@ export function Security() {
         )}
       </Card>
       ) : null}
-      <Card className="flex flex-col gap-3 p-4">
-        <h3 className="text-heading">Password</h3>
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(240px,100%),1fr))] gap-3">
-          <Field label="Current password" htmlFor="pw-c"><Input id="pw-c" type="password" autoComplete="current-password" /></Field>
-          <Field label="New password" htmlFor="pw-n" hint="At least 12 characters."><Input id="pw-n" type="password" autoComplete="new-password" /></Field>
-        </div>
-        <div><Button variant="primary" size="sm" onClick={() => toast.success('Password changed', { description: 'Other sessions were signed out.' })}>Change password</Button></div>
-      </Card>
-      <Card className="overflow-hidden">
-        <div className="flex items-center gap-3 px-4 py-3.5"><h3 className="flex-1 text-heading">Sessions</h3><Button size="sm" onClick={() => toast.success('2 other sessions signed out')}>Sign out other sessions</Button></div>
-        <Table><thead><tr><Th>Device</Th><Th className="w-[140px]">Signed in</Th><Th className="w-[170px]">Last active</Th><Th className="w-[100px]"><span className="sr-only">Actions</span></Th></tr></thead>
-          <tbody>
-            <Tr><Td><span className="inline-flex items-center gap-2">Firefox on macOS<Badge variant="success">This device</Badge></span></Td><Td className="font-mono">2026-10-14</Td><Td className="font-mono">now</Td><Td /></Tr>
-            <Tr><Td>Chrome on Linux</Td><Td className="font-mono">2026-10-02</Td><Td className="font-mono">2026-10-19 23:12</Td><Td numeric><Button variant="ghost" size="sm">Sign out</Button></Td></Tr>
-            <Tr><Td>Safari on iOS</Td><Td className="font-mono">2026-09-21</Td><Td className="font-mono">2026-10-17 08:40</Td><Td numeric><Button variant="ghost" size="sm">Sign out</Button></Td></Tr>
-          </tbody></Table>
-      </Card>
+      {offered ? <Password /> : null}
+      <Sessions />
       <Dialog open={Boolean(enrol.data)} onOpenChange={(open) => !open && enrol.reset()}>
         {enrol.data ? (
           <Setup
@@ -205,5 +193,114 @@ function Setup({ enrolment, onDone, onCancel }: { enrolment: Enrolment; onDone: 
         </DialogFooter>
       </form>
     </DialogContent>
+  )
+}
+
+function Password() {
+  const change = useChangePassword()
+  const [current, setCurrent] = useState('')
+  const [chosen, setChosen] = useState('')
+  const [again, setAgain] = useState('')
+  const problem = chosen.length > 0 ? passwordProblem(chosen) : null
+  const apart = again.length > 0 && again !== chosen
+  const refused =
+    problem ??
+    (apart ? 'the two new passwords do not match' : null) ??
+    (change.error ? because(change.error, 'The password was not changed') : null)
+  const typing = (keep: (value: string) => void) => (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (change.error) change.reset()
+    keep(event.target.value)
+  }
+  return (
+    <Card className="flex flex-col gap-3 p-4">
+      <h3 className="text-heading">Password</h3>
+      <form
+        className="flex flex-col gap-3"
+        onSubmit={(event) => {
+          event.preventDefault()
+          change.mutate(
+            { current, password: chosen },
+            {
+              onSuccess: () => {
+                setCurrent('')
+                setChosen('')
+                setAgain('')
+                toast.success('Password changed', { description: 'Your other sessions were signed out.' })
+              },
+            },
+          )
+        }}
+      >
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(240px,100%),1fr))] gap-3">
+          <Field label="Current password" htmlFor="pw-c"><Input id="pw-c" type="password" autoComplete="current-password" value={current} onChange={typing(setCurrent)} /></Field>
+          <Field label="New password" htmlFor="pw-n" hint={`At least ${MIN_PASSWORD_CHARS} characters.`}><Input id="pw-n" type="password" autoComplete="new-password" aria-invalid={problem ? true : undefined} value={chosen} onChange={typing(setChosen)} /></Field>
+          <Field label="Confirm new password" htmlFor="pw-a" hint="The same one again."><Input id="pw-a" type="password" autoComplete="new-password" aria-invalid={apart ? true : undefined} value={again} onChange={typing(setAgain)} /></Field>
+        </div>
+        {refused ? <span className="text-caption text-destructive-text">{refused}</span> : null}
+        <div><Button type="submit" variant="primary" size="sm" loading={change.isPending} disabled={current.length === 0 || chosen.length === 0 || again !== chosen || Boolean(problem)}>Change password</Button></div>
+      </form>
+    </Card>
+  )
+}
+
+function Sessions() {
+  const { sessions, asking, error } = useSessions()
+  const endOne = useEndSession()
+  const endOthers = useEndOtherSessions()
+  const roll = sessions ?? []
+  const others = roll.filter((one) => !one.current).length
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        <h3 className="flex-1 text-heading">Sessions</h3>
+        <Button
+          size="sm"
+          loading={endOthers.isPending}
+          disabled={others === 0}
+          onClick={() =>
+            endOthers.mutate(undefined, {
+              onSuccess: ({ ended }) => toast.success(ended === 1 ? '1 other session signed out' : `${ended} other sessions signed out`),
+              onError: (failed) => toast.error(because(failed, 'The other sessions were not signed out')),
+            })
+          }
+        >
+          Sign out other sessions
+        </Button>
+      </div>
+      {error ? (
+        <div className="px-4 pb-3.5">
+          <Alert variant="warning" icon={<AlertTriangle />}>{because(error, 'This server does not answer for sessions yet.')}</Alert>
+        </div>
+      ) : (
+        <Table>
+          <thead><tr><Th>Device</Th><Th className="w-[140px]">Signed in</Th><Th className="w-[170px]">Last active</Th><Th className="w-[100px]"><span className="sr-only">Actions</span></Th></tr></thead>
+          <tbody>
+            {asking ? (
+              <Tr><Td colSpan={4}><Skeleton className="w-48" /></Td></Tr>
+            ) : (
+              roll.map((one) => (
+                <Tr key={one.id}>
+                  <Td><span className="inline-flex items-center gap-2">{deviceOf(one.from)}{one.current ? <Badge variant="success">This device</Badge> : null}</span></Td>
+                  <Td className="font-mono">{stamp(one.created_at_ms).slice(0, 10)}</Td>
+                  <Td className="font-mono">{ago(one.last_seen_at_ms)}</Td>
+                  <Td numeric>
+                    {one.current ? null : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={endOne.isPending}
+                        onClick={() => endOne.mutate(one.id, { onError: (failed) => toast.error(because(failed, 'That session was not signed out')) })}
+                      >
+                        Sign out
+                      </Button>
+                    )}
+                  </Td>
+                </Tr>
+              ))
+            )}
+          </tbody>
+        </Table>
+      )}
+    </Card>
   )
 }
