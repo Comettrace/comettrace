@@ -13,15 +13,16 @@ use clap::Parser;
 use comettrace_api::{
     SessionCookie, SignInMethods, auth_router, catalogue_router, explore_router, health_router,
     me_router, methods_router, oidc_router, org_router, password_router, reset_router,
-    roster_router, router, second_factor_router, team_router, trace_server, usage_router,
-    web_router,
+    roster_router, router, second_factor_router, session_router, team_router, trace_server,
+    usage_router, web_router,
 };
 use comettrace_core::{
     AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
     FederatedSignIn, Ingest, IngestKey, Mailer, Metering, NoPhotos, NoProvider, OrgSettings, Photo,
     PhotoError, Photos, Pictured, Portrait, Profile, ProvisionPolicy, ResetError, ResetPassword,
-    ResetToken, Roster, Scope, SecondFactors, SecondStep, SessionLifetime, SignIn, SinkError, Span,
-    SpanSink, Squad, TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
+    ResetToken, Roster, Scope, SecondFactors, SecondStep, SessionLifetime, Sessions, SignIn,
+    SinkError, Span, SpanSink, Squad, TenantDirectory, TenantId, UnknownKey, UsageMeter,
+    UsageReader, Whoami,
 };
 use comettrace_storage::{
     Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink,
@@ -290,12 +291,12 @@ fn gateway_of(
     Ingest::new(directory, quota, sink, meter)
 }
 
-type Looking = Explore<Arc<Sessions>, PostgresMemberships, ClickhouseReader>;
-type Holding = Catalogue<Arc<Sessions>, PostgresMemberships, PostgresProjects>;
-type Settling = OrgSettings<Arc<Sessions>, PostgresMemberships, PostgresOrgs, Arc<Gallery>>;
-type Enrolling = Roster<Arc<Sessions>, PostgresMemberships, PostgresRoster<SystemClock>>;
-type Arranging = Squad<Arc<Sessions>, PostgresMemberships, PostgresTeams>;
-type Measuring = Metering<Arc<Sessions>, PostgresMemberships, Arc<Meter>, PostgresUsage>;
+type Looking = Explore<Arc<Store>, PostgresMemberships, ClickhouseReader>;
+type Holding = Catalogue<Arc<Store>, PostgresMemberships, PostgresProjects>;
+type Settling = OrgSettings<Arc<Store>, PostgresMemberships, PostgresOrgs, Arc<Gallery>>;
+type Enrolling = Roster<Arc<Store>, PostgresMemberships, PostgresRoster<SystemClock>>;
+type Arranging = Squad<Arc<Store>, PostgresMemberships, PostgresTeams>;
+type Measuring = Metering<Arc<Store>, PostgresMemberships, Arc<Meter>, PostgresUsage>;
 
 fn roster_routes(pool: Option<&PgPool>) -> anyhow::Result<Router> {
     let Some(pool) = pool else {
@@ -452,17 +453,17 @@ async fn flush_once(sink: &Sink) {
 }
 
 type LocalSource = LocalPasswordProvider<Argon2Hasher>;
-type Sessions = PostgresSessions<SystemClock>;
+type Store = PostgresSessions<SystemClock>;
 type Factors = PostgresFactors<SystemClock>;
-type PasswordSignIn = SignIn<LocalSource, NoProvider, PostgresAccounts, Arc<Sessions>, Factors>;
-type Settings = SecondFactors<Factors, Arc<Sessions>, SystemClock>;
-type Steps = SecondStep<Factors, Arc<Sessions>, SystemClock>;
+type PasswordSignIn = SignIn<LocalSource, NoProvider, PostgresAccounts, Arc<Store>, Factors>;
+type Settings = SecondFactors<Factors, Arc<Store>, SystemClock>;
+type Steps = SecondStep<Factors, Arc<Store>, SystemClock>;
 type Resets = ResetPassword<PostgresResets<SystemClock>, Argon2Hasher, Relay>;
-type Changes =
-    ChangePassword<Arc<Sessions>, LocalSource, PostgresResets<SystemClock>, Argon2Hasher>;
-type Me = Profile<Arc<Sessions>, PostgresMemberships, PostgresAccounts, Arc<Gallery>>;
+type Changes = ChangePassword<Arc<Store>, LocalSource, PostgresResets<SystemClock>, Argon2Hasher>;
+type Me = Profile<Arc<Store>, PostgresMemberships, PostgresAccounts, Arc<Gallery>>;
+type Rolling = Sessions<Arc<Store>, Store>;
 type Federated =
-    FederatedSignIn<OidcProvider, PostgresFlows<SystemClock>, PostgresAccounts, Arc<Sessions>>;
+    FederatedSignIn<OidcProvider, PostgresFlows<SystemClock>, PostgresAccounts, Arc<Store>>;
 
 async fn identity_routes(
     config: &Config,
@@ -498,7 +499,11 @@ async fn identity_routes(
         accounts.clone(),
         gallery,
     ));
-    let mut routes = offered.merge(me_router(me));
+    let rolling: Arc<Rolling> = Arc::new(Sessions::new(
+        Arc::clone(&sessions),
+        sessions.as_ref().clone(),
+    ));
+    let mut routes = offered.merge(me_router(me)).merge(session_router(rolling));
 
     if config.local_password {
         let hasher = Argon2Hasher::new().context("preparing the password hasher")?;
