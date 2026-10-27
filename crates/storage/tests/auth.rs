@@ -1,9 +1,9 @@
 use comettrace_core::{
-    AccountId, AccountName, Accounts, AuthError, AuthProvider, AuthSources, CodeVerifier, Email,
-    FlowError, Issuer, Mailer, NoProvider, NoSecondFactor, OidcFlows, Opened, Password,
+    AccountId, AccountName, Accounts, Agent, AuthError, AuthProvider, AuthSources, CodeVerifier,
+    Email, FlowError, Issuer, Mailer, NoProvider, NoSecondFactor, OidcFlows, Opened, Password,
     PasswordCheck, PasswordHasher, PendingFlow, PhotoKind, Portrait, ProvisionPolicy, ResetError,
-    ResetPassword, ResetStore, ResetToken, ResolvedIdentity, SessionError, SessionLifetime,
-    SessionStore, SignIn, SignInProof, Subject,
+    ResetPassword, ResetStore, ResetToken, ResolvedIdentity, SessionError, SessionId,
+    SessionLifetime, SessionRoll, SessionStore, SignIn, SignInProof, Subject,
 };
 use comettrace_storage::{
     AccountError, Argon2Hasher, CONTROL_PLANE, FixedClock, LocalPasswordProvider, PostgresAccounts,
@@ -173,7 +173,10 @@ async fn a_session_resolves_to_its_account() {
     let account = an_account(&pool, "person@example.com", Some("secret")).await;
     let sessions = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
 
-    let token = sessions.issue(account, None).await.expect("a session");
+    let token = sessions
+        .issue(account, None, None)
+        .await
+        .expect("a session");
     let session = sessions.resolve(&token).await.expect("it resolves");
 
     assert!(token.looks_like_one());
@@ -188,7 +191,10 @@ async fn a_revoked_session_resolves_no_longer() {
     };
     let account = an_account(&pool, "person@example.com", Some("secret")).await;
     let sessions = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
-    let token = sessions.issue(account, None).await.expect("a session");
+    let token = sessions
+        .issue(account, None, None)
+        .await
+        .expect("a session");
 
     sessions.revoke(&token).await.expect("it revokes");
 
@@ -203,7 +209,7 @@ async fn an_expired_session_resolves_no_longer() {
     let account = an_account(&pool, "person@example.com", Some("secret")).await;
     let early = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
     let late = PostgresSessions::new(pool.clone(), FixedClock::at(NOW + 101), lifetime());
-    let token = early.issue(account, None).await.expect("a session");
+    let token = early.issue(account, None, None).await.expect("a session");
 
     assert_eq!(late.resolve(&token).await, Err(SessionError::Unknown));
 }
@@ -215,7 +221,7 @@ async fn resolving_slides_the_expiry_but_not_past_the_hard_life() {
     };
     let account = an_account(&pool, "person@example.com", Some("secret")).await;
     let early = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
-    let token = early.issue(account, None).await.expect("a session");
+    let token = early.issue(account, None, None).await.expect("a session");
 
     let mut expiry = 0;
     for step in (50..=950).step_by(90) {
@@ -244,9 +250,12 @@ async fn pruning_removes_only_what_has_expired() {
     };
     let account = an_account(&pool, "person@example.com", Some("secret")).await;
     let early = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
-    early.issue(account, None).await.expect("a session");
+    early.issue(account, None, None).await.expect("a session");
     let later = PostgresSessions::new(pool.clone(), FixedClock::at(NOW + 500), lifetime());
-    later.issue(account, None).await.expect("a second session");
+    later
+        .issue(account, None, None)
+        .await
+        .expect("a second session");
 
     let removed = PostgresSessions::new(pool.clone(), FixedClock::at(NOW + 101), lifetime())
         .prune()
@@ -465,7 +474,10 @@ async fn a_confirmed_reset_changes_the_password_and_ends_every_session() {
     };
     let account = an_account(&pool, "person@example.com", Some("old secret")).await;
     let sessions = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
-    let token = sessions.issue(account, None).await.expect("a session");
+    let token = sessions
+        .issue(account, None, None)
+        .await
+        .expect("a session");
     let outbox = Outbox::default();
     let reset = ResetPassword::new(
         PostgresResets::new(pool.clone(), FixedClock::at(NOW)),
@@ -672,7 +684,7 @@ async fn a_local_password_opens_a_session_without_provisioning_anything() {
     );
 
     let admitted = sign_in
-        .begin(a_proof("person@example.com", "correct horse"))
+        .begin(a_proof("person@example.com", "correct horse"), None)
         .await
         .expect("the password opens a session");
 
@@ -710,7 +722,7 @@ async fn a_wrong_local_password_opens_nothing_and_provisions_nothing() {
     );
 
     let refused = sign_in
-        .begin(a_proof("person@example.com", "wrong horse battery"))
+        .begin(a_proof("person@example.com", "wrong horse battery"), None)
         .await;
 
     assert!(refused.is_err());
@@ -749,7 +761,10 @@ async fn an_account_carries_no_name_until_somebody_writes_one() {
     let account = an_account(&pool, "person@example.com", Some("secret")).await;
     let sessions = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
 
-    let token = sessions.issue(account, None).await.expect("a session");
+    let token = sessions
+        .issue(account, None, None)
+        .await
+        .expect("a session");
     let session = sessions.resolve(&token).await.expect("it resolves");
 
     assert_eq!(session.name, None);
@@ -770,7 +785,10 @@ async fn a_chosen_name_travels_on_the_session() {
         .rename(account, Some(&name))
         .await
         .expect("it renames");
-    let token = sessions.issue(account, None).await.expect("a session");
+    let token = sessions
+        .issue(account, None, None)
+        .await
+        .expect("a session");
     let session = sessions.resolve(&token).await.expect("it resolves");
 
     assert_eq!(session.name.as_deref(), Some("Ines Martin"));
@@ -836,7 +854,10 @@ async fn a_portrait_travels_on_the_session() {
         .set_portrait(account, Some(&portrait))
         .await
         .expect("it is kept");
-    let token = sessions.issue(account, None).await.expect("a session");
+    let token = sessions
+        .issue(account, None, None)
+        .await
+        .expect("a session");
     let session = sessions.resolve(&token).await.expect("it resolves");
 
     assert_eq!(session.photo.as_ref(), Some(&portrait));
@@ -919,4 +940,126 @@ async fn a_type_the_build_does_not_know_reads_as_no_photo() {
         .expect("it is read");
 
     assert_eq!(read, None);
+}
+
+#[tokio::test]
+async fn the_roll_names_every_live_session_and_marks_the_caller() {
+    let Some(pool) = control_plane("auth_roll").await else {
+        return;
+    };
+    let account = an_account(&pool, "person@example.com", Some("secret")).await;
+    let sessions = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
+    let phone = Agent::new("Mozilla/5.0 (iPhone)").expect("an agent");
+    let here = sessions
+        .issue(account, None, Some(&phone))
+        .await
+        .expect("a session");
+    let elsewhere = sessions.issue(account, None, None).await.expect("another");
+    sessions.revoke(&elsewhere).await.expect("it revokes");
+    let third = sessions.issue(account, None, None).await.expect("a third");
+
+    let roll = sessions.live(account, &here).await.expect("a roll");
+
+    assert_eq!(roll.len(), 2, "a revoked session is not live");
+    let mine = roll.iter().find(|one| one.current).expect("the caller");
+    assert_eq!(mine.from.as_ref().map(Agent::as_str), Some(phone.as_str()));
+    assert_eq!(mine.created_at.get(), NOW);
+    assert_eq!(roll.iter().filter(|one| !one.current).count(), 1);
+    assert!(sessions.resolve(&third).await.is_ok());
+}
+
+#[tokio::test]
+async fn one_session_is_revoked_by_its_public_id_and_the_others_are_left() {
+    let Some(pool) = control_plane("auth_revoke_one").await else {
+        return;
+    };
+    let account = an_account(&pool, "person@example.com", Some("secret")).await;
+    let sessions = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
+    let here = sessions
+        .issue(account, None, None)
+        .await
+        .expect("a session");
+    let doomed = sessions.issue(account, None, None).await.expect("another");
+    let roll = sessions.live(account, &here).await.expect("a roll");
+    let named = roll
+        .iter()
+        .find(|one| !one.current)
+        .expect("the other one")
+        .id;
+
+    let ended = sessions
+        .revoke_one(account, named)
+        .await
+        .expect("it revokes");
+
+    assert!(ended);
+    assert_eq!(sessions.resolve(&doomed).await, Err(SessionError::Unknown));
+    assert!(sessions.resolve(&here).await.is_ok());
+    assert!(
+        !sessions
+            .revoke_one(account, named)
+            .await
+            .expect("a second pass"),
+        "a session is revoked once"
+    );
+}
+
+#[tokio::test]
+async fn an_account_cannot_revoke_a_session_it_does_not_keep() {
+    let Some(pool) = control_plane("auth_revoke_theirs").await else {
+        return;
+    };
+    let mine = an_account(&pool, "person@example.com", Some("secret")).await;
+    let theirs = an_account(&pool, "other@example.com", Some("secret")).await;
+    let sessions = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
+    let hers = sessions.issue(theirs, None, None).await.expect("a session");
+    let here = sessions.issue(theirs, None, None).await.expect("another");
+    let named = sessions
+        .live(theirs, &here)
+        .await
+        .expect("a roll")
+        .iter()
+        .find(|one| !one.current)
+        .expect("the other one")
+        .id;
+
+    let ended = sessions.revoke_one(mine, named).await.expect("it answers");
+
+    assert!(!ended, "an id alone is not authority over a row");
+    assert!(sessions.resolve(&hers).await.is_ok());
+    assert!(
+        !sessions
+            .revoke_one(mine, SessionId::new(Uuid::new_v4()))
+            .await
+            .expect("it answers"),
+        "an unknown id revokes nothing"
+    );
+}
+
+#[tokio::test]
+async fn signing_out_the_others_spares_the_session_that_asked() {
+    let Some(pool) = control_plane("auth_revoke_others").await else {
+        return;
+    };
+    let account = an_account(&pool, "person@example.com", Some("secret")).await;
+    let theirs = an_account(&pool, "other@example.com", Some("secret")).await;
+    let sessions = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
+    let here = sessions
+        .issue(account, None, None)
+        .await
+        .expect("a session");
+    let first = sessions.issue(account, None, None).await.expect("another");
+    let second = sessions.issue(account, None, None).await.expect("a third");
+    let untouched = sessions.issue(theirs, None, None).await.expect("not mine");
+
+    let ended = sessions
+        .revoke_others(account, &here)
+        .await
+        .expect("it revokes");
+
+    assert_eq!(ended, 2);
+    assert!(sessions.resolve(&here).await.is_ok());
+    assert_eq!(sessions.resolve(&first).await, Err(SessionError::Unknown));
+    assert_eq!(sessions.resolve(&second).await, Err(SessionError::Unknown));
+    assert!(sessions.resolve(&untouched).await.is_ok());
 }

@@ -1,8 +1,9 @@
 use comettrace_core::{
-    AccountId, Clock, Email, SESSION_PREFIX, Session, SessionError, SessionLifetime, SessionStore,
-    SessionToken, TenantId, UnixSeconds,
+    AccountId, Agent, Clock, Email, LiveSession, SESSION_PREFIX, Session, SessionError, SessionId,
+    SessionLifetime, SessionRoll, SessionStore, SessionToken, TenantId, UnixSeconds,
 };
 use sqlx::{PgPool, Row};
+use uuid::Uuid;
 
 use crate::accounts::read_portrait;
 
@@ -41,6 +42,7 @@ impl<C: Clock + Send + Sync> SessionStore for PostgresSessions<C> {
         &self,
         account: AccountId,
         org: Option<TenantId>,
+        from: Option<&Agent>,
     ) -> Result<SessionToken, SessionError> {
         let token = mint();
         let now = self.clock.now();
@@ -48,14 +50,16 @@ impl<C: Clock + Send + Sync> SessionStore for PostgresSessions<C> {
 
         sqlx::query(
             "INSERT INTO sessions \
-             (hash, account_id, org_id, created_at, last_seen_at, expires_at) \
-             VALUES ($1, $2, $3, $4, $4, $5)",
+             (hash, id, account_id, org_id, created_at, last_seen_at, expires_at, user_agent) \
+             VALUES ($1, $2, $3, $4, $5, $5, $6, $7)",
         )
         .bind(token.hash().as_bytes().as_slice())
+        .bind(Uuid::new_v4())
         .bind(account.as_uuid())
         .bind(org.map(TenantId::as_uuid))
         .bind(seconds_to_nanos(now))
         .bind(seconds_to_nanos(expires))
+        .bind(from.map(Agent::as_str))
         .execute(&self.pool)
         .await
         .map_err(|_| SessionError::StoreUnreachable)?;
@@ -112,6 +116,73 @@ impl<C: Clock + Send + Sync> SessionStore for PostgresSessions<C> {
             .await
             .map(|_| ())
             .map_err(|_| SessionError::StoreUnreachable)
+    }
+}
+
+impl<C: Clock + Send + Sync> SessionRoll for PostgresSessions<C> {
+    async fn live(
+        &self,
+        account: AccountId,
+        current: &SessionToken,
+    ) -> Result<Vec<LiveSession>, SessionError> {
+        let rows = sqlx::query(
+            "SELECT id, created_at, last_seen_at, user_agent, (hash = $3) AS mine \
+             FROM sessions \
+             WHERE account_id = $1 AND revoked_at IS NULL AND expires_at > $2 \
+             ORDER BY last_seen_at DESC",
+        )
+        .bind(account.as_uuid())
+        .bind(seconds_to_nanos(self.clock.now()))
+        .bind(current.hash().as_bytes().as_slice())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| SessionError::StoreUnreachable)?;
+
+        Ok(rows
+            .iter()
+            .map(|row| LiveSession {
+                id: SessionId::new(row.get("id")),
+                from: row
+                    .get::<Option<String>, _>("user_agent")
+                    .as_deref()
+                    .and_then(Agent::new),
+                created_at: nanos_to_seconds(row.get("created_at")),
+                last_seen_at: nanos_to_seconds(row.get("last_seen_at")),
+                current: row.get("mine"),
+            })
+            .collect())
+    }
+
+    async fn revoke_one(&self, account: AccountId, id: SessionId) -> Result<bool, SessionError> {
+        sqlx::query(
+            "UPDATE sessions SET revoked_at = $3 \
+             WHERE account_id = $1 AND id = $2 AND revoked_at IS NULL",
+        )
+        .bind(account.as_uuid())
+        .bind(id.as_uuid())
+        .bind(seconds_to_nanos(self.clock.now()))
+        .execute(&self.pool)
+        .await
+        .map(|done| done.rows_affected() > 0)
+        .map_err(|_| SessionError::StoreUnreachable)
+    }
+
+    async fn revoke_others(
+        &self,
+        account: AccountId,
+        current: &SessionToken,
+    ) -> Result<u64, SessionError> {
+        sqlx::query(
+            "UPDATE sessions SET revoked_at = $3 \
+             WHERE account_id = $1 AND hash <> $2 AND revoked_at IS NULL",
+        )
+        .bind(account.as_uuid())
+        .bind(current.hash().as_bytes().as_slice())
+        .bind(seconds_to_nanos(self.clock.now()))
+        .execute(&self.pool)
+        .await
+        .map(|done| done.rows_affected())
+        .map_err(|_| SessionError::StoreUnreachable)
     }
 }
 
