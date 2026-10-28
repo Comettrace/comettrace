@@ -1,0 +1,189 @@
+use axum::http::HeaderMap;
+use axum::http::header::{COOKIE, HeaderValue};
+use comettrace_core::{ChallengeToken, SessionToken};
+
+const NAME: &str = "ct_session";
+const CHALLENGE: &str = "ct_second_step";
+const CHALLENGE_SECONDS: u32 = 300;
+const FLAGS: &str = "Path=/; HttpOnly; SameSite=Lax";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionCookie {
+    pub secure: bool,
+    pub max_age_seconds: u32,
+}
+
+impl Default for SessionCookie {
+    fn default() -> Self {
+        Self {
+            secure: true,
+            max_age_seconds: 8 * 60 * 60,
+        }
+    }
+}
+
+pub(crate) fn carried(headers: &HeaderMap) -> Option<SessionToken> {
+    named(headers, NAME)
+        .map(|value| SessionToken::from_plaintext(&value))
+        .filter(SessionToken::looks_like_one)
+}
+
+pub(crate) fn opened(token: &SessionToken, cookie: SessionCookie) -> Option<HeaderValue> {
+    rendered(
+        &format!("{NAME}={}", token.exposed()),
+        cookie.max_age_seconds,
+        cookie.secure,
+    )
+}
+
+pub(crate) fn cleared(cookie: SessionCookie) -> Option<HeaderValue> {
+    rendered(&format!("{NAME}="), 0, cookie.secure)
+}
+
+pub(crate) fn challenging(token: &ChallengeToken, cookie: SessionCookie) -> Option<HeaderValue> {
+    rendered(
+        &format!("{CHALLENGE}={}", token.exposed()),
+        CHALLENGE_SECONDS,
+        cookie.secure,
+    )
+}
+
+pub(crate) fn challenged(headers: &HeaderMap) -> Option<ChallengeToken> {
+    named(headers, CHALLENGE)
+        .map(|value| ChallengeToken::from_plaintext(&value))
+        .filter(ChallengeToken::looks_like_one)
+}
+
+pub(crate) fn answered(cookie: SessionCookie) -> Option<HeaderValue> {
+    rendered(&format!("{CHALLENGE}="), 0, cookie.secure)
+}
+
+fn named(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|header| header.split(';'))
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find(|(held, _)| *held == name)
+        .map(|(_, value)| value.to_owned())
+}
+
+fn rendered(pair: &str, max_age: u32, secure: bool) -> Option<HeaderValue> {
+    let mut rendered = format!("{pair}; {FLAGS}; Max-Age={max_age}");
+    if secure {
+        rendered.push_str("; Secure");
+    }
+    HeaderValue::from_str(&rendered).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::HeaderMap;
+    use axum::http::header::{COOKIE, HeaderValue};
+    use comettrace_core::{ChallengeToken, SessionToken};
+
+    use super::{SessionCookie, answered, carried, challenged, challenging, cleared, opened};
+
+    fn headers(values: &[&str]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for value in values {
+            headers.append(COOKIE, HeaderValue::from_str(value).expect("a header"));
+        }
+        headers
+    }
+
+    #[test]
+    fn a_session_is_read_from_any_cookie_header() {
+        let found = carried(&headers(&["other=1", "ct_session=ct_ss_abc; theme=dark"]));
+
+        assert_eq!(found.as_ref().map(SessionToken::exposed), Some("ct_ss_abc"));
+    }
+
+    #[test]
+    fn a_cookie_without_the_prefix_is_not_a_session() {
+        assert!(carried(&headers(&["ct_session=garbage"])).is_none());
+        assert!(carried(&headers(&["theme=dark"])).is_none());
+        assert!(carried(&HeaderMap::new()).is_none());
+    }
+
+    #[test]
+    fn an_opened_cookie_hides_itself_from_scripts_and_from_other_sites() {
+        let token = SessionToken::from_plaintext("ct_ss_abc");
+        let rendered = opened(
+            &token,
+            SessionCookie {
+                secure: true,
+                max_age_seconds: 600,
+            },
+        )
+        .expect("a header");
+
+        assert_eq!(
+            rendered.to_str().expect("text"),
+            "ct_session=ct_ss_abc; Path=/; HttpOnly; SameSite=Lax; Max-Age=600; Secure"
+        );
+    }
+
+    #[test]
+    fn a_plain_http_deployment_drops_only_the_secure_flag() {
+        let token = SessionToken::from_plaintext("ct_ss_abc");
+        let rendered = opened(
+            &token,
+            SessionCookie {
+                secure: false,
+                max_age_seconds: 600,
+            },
+        )
+        .expect("a header");
+        let text = rendered.to_str().expect("text");
+
+        assert!(text.contains("HttpOnly"));
+        assert!(text.contains("SameSite=Lax"));
+        assert!(!text.contains("Secure"));
+    }
+
+    #[test]
+    fn a_cleared_cookie_expires_at_once_and_carries_no_value() {
+        let rendered = cleared(SessionCookie::default()).expect("a header");
+        let text = rendered.to_str().expect("text");
+
+        assert!(text.starts_with("ct_session=;"));
+        assert!(text.contains("Max-Age=0"));
+    }
+
+    #[test]
+    fn a_challenge_hides_from_scripts_and_outlives_only_five_minutes() {
+        let token = ChallengeToken::from_plaintext("ct_2f_abc");
+
+        let rendered = challenging(&token, SessionCookie::default()).expect("a header");
+
+        assert_eq!(
+            rendered.to_str().expect("text"),
+            "ct_second_step=ct_2f_abc; Path=/; HttpOnly; SameSite=Lax; Max-Age=300; Secure"
+        );
+    }
+
+    #[test]
+    fn a_challenge_is_read_back_from_its_own_cookie() {
+        let found = challenged(&headers(&[
+            "ct_session=ct_ss_abc; ct_second_step=ct_2f_abc",
+        ]));
+
+        assert_eq!(
+            found.as_ref().map(ChallengeToken::exposed),
+            Some("ct_2f_abc")
+        );
+        assert!(challenged(&headers(&["ct_second_step=garbage"])).is_none());
+        assert!(challenged(&headers(&["ct_session=ct_ss_abc"])).is_none());
+    }
+
+    #[test]
+    fn an_answered_challenge_is_cleared() {
+        let rendered = answered(SessionCookie::default()).expect("a header");
+        let text = rendered.to_str().expect("text");
+
+        assert!(text.starts_with("ct_second_step=;"));
+        assert!(text.contains("Max-Age=0"));
+    }
+}

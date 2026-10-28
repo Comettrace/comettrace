@@ -1,0 +1,10 @@
+DROP TABLE alerts;
+DROP TABLE dashboards;
+DROP INDEX api_keys_live_by_org;
+DROP TABLE api_keys;
+DROP TABLE projects;
+DROP TABLE org_members;
+DROP TYPE org_role;
+DROP TABLE orgs;
+DROP TABLE accounts;
+DROP TABLE plans;

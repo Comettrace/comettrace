@@ -1,0 +1,13 @@
+target
+.git
+.github
+.claude
+docs
+deploy
+Dockerfile
+.dockerignore
+comettrace.toml
+.env
+web/node_modules
+web/dist
+web/.vite

@@ -1,0 +1,176 @@
+import { useMemo, useState } from 'react'
+import { Card } from '@/components/ui/card'
+import { Segmented } from '@/components/ui/segmented'
+import { Table, Td, Th, Tr } from '@/components/ui/misc'
+import { byDay, bytes, projected, startOfMonth, startOfNextMonth, useMetered, type Day } from '@/data/usage'
+import { Link } from '@/lib/router'
+import { cn } from '@/lib/utils'
+import { H, Sub } from './parts'
+
+const DAY = 86_400_000
+
+const month = (at: number) => new Date(at).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+const dayLabel = (at: number) => new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+
+function Meter({ label, used, of, share, note }: { label: string; used: string; of?: string; share: number | null; note: string }) {
+  return (
+    <Card className="flex flex-col gap-2 p-3.5">
+      <div className="flex items-baseline gap-2">
+        <span className="flex-1 text-control font-semibold">{label}</span>
+        <span className="font-mono text-control">{used}</span>
+        {of ? <span className="text-caption text-muted-foreground">{of}</span> : null}
+      </div>
+      {share === null ? null : (
+        <div className="relative h-2 rounded bg-muted" role="img" aria-label={`${share.toFixed(0)} percent`}>
+          <div className="absolute inset-y-0 left-0 rounded bg-series" style={{ width: `${Math.min(100, share)}%` }} />
+        </div>
+      )}
+      <span className="text-caption text-muted-foreground">{note}</span>
+    </Card>
+  )
+}
+
+function Daily({ days }: { days: Day[] }) {
+  const hi = Math.max(1, ...days.map((d) => d.bytes))
+  const [hovered, setHovered] = useState<Day | null>(null)
+  return (
+    <Card className="flex flex-col gap-2.5 p-3.5">
+      <div className="flex items-baseline gap-2">
+        <span className="flex-1 text-control font-semibold">Ingested per day</span>
+        {hovered ? (
+          <span className="text-control"><span className="font-semibold">{dayLabel(hovered.at)}</span> <span className="font-mono">{bytes(hovered.bytes)}</span></span>
+        ) : (
+          <span className="text-caption text-muted-foreground">peak {bytes(hi)}</span>
+        )}
+      </div>
+      <div
+        className="flex h-[120px] items-end gap-[2px]"
+        role="img"
+        aria-label={`Bytes ingested per day, ${days.length} days, peak ${bytes(hi)}`}
+        onMouseLeave={() => setHovered(null)}
+      >
+        {days.map((d) => (
+          <div
+            key={d.at}
+            className="flex h-full flex-1 items-end"
+            title={`${dayLabel(d.at)} · ${bytes(d.bytes)}`}
+            onMouseEnter={() => setHovered(d)}
+          >
+            <div
+              className={cn('w-full rounded-t-[4px] bg-series', d.bytes === 0 && 'bg-border')}
+              style={{ height: `${Math.max(d.bytes === 0 ? 1 : 2, (d.bytes / hi) * 100)}%` }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="flex justify-between font-mono text-caption text-faint-foreground">
+        <span>{days.length > 0 ? dayLabel(days[0].at) : ''}</span>
+        <span>{days.length > 0 ? dayLabel(days[days.length - 1].at) : ''}</span>
+      </div>
+    </Card>
+  )
+}
+
+export function Usage() {
+  const [period, setPeriod] = useState('this')
+  const now = Date.now()
+
+  const [from, to] = useMemo(() => {
+    const start = startOfMonth(now)
+    return period === 'this' ? [start, startOfNextMonth(now)] : [startOfMonth(start - DAY), start]
+  }, [period, now])
+
+  const { metered, nothing } = useMetered(from, to)
+  const days = useMemo(() => (metered ? byDay(metered.hours, from, Math.min(to, now + DAY)) : []), [metered, from, to, now])
+
+  const rolled = days.reduce((total, d) => total + d.bytes, 0)
+  const used = period === 'this' ? (metered?.ingested_bytes ?? 0) : rolled
+  const included = metered?.included_bytes ?? null
+  const busiest = days.reduce<Day | null>((peak, d) => (peak === null || d.bytes > peak.bytes ? d : peak), null)
+  const average = days.length > 0 ? Math.round(rolled / days.length) : 0
+  const ceiling = (count: number) => (included && included > 0 ? (count / included) * 100 : null)
+  const ofIncluded = included ? `of ${bytes(included)} included` : undefined
+  const noCeiling = 'This plan sets no ceiling.'
+  const ahead = projected(used, now)
+
+  return (
+    <>
+      <H title="Usage" sub={`${month(from)} · decompressed payload bytes, per organisation.`}>
+        <Segmented
+          label="Period"
+          value={period}
+          onChange={setPeriod}
+          options={[{ value: 'this', label: 'This month' }, { value: 'last', label: 'Last month' }]}
+        />
+      </H>
+      {metered ? (
+        <>
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3">
+            <Meter
+              label={period === 'this' ? 'Ingested this month' : 'Ingested'}
+              used={bytes(used)}
+              of={ofIncluded}
+              share={ceiling(used)}
+              note={included ? `${(ceiling(used) ?? 0).toFixed(0)} % of what the plan allows` : noCeiling}
+            />
+            {period === 'this' ? (
+              <Meter
+                label="Projected at month end"
+                used={bytes(ahead)}
+                of={ofIncluded}
+                share={ceiling(ahead)}
+                note={
+                  included && (ceiling(ahead) ?? 0) > 100
+                    ? 'Past the ceiling before the month is out, at this rate.'
+                    : 'If the rest of the month looks like the part that has happened.'
+                }
+              />
+            ) : (
+              <Meter
+                label="Rolled up"
+                used={bytes(rolled)}
+                of={ofIncluded}
+                share={ceiling(rolled)}
+                note="Every finished hour of that month, added up."
+              />
+            )}
+            <Meter
+              label="Busiest day"
+              used={bytes(busiest?.bytes ?? 0)}
+              of={rolled > 0 ? `of ${bytes(rolled)} rolled up` : undefined}
+              share={rolled > 0 ? ((busiest?.bytes ?? 0) / rolled) * 100 : null}
+              note={busiest && busiest.bytes > 0 ? dayLabel(busiest.at) : 'Nothing has arrived yet.'}
+            />
+            <Meter
+              label="Average per day"
+              used={bytes(average)}
+              of={busiest && busiest.bytes > 0 ? `of ${bytes(busiest.bytes)} at peak` : undefined}
+              share={busiest && busiest.bytes > 0 ? (average / busiest.bytes) * 100 : null}
+              note={days.length > 0 ? `Across the ${days.length} days read.` : 'No day has been rolled up yet.'}
+            />
+          </div>
+          <Daily days={days} />
+          <Sub>By day</Sub>
+          <Card className="max-h-[320px] overflow-auto">
+            <Table aria-label="Ingested per day">
+              <thead><tr><Th>Day</Th><Th numeric className="w-[160px]">Ingested</Th><Th numeric className="w-[120px]">Share</Th></tr></thead>
+              <tbody>{[...days].reverse().map((d) => (
+                <Tr key={d.at}>
+                  <Td className="font-mono">{dayLabel(d.at)}</Td>
+                  <Td numeric className="font-mono">{bytes(d.bytes)}</Td>
+                  <Td numeric className="text-muted-foreground">{rolled > 0 ? `${((d.bytes / rolled) * 100).toFixed(1)} %` : '—'}</Td>
+                </Tr>
+              ))}</tbody>
+            </Table>
+            {days.length === 0 ? <p className="m-0 px-4 py-3 text-control text-muted-foreground">No finished hour of this month has been rolled up yet.</p> : null}
+          </Card>
+        </>
+      ) : (
+        <Card className="px-4 py-3 text-control text-muted-foreground">{nothing}</Card>
+      )}
+      <p className="m-0 text-caption text-muted-foreground">
+        What is metered is the decompressed size of each payload accepted, counted per organisation — not per project, because the counter is keyed by the organisation. Nothing counts spans, log records or metric points, and nothing measures what the span store holds. The ceiling is the <Link to="/settings/billing">plan</Link> the control plane carries, and it is the same number a payload is refused against.
+      </p>
+    </>
+  )
+}

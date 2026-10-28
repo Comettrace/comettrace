@@ -1,0 +1,38 @@
+[package]
+name = "comettrace-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+comettrace-core.workspace = true
+comettrace-otlp.workspace = true
+axum.workspace = true
+bytes.workspace = true
+hex.workspace = true
+opentelemetry-proto.workspace = true
+prost.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+tonic.workspace = true
+uuid.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+comettrace-core.workspace = true
+comettrace-storage.workspace = true
+opentelemetry-proto.workspace = true
+prost.workspace = true
+serde = { workspace = true, features = ["derive"] }
+flate2.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true
