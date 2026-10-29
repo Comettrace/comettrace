@@ -372,7 +372,7 @@ mod tests {
     use crate::identity::AccountId;
     use crate::membership::{Membership, Memberships, OrgRole, Whoami, WhoamiError};
     use crate::secret::SessionToken;
-    use crate::session::{Session, SessionError, SessionStore};
+    use crate::session::{Agent, Session, SessionError, SessionStore};
     use crate::teams::TeamId;
     use crate::tenant::TenantId;
 
@@ -406,6 +406,7 @@ mod tests {
             &self,
             _account: AccountId,
             _org: Option<TenantId>,
+            _from: Option<&Agent>,
         ) -> Result<SessionToken, SessionError> {
             Ok(SessionToken::from_plaintext(TOKEN))
         }

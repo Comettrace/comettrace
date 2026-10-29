@@ -1,6 +1,6 @@
 use axum::http::HeaderMap;
-use axum::http::header::{COOKIE, HeaderValue};
-use comettrace_core::{ChallengeToken, SessionToken};
+use axum::http::header::{COOKIE, HeaderValue, USER_AGENT};
+use comettrace_core::{Agent, ChallengeToken, SessionToken};
 
 const NAME: &str = "ct_session";
 const CHALLENGE: &str = "ct_second_step";
@@ -56,6 +56,13 @@ pub(crate) fn challenged(headers: &HeaderMap) -> Option<ChallengeToken> {
 
 pub(crate) fn answered(cookie: SessionCookie) -> Option<HeaderValue> {
     rendered(&format!("{CHALLENGE}="), 0, cookie.secure)
+}
+
+pub(crate) fn agent(headers: &HeaderMap) -> Option<Agent> {
+    headers
+        .get(USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .and_then(Agent::new)
 }
 
 fn named(headers: &HeaderMap, name: &str) -> Option<String> {

@@ -2,13 +2,18 @@ use std::collections::BTreeMap;
 
 use clickhouse::Row;
 use comettrace_core::{
-    ProjectId, Scope, SinkError, Span, SpanEvent, SpanKind, SpanStatus, UnixSeconds,
+    EXCEPTION_EVENT, Fingerprint, PRINT_BYTES, ProjectId, Scope, SinkError, Span, SpanEvent,
+    SpanKind, SpanStatus, UnixSeconds,
 };
 use serde::Serialize;
 use serde_repr::Serialize_repr;
 use uuid::Uuid;
 
 const HTTP_STATUS_CODE: &str = "http.status_code";
+
+pub(crate) const EXCEPTION_TYPE: &str = "exception.type";
+pub(crate) const EXCEPTION_MESSAGE: &str = "exception.message";
+pub(crate) const EXCEPTION_STACKTRACE: &str = "exception.stacktrace";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr)]
 #[repr(i8)]
@@ -115,6 +120,7 @@ pub(crate) struct EventRow<'a> {
     pub(crate) trace_id: [u8; 16],
     pub(crate) span_id: [u8; 8],
     pub(crate) name: &'a str,
+    pub(crate) fingerprint: [u8; PRINT_BYTES],
     pub(crate) attributes: BTreeMap<&'a str, &'a str>,
     pub(crate) expire_at: u32,
 }
@@ -134,6 +140,7 @@ impl<'a> EventRow<'a> {
             trace_id: *span.trace_id.as_bytes(),
             span_id: *span.span_id.as_bytes(),
             name: &event.name,
+            fingerprint: print_of(span, event),
             attributes: event
                 .attributes
                 .iter()
@@ -142,6 +149,26 @@ impl<'a> EventRow<'a> {
             expire_at: seconds(expire_at)?,
         })
     }
+}
+
+fn print_of(span: &Span, event: &SpanEvent) -> [u8; PRINT_BYTES] {
+    if &*event.name != EXCEPTION_EVENT {
+        return [0; PRINT_BYTES];
+    }
+    *Fingerprint::of(
+        &span.service_name,
+        said(event, EXCEPTION_TYPE),
+        said(event, EXCEPTION_MESSAGE),
+    )
+    .as_bytes()
+}
+
+pub(crate) fn said<'a>(event: &'a SpanEvent, key: &str) -> &'a str {
+    event
+        .attributes
+        .get(key)
+        .map(|value| &**value)
+        .unwrap_or_default()
 }
 
 fn nanos(value: u64) -> Result<i64, SinkError> {

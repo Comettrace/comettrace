@@ -8,9 +8,8 @@ import { Avatar, Table, Td, Th } from '@/components/ui/misc'
 import { Kpi, PageHeader, ServiceDot } from '@/components/cmt/bits'
 import { LineChart } from '@/components/cmt/charts'
 import { useRelease, useReleaseSeries, useReleases } from '@/data/releases'
-import { useIssues } from '@/data/issues'
 import { NotFound } from './NotFound'
-import { initials } from './Issues'
+import { initialsOf } from '@/data/profile'
 import { cn } from '@/lib/utils'
 
 export function Releases() {
@@ -30,7 +29,7 @@ export function Releases() {
                   <Td><span className="flex flex-col leading-5"><Link to={`/releases/${r.version}`} onClick={(e) => e.stopPropagation()} className="font-mono font-semibold text-foreground">{r.version}</Link><span className="text-caption text-muted-foreground">{r.project} · {r.commits} commits · <span className="font-mono">{r.commit}</span></span></span></Td>
                   <Td><span className="flex flex-wrap gap-x-2.5">{r.services.map((s) => <span key={s} className="inline-flex items-center gap-1.5 text-control"><ServiceDot name={s} />{s}</span>)}</span></Td>
                   <Td className="font-mono text-control">{r.deployed}</Td>
-                  <Td><span className="inline-flex items-center gap-2 text-control"><Avatar initials={initials(r.by)} className="size-6 text-[10px]" />{r.by}</span></Td>
+                  <Td><span className="inline-flex items-center gap-2 text-control"><Avatar initials={initialsOf(r.by)} className="size-6 text-[10px]" />{r.by}</span></Td>
                   <Td numeric className={cn(bad && r.newIssues && 'font-semibold text-destructive-text')}>{bad ? r.newIssues : r.version === '2.14.1' ? 0 : r.newIssues}</Td>
                   <Td numeric className={cn(bad && 'font-semibold text-warning-text')}>{bad ? r.errDelta : r.version === '2.14.1' ? '+0.0 pts' : r.errDelta}</Td>
                   <Td numeric className={cn(bad && 'text-warning-text')}>{bad ? r.p95Delta : r.version === '2.14.1' ? '−2 %' : r.p95Delta}</Td>
@@ -49,11 +48,9 @@ export function Releases() {
 export function ReleaseDetail() {
   const { version } = useParams()
   const r = useRelease(version)
-  const { issues } = useIssues()
   const bad = r?.status === 'regressed'
   const { at, errorRate, p95 } = useReleaseSeries(r, bad)
   if (!r) return <NotFound />
-  const newIssues = bad ? issues.filter((i) => i.release === r.version && i.isNew) : []
   return (
     <>
       <nav aria-label="Breadcrumb" className="text-control"><Link to="/releases">Releases</Link><span className="text-faint-foreground"> / </span><span className="font-mono">{r.version}</span></nav>
@@ -68,7 +65,6 @@ export function ReleaseDetail() {
         <span>Project <span className="font-semibold text-foreground">{r.project}</span></span><span>Deployed <span className="font-mono text-foreground">{r.deployed}</span></span><span>By <span className="text-foreground">{r.by}</span></span><span className="inline-flex items-center gap-1"><GitCommitHorizontal className="size-3.5" aria-hidden /><span className="font-mono text-foreground">{r.commit}</span></span><span>Adoption <span className="font-mono text-foreground">{r.adoption} %</span></span>
       </div>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3">
-        <Kpi label="New issues" value={String(newIssues.length)} sub="first seen in this release" tone={newIssues.length ? 'warn' : undefined} />
         <Kpi label="Error rate change" value={bad ? r.errDelta : '+0.0 pts'} sub="hour after vs hour before" tone={bad ? 'warn' : undefined} />
         <Kpi label="p95 change" value={bad ? r.p95Delta : '−2 %'} sub={r.services.join(', ')} tone={bad ? 'warn' : undefined} />
         <Kpi label="Commits" value={String(r.commits)} sub={`${r.prs.length} pull requests`} />
@@ -78,15 +74,6 @@ export function ReleaseDetail() {
         <LineChart title="p95 latency around the deploy" legend={r.services[0]} values={p95} hi={2000} yLabels={['2 s', '1 s', '0']} aria="p95 before and after the deploy" height={120} markers={[{ at, label: r.version }]} />
       </div>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(420px,100%),1fr))] items-start gap-3">
-        <Card className="overflow-hidden">
-          <CardHeader><CardTitle className="flex-1">New issues in {r.version}</CardTitle><Link to="/issues" className="text-control">All issues</Link></CardHeader>
-          {newIssues.length === 0 ? <p className="m-0 px-4 py-6 text-center text-control text-muted-foreground">No new issue since this deploy.</p> : newIssues.map((i) => (
-            <Link key={i.id} to={`/issues/${i.id}`} className="flex flex-col gap-0.5 border-b border-border-subtle px-4 py-2.5 text-foreground no-underline last:border-b-0 hover:bg-row-hover">
-              <span className="flex items-center gap-2"><span className="font-mono font-semibold text-destructive-text">{i.type}</span><Badge variant="accent" size="xs">New</Badge><span className="flex-1" /><span className="font-mono text-control">{i.events}</span></span>
-              <span className="truncate text-caption text-muted-foreground">{i.message} · {i.service}</span>
-            </Link>
-          ))}
-        </Card>
         <Card className="overflow-hidden">
           <CardHeader><CardTitle>What changed</CardTitle></CardHeader>
           {r.prs.map(([n, t]) => (

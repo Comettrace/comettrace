@@ -2,6 +2,7 @@ mod accounts;
 mod clickhouse;
 mod clock;
 mod counter;
+mod decisions;
 mod directory;
 mod factors;
 mod flows;
@@ -30,11 +31,12 @@ mod usage;
 
 pub use accounts::{AccountError, PostgresAccounts};
 pub use clickhouse::{
-    BatchLimits, ClickhouseMigrator, ClickhouseReader, ClickhouseSink, MIGRATIONS, MigrateError,
-    Migration,
+    BatchLimits, ClickhouseIssues, ClickhouseMigrator, ClickhouseReader, ClickhouseSink,
+    MIGRATIONS, MigrateError, Migration,
 };
 pub use clock::{FixedClock, SystemClock};
 pub use counter::{CounterError, RedisMeter};
+pub use decisions::PostgresDecisions;
 pub use directory::StaticDirectory;
 pub use factors::PostgresFactors;
 pub use flows::PostgresFlows;

@@ -114,7 +114,8 @@ mod tests {
     use crate::reset::{ResetError, ResetStore};
     use crate::secret::{SecretHash, SessionToken};
     use crate::session::{
-        HashError, PasswordCheck, PasswordHash, PasswordHasher, Session, SessionError, SessionStore,
+        Agent, HashError, PasswordCheck, PasswordHash, PasswordHasher, Session, SessionError,
+        SessionStore,
     };
     use crate::tenant::TenantId;
 
@@ -132,6 +133,7 @@ mod tests {
             &self,
             _account: AccountId,
             _org: Option<TenantId>,
+            _from: Option<&Agent>,
         ) -> Result<SessionToken, SessionError> {
             Ok(SessionToken::from_plaintext(TOKEN))
         }

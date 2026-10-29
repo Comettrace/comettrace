@@ -12,24 +12,26 @@ use axum::Router;
 use clap::Parser;
 use comettrace_api::{
     SessionCookie, SignInMethods, auth_router, catalogue_router, explore_router, health_router,
-    me_router, methods_router, oidc_router, org_router, password_router, reset_router,
-    roster_router, router, second_factor_router, team_router, trace_server, usage_router,
-    web_router,
+    issue_router, me_router, methods_router, oidc_router, org_router, password_router,
+    reset_router, roster_router, router, second_factor_router, session_router, team_router,
+    trace_server, usage_router, web_router,
 };
 use comettrace_core::{
     AuthSources, Catalogue, ChangePassword, Clock, DecompressedBytes, Email, Explore,
-    FederatedSignIn, Ingest, IngestKey, Mailer, Metering, NoPhotos, NoProvider, OrgSettings, Photo,
-    PhotoError, Photos, Pictured, Portrait, Profile, ProvisionPolicy, ResetError, ResetPassword,
-    ResetToken, Roster, Scope, SecondFactors, SecondStep, SessionLifetime, SignIn, SinkError, Span,
-    SpanSink, Squad, TenantDirectory, TenantId, UnknownKey, UsageMeter, UsageReader, Whoami,
+    FederatedSignIn, Ingest, IngestKey, Issues, Mailer, Metering, NoPhotos, NoProvider,
+    OrgSettings, Photo, PhotoError, Photos, Pictured, Portrait, Profile, ProvisionPolicy,
+    ResetError, ResetPassword, ResetToken, Roster, Scope, SecondFactors, SecondStep,
+    SessionLifetime, Sessions, SignIn, SinkError, Span, SpanSink, Squad, TenantDirectory, TenantId,
+    UnknownKey, UsageMeter, UsageReader, Whoami,
 };
 use comettrace_storage::{
-    Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseReader, ClickhouseSink,
+    Allowance, Argon2Hasher, CONTROL_PLANE, ClickhouseIssues, ClickhouseReader, ClickhouseSink,
     LocalPasswordProvider, MailSettings, MemoryMeter, MemorySink, OidcProvider, OidcSettings,
-    PhotoStoreSettings, PostgresAccounts, PostgresDirectory, PostgresFactors, PostgresFlows,
-    PostgresMemberships, PostgresOrgs, PostgresProjects, PostgresResets, PostgresRoster,
-    PostgresSessions, PostgresTeams, PostgresUsage, RedisMeter, S3Photos, SecretSeal, SmtpMailer,
-    SpanStoreSettings, StaticDirectory, StaticQuota, SystemClock, load_allowances, open_span_store,
+    PhotoStoreSettings, PostgresAccounts, PostgresDecisions, PostgresDirectory, PostgresFactors,
+    PostgresFlows, PostgresMemberships, PostgresOrgs, PostgresProjects, PostgresResets,
+    PostgresRoster, PostgresSessions, PostgresTeams, PostgresUsage, RedisMeter, S3Photos,
+    SecretSeal, SmtpMailer, SpanStoreSettings, StaticDirectory, StaticQuota, SystemClock,
+    load_allowances, open_span_store,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -158,13 +160,14 @@ async fn main() -> anyhow::Result<()> {
     if let (Some(pool), Meter::Redis(_)) = (pool.as_ref(), meter.as_ref()) {
         tokio::spawn(roll_up_hourly(Arc::clone(&meter), pool.clone()));
     }
-    let (sink, reader) = spans_of(&config).await?;
+    let (sink, reader, grouping) = spans_of(&config).await?;
     let sink = Arc::new(sink);
     tokio::spawn(flush_spans(Arc::clone(&sink)));
     let gallery = Arc::new(gallery_of(&config)?);
     let identity = identity_routes(&config, pool.as_ref(), Arc::clone(&gallery))
         .await?
         .merge(explore_routes(pool.as_ref(), reader))
+        .merge(issue_routes(pool.as_ref(), grouping))
         .merge(catalogue_routes(pool.as_ref()))
         .merge(org_routes(pool.as_ref(), gallery))
         .merge(roster_routes(pool.as_ref())?)
@@ -290,12 +293,14 @@ fn gateway_of(
     Ingest::new(directory, quota, sink, meter)
 }
 
-type Looking = Explore<Arc<Sessions>, PostgresMemberships, ClickhouseReader>;
-type Holding = Catalogue<Arc<Sessions>, PostgresMemberships, PostgresProjects>;
-type Settling = OrgSettings<Arc<Sessions>, PostgresMemberships, PostgresOrgs, Arc<Gallery>>;
-type Enrolling = Roster<Arc<Sessions>, PostgresMemberships, PostgresRoster<SystemClock>>;
-type Arranging = Squad<Arc<Sessions>, PostgresMemberships, PostgresTeams>;
-type Measuring = Metering<Arc<Sessions>, PostgresMemberships, Arc<Meter>, PostgresUsage>;
+type Looking = Explore<Arc<Store>, PostgresMemberships, ClickhouseReader>;
+type Holding = Catalogue<Arc<Store>, PostgresMemberships, PostgresProjects>;
+type Settling = OrgSettings<Arc<Store>, PostgresMemberships, PostgresOrgs, Arc<Gallery>>;
+type Enrolling = Roster<Arc<Store>, PostgresMemberships, PostgresRoster<SystemClock>>;
+type Arranging = Squad<Arc<Store>, PostgresMemberships, PostgresTeams>;
+type Measuring = Metering<Arc<Store>, PostgresMemberships, Arc<Meter>, PostgresUsage>;
+type Grouping =
+    Issues<Arc<Store>, PostgresMemberships, ClickhouseIssues, PostgresDecisions, SystemClock>;
 
 fn roster_routes(pool: Option<&PgPool>) -> anyhow::Result<Router> {
     let Some(pool) = pool else {
@@ -380,6 +385,28 @@ fn catalogue_routes(pool: Option<&PgPool>) -> Router {
     catalogue_router(catalogue)
 }
 
+fn issue_routes(pool: Option<&PgPool>, reader: Option<ClickhouseIssues>) -> Router {
+    let (Some(pool), Some(reader)) = (pool, reader) else {
+        tracing::warn!(
+            "issues cannot be grouped: that needs both a control plane to authorise \
+             the reader and a span store holding the exceptions to group"
+        );
+        return Router::new();
+    };
+    let sessions = Arc::new(PostgresSessions::new(
+        pool.clone(),
+        SystemClock,
+        SessionLifetime::default(),
+    ));
+    let issues: Arc<Grouping> = Arc::new(Issues::new(
+        Whoami::new(sessions, PostgresMemberships::new(pool.clone())),
+        reader,
+        PostgresDecisions::new(pool.clone()),
+        SystemClock,
+    ));
+    issue_router(issues)
+}
+
 fn explore_routes(pool: Option<&PgPool>, reader: Option<ClickhouseReader>) -> Router {
     let (Some(pool), Some(reader)) = (pool, reader) else {
         tracing::warn!(
@@ -400,14 +427,16 @@ fn explore_routes(pool: Option<&PgPool>, reader: Option<ClickhouseReader>) -> Ro
     explore_router(explore)
 }
 
-async fn spans_of(config: &Config) -> anyhow::Result<(Sink, Option<ClickhouseReader>)> {
+async fn spans_of(
+    config: &Config,
+) -> anyhow::Result<(Sink, Option<ClickhouseReader>, Option<ClickhouseIssues>)> {
     let Some(spans) = config.spans.clone() else {
         tracing::warn!(
             "no span store is configured, so accepted spans are held in memory and \
              lost when this process ends, and no trace can be read back; \
              set spans.url to keep them"
         );
-        return Ok((Sink::Memory(MemorySink::default()), None));
+        return Ok((Sink::Memory(MemorySink::default()), None, None));
     };
     let settings = SpanStoreSettings::from(spans);
     let store = open_span_store(&settings, SystemClock)
@@ -418,7 +447,11 @@ async fn spans_of(config: &Config) -> anyhow::Result<(Sink, Option<ClickhouseRea
         retention_days = settings.retention_days,
         "spans are written to the span store"
     );
-    Ok((Sink::Spans(Box::new(store.sink)), Some(store.reader)))
+    Ok((
+        Sink::Spans(Box::new(store.sink)),
+        Some(store.reader),
+        Some(store.issues),
+    ))
 }
 
 async fn flush_spans(sink: Arc<Sink>) {
@@ -452,17 +485,17 @@ async fn flush_once(sink: &Sink) {
 }
 
 type LocalSource = LocalPasswordProvider<Argon2Hasher>;
-type Sessions = PostgresSessions<SystemClock>;
+type Store = PostgresSessions<SystemClock>;
 type Factors = PostgresFactors<SystemClock>;
-type PasswordSignIn = SignIn<LocalSource, NoProvider, PostgresAccounts, Arc<Sessions>, Factors>;
-type Settings = SecondFactors<Factors, Arc<Sessions>, SystemClock>;
-type Steps = SecondStep<Factors, Arc<Sessions>, SystemClock>;
+type PasswordSignIn = SignIn<LocalSource, NoProvider, PostgresAccounts, Arc<Store>, Factors>;
+type Settings = SecondFactors<Factors, Arc<Store>, SystemClock>;
+type Steps = SecondStep<Factors, Arc<Store>, SystemClock>;
 type Resets = ResetPassword<PostgresResets<SystemClock>, Argon2Hasher, Relay>;
-type Changes =
-    ChangePassword<Arc<Sessions>, LocalSource, PostgresResets<SystemClock>, Argon2Hasher>;
-type Me = Profile<Arc<Sessions>, PostgresMemberships, PostgresAccounts, Arc<Gallery>>;
+type Changes = ChangePassword<Arc<Store>, LocalSource, PostgresResets<SystemClock>, Argon2Hasher>;
+type Me = Profile<Arc<Store>, PostgresMemberships, PostgresAccounts, Arc<Gallery>>;
+type Rolling = Sessions<Arc<Store>, Store>;
 type Federated =
-    FederatedSignIn<OidcProvider, PostgresFlows<SystemClock>, PostgresAccounts, Arc<Sessions>>;
+    FederatedSignIn<OidcProvider, PostgresFlows<SystemClock>, PostgresAccounts, Arc<Store>>;
 
 async fn identity_routes(
     config: &Config,
@@ -498,7 +531,11 @@ async fn identity_routes(
         accounts.clone(),
         gallery,
     ));
-    let mut routes = offered.merge(me_router(me));
+    let rolling: Arc<Rolling> = Arc::new(Sessions::new(
+        Arc::clone(&sessions),
+        sessions.as_ref().clone(),
+    ));
+    let mut routes = offered.merge(me_router(me)).merge(session_router(rolling));
 
     if config.local_password {
         let hasher = Argon2Hasher::new().context("preparing the password hasher")?;

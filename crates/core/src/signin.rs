@@ -5,7 +5,7 @@ use crate::identity::{
 };
 use crate::second_factor::{ChallengeToken, FactorError, FactorKind, Gate};
 use crate::secret::SessionToken;
-use crate::session::{Session, SessionError, SessionStore};
+use crate::session::{Agent, Session, SessionError, SessionStore};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SignInError {
@@ -85,12 +85,16 @@ where
         self.sources.federated_enabled()
     }
 
-    pub async fn begin(&self, proof: SignInProof) -> Result<Opened, SignInError> {
+    pub async fn begin(
+        &self,
+        proof: SignInProof,
+        from: Option<&Agent>,
+    ) -> Result<Opened, SignInError> {
         let identity = self.sources.resolve(proof).await?;
         let account = self.accounts.provision(&identity, self.policy).await?;
         let offered = self.gate.offered(account).await?;
         if offered.is_empty() {
-            let token = self.sessions.issue(account, None).await?;
+            let token = self.sessions.issue(account, None, from).await?;
             return Ok(Opened::Session(token));
         }
         let challenge = ChallengeToken::random();

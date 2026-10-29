@@ -1,0 +1,13 @@
+-- The fingerprint that decides whether two exceptions are one issue, written once at ingest.
+--
+-- Grouping happens in ClickHouse, with GROUP BY on a stored value, rather than by reading a day
+-- of exceptions into the server to hash them there. The price is that changing a normalisation
+-- rule regroups nothing already stored: a rule change needs a new column and a new read.
+--
+-- Only `span_events` carries it. The spans table is untouched, so a span that never threw pays
+-- nothing for a feature about the ones that did. Events that are not exceptions carry sixteen
+-- zero bytes, which is the one fingerprint the domain never mints.
+--
+-- The bloom filter answers "where is this one issue", not "list the issues": the list still
+-- scans the `exception` range of the hours in its window, which the order by already groups.
+ALTER TABLE span_events ADD COLUMN IF NOT EXISTS fingerprint FixedString(16) AFTER name, ADD INDEX IF NOT EXISTS span_events_by_print fingerprint TYPE bloom_filter(0.01) GRANULARITY 4

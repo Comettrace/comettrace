@@ -42,6 +42,12 @@ pub const MIGRATIONS: &[Migration] = &[
         up: include_str!("../../migrations/clickhouse/0005_replacing_spans.up.sql"),
         down: include_str!("../../migrations/clickhouse/0005_replacing_spans.down.sql"),
     },
+    Migration {
+        version: 6,
+        name: "event_fingerprint",
+        up: include_str!("../../migrations/clickhouse/0006_event_fingerprint.up.sql"),
+        down: include_str!("../../migrations/clickhouse/0006_event_fingerprint.down.sql"),
+    },
 ];
 
 #[derive(Debug, thiserror::Error)]

@@ -1,7 +1,7 @@
 use crate::identity::{AuthError, AuthProvider, ProvisionPolicy, SignInProof};
 use crate::oidc::{FlowError, OidcFlows, PendingFlow};
 use crate::secret::SessionToken;
-use crate::session::{SessionError, SessionStore};
+use crate::session::{Agent, SessionError, SessionStore};
 use crate::signin::AccountDirectory;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -62,7 +62,12 @@ where
         Ok(url)
     }
 
-    pub async fn finish(&self, code: String, state: &str) -> Result<SessionToken, FederatedError> {
+    pub async fn finish(
+        &self,
+        code: String,
+        state: &str,
+        from: Option<&Agent>,
+    ) -> Result<SessionToken, FederatedError> {
         let flow = self.flows.take(state).await?;
         let identity = self
             .provider
@@ -74,6 +79,6 @@ where
             })
             .await?;
         let account = self.accounts.provision(&identity, self.policy).await?;
-        Ok(self.sessions.issue(account, None).await?)
+        Ok(self.sessions.issue(account, None, from).await?)
     }
 }

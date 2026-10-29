@@ -42,8 +42,8 @@ The `release` workflow runs three jobs in order:
 ## After
 
 ```sh
-docker pull ghcr.io/comettrace/comettrace:0.2.0
-docker run --rm ghcr.io/comettrace/comettrace:0.2.0 --help
+docker pull ghcr.io/ferrislabs/ferristrace:0.2.0
+docker run --rm ghcr.io/ferrislabs/ferristrace:0.2.0 --help
 ```
 
 Then read the release body: the image table carries a line per image and per architecture, and the changelog underneath should name every change an operator would notice. Check that `latest` moved if this was a stable release, and that it did not if this was a candidate.
