@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  IMAGE: ghcr.io/comettrace/comettrace
+  IMAGE: ghcr.io/ferrislabs/ferristrace
 
 jobs:
   check:

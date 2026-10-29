@@ -62,7 +62,7 @@ Running the front end against the stack, without rebuilding the image, is in
 ## Releases
 
 A tag `vX.Y.Z` publishes two images for linux/amd64 and linux/arm64:
-`ghcr.io/comettrace/comettrace:X.Y.Z` is the community build and
+`ghcr.io/ferrislabs/ferristrace:X.Y.Z` is the community build and
 `:X.Y.Z-ee` the cloud one. Both carry provenance and an SBOM.
 
 The number follows SemVer read for a pre-1.0 product: a breaking change bumps

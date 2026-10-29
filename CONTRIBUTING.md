@@ -39,7 +39,7 @@ You need Docker, Rust 1.97.0 (pinned in `rust-toolchain.toml`, so `rustup`
 picks it on its own) and, for the front end, Node 22 with pnpm 10.
 
 ```sh
-git clone git@github.com:Comettrace/comettrace.git
+git clone git@github.com:ferrislabs/ferristrace.git
 cd comettrace/deploy
 docker compose up --build --detach
 docker compose exec server comettrace bootstrap --email you@example.com
@@ -135,7 +135,7 @@ does the merge.
 
 ## Picking something to work on
 
-The [open issues](https://github.com/Comettrace/comettrace/issues) carry
+The [open issues](https://github.com/ferrislabs/ferristrace/issues) carry
 labels that say where and how big:
 
 - **`good first issue`** — small, self-contained, and the surrounding code is

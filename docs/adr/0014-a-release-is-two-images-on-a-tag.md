@@ -15,7 +15,7 @@ shell and an HTTP client in the image, for one GET.
 ## Decision
 
 A tag matching `vX.Y.Z` or `vX.Y.Z-rc.N` publishes two images to
-`ghcr.io/comettrace/comettrace`: `X.Y.Z` without the `ee` feature and
+`ghcr.io/ferrislabs/ferristrace`: `X.Y.Z` without the `ee` feature and
 `X.Y.Z-ee` with it. A stable community release also moves `latest`; a
 release candidate moves nothing.
 
