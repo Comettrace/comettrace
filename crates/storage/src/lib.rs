@@ -2,6 +2,7 @@ mod accounts;
 mod clickhouse;
 mod clock;
 mod counter;
+mod decisions;
 mod directory;
 mod factors;
 mod flows;
@@ -35,6 +36,7 @@ pub use clickhouse::{
 };
 pub use clock::{FixedClock, SystemClock};
 pub use counter::{CounterError, RedisMeter};
+pub use decisions::PostgresDecisions;
 pub use directory::StaticDirectory;
 pub use factors::PostgresFactors;
 pub use flows::PostgresFlows;
