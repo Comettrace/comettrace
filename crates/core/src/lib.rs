@@ -5,6 +5,7 @@ mod explore;
 mod federated;
 mod identity;
 mod ingest;
+mod issue;
 mod key;
 mod membership;
 mod oidc;
@@ -48,6 +49,11 @@ pub use identity::{
     SignInProof,
 };
 pub use ingest::{Ingest, IngestError, Payload};
+pub use issue::{
+    BadFingerprint, Counted, Decision, EXCEPTION_EVENT, Fingerprint, Issue, IssueDecisions,
+    IssueError, IssueFilter, IssueReader, Issues, Occurrence, PRINT_BYTES, Recorded, Status,
+    fingerprint, normalise,
+};
 pub use key::IngestKey;
 pub use membership::{Membership, Memberships, OrgRole, Who, Whoami, WhoamiError};
 pub use oidc::{CodeVerifier, FlowError, OidcFlows, PendingFlow};
