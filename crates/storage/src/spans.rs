@@ -4,7 +4,8 @@ use clickhouse::Client;
 use comettrace_core::Clock;
 
 use crate::clickhouse::{
-    BatchLimits, ClickhouseMigrator, ClickhouseReader, ClickhouseSink, MigrateError,
+    BatchLimits, ClickhouseIssues, ClickhouseMigrator, ClickhouseReader, ClickhouseSink,
+    MigrateError,
 };
 
 const DEFAULT_RETENTION_DAYS: u64 = 30;
@@ -53,6 +54,7 @@ impl SpanStoreSettings {
 pub struct SpanStore<C> {
     pub sink: ClickhouseSink<C>,
     pub reader: ClickhouseReader,
+    pub issues: ClickhouseIssues,
 }
 
 pub async fn open<C: Clock>(
@@ -68,6 +70,7 @@ pub async fn open<C: Clock>(
     }
     Ok(SpanStore {
         sink: ClickhouseSink::new(&client, BatchLimits::default(), settings.retention(), clock),
+        issues: ClickhouseIssues::new(client.clone()),
         reader: ClickhouseReader::new(client),
     })
 }

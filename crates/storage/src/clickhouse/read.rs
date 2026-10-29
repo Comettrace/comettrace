@@ -278,11 +278,11 @@ fn map_of(pairs: Vec<(String, String)>) -> BTreeMap<Box<str>, Box<str>> {
         .collect()
 }
 
-fn a_trace(spelling: &str) -> Result<TraceId, ReadError> {
+pub(crate) fn a_trace(spelling: &str) -> Result<TraceId, ReadError> {
     TraceId::try_from(decoded(spelling)?.as_slice()).map_err(|error| held(&error))
 }
 
-fn a_span(spelling: &str) -> Result<SpanId, ReadError> {
+pub(crate) fn a_span(spelling: &str) -> Result<SpanId, ReadError> {
     SpanId::try_from(decoded(spelling)?.as_slice()).map_err(|error| held(&error))
 }
 
@@ -290,7 +290,7 @@ fn decoded(spelling: &str) -> Result<Vec<u8>, ReadError> {
     hex::decode(spelling).map_err(|error| held(&error))
 }
 
-fn held(error: &dyn core::fmt::Display) -> ReadError {
+pub(crate) fn held(error: &dyn core::fmt::Display) -> ReadError {
     tracing::error!(%error, "the span store holds an identifier we cannot read");
     ReadError::StoreUnreachable
 }
@@ -314,19 +314,19 @@ fn read_status(spelling: &str) -> SpanStatus {
     }
 }
 
-fn uuid_of(project: Option<ProjectId>) -> Uuid {
+pub(crate) fn uuid_of(project: Option<ProjectId>) -> Uuid {
     project.map(ProjectId::as_uuid).unwrap_or_default()
 }
 
-fn nanos(value: u64) -> i64 {
+pub(crate) fn nanos(value: u64) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
 
-fn unsigned(value: i64) -> u64 {
+pub(crate) fn unsigned(value: i64) -> u64 {
     u64::try_from(value).unwrap_or_default()
 }
 
-fn refused(error: &clickhouse::error::Error) -> ReadError {
+pub(crate) fn refused(error: &clickhouse::error::Error) -> ReadError {
     tracing::error!(%error, "the span store refused a query");
     ReadError::StoreUnreachable
 }
