@@ -2,7 +2,7 @@ use crate::credential::{Password, PasswordPolicy, WeakPassword};
 use crate::identity::{AuthError, AuthProvider, SignInProof};
 use crate::reset::{ResetError, ResetStore};
 use crate::secret::SessionToken;
-use crate::session::{Agent, HashError, PasswordHasher, SessionError, SessionStore};
+use crate::session::{HashError, PasswordHasher, SessionError, SessionStore};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ChangeError {
@@ -114,7 +114,8 @@ mod tests {
     use crate::reset::{ResetError, ResetStore};
     use crate::secret::{SecretHash, SessionToken};
     use crate::session::{
-        HashError, PasswordCheck, PasswordHash, PasswordHasher, Session, SessionError, SessionStore,
+        Agent, HashError, PasswordCheck, PasswordHash, PasswordHasher, Session, SessionError,
+        SessionStore,
     };
     use crate::tenant::TenantId;
 
