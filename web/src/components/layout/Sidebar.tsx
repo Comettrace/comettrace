@@ -25,7 +25,7 @@ export function Sidebar({ onOpenShortcuts }: { onOpenShortcuts: () => void }) {
   const account = useAccount()
   const { active } = useOrganisations()
   const signingOut = useSignOut()
-  const newIssues = issues.filter((x) => x.status === 'unresolved' && x.isNew).length
+  const newIssues = issues.filter((x) => x.status === 'unresolved' || x.regressed).length
   const firing = rules.filter((r) => r.firing && r.on).length
   const { pref, setPref } = useTheme()
   const navigate = useNavigate()
