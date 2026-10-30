@@ -1012,7 +1012,7 @@ async fn an_account_cannot_revoke_a_session_it_does_not_keep() {
     let mine = an_account(&pool, "person@example.com", Some("secret")).await;
     let theirs = an_account(&pool, "other@example.com", Some("secret")).await;
     let sessions = PostgresSessions::new(pool.clone(), FixedClock::at(NOW), lifetime());
-    let hers = sessions.issue(theirs, None, None).await.expect("a session");
+    let first = sessions.issue(theirs, None, None).await.expect("a session");
     let here = sessions.issue(theirs, None, None).await.expect("another");
     let named = sessions
         .live(theirs, &here)
@@ -1026,7 +1026,7 @@ async fn an_account_cannot_revoke_a_session_it_does_not_keep() {
     let ended = sessions.revoke_one(mine, named).await.expect("it answers");
 
     assert!(!ended, "an id alone is not authority over a row");
-    assert!(sessions.resolve(&hers).await.is_ok());
+    assert!(sessions.resolve(&first).await.is_ok());
     assert!(
         !sessions
             .revoke_one(mine, SessionId::new(Uuid::new_v4()))
