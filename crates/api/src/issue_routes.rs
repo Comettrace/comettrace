@@ -10,7 +10,7 @@ use comettrace_core::{
     AccountId, Clock, Fingerprint, Issue, IssueDecisions, IssueError, IssueFilter, IssueReader,
     Issues, Memberships, Occurrence, ProjectId, SessionStore, Status, TenantId, Window,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 use crate::explore_routes::{NotCarried, carried};
@@ -54,8 +54,23 @@ pub struct Decided {
     project: Uuid,
     #[serde(default)]
     status: Option<String>,
-    #[serde(default)]
-    owner: Option<Option<Uuid>>,
+    #[serde(default, deserialize_with = "an_ownership")]
+    owner: Ownership,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Ownership {
+    #[default]
+    Untouched,
+    Cleared,
+    Given(Uuid),
+}
+
+fn an_ownership<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Ownership, D::Error> {
+    Option::<Uuid>::deserialize(deserializer).map(|owner| match owner {
+        Some(who) => Ownership::Given(who),
+        None => Ownership::Cleared,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -266,10 +281,14 @@ where
         let status = Status::parse(spelling).ok_or(IssueRefused::Status)?;
         issues.decide(&token, org, project, print, status).await?;
     }
-    if let Some(owner) = decided.owner {
-        issues
-            .assign(&token, org, project, print, owner.map(AccountId::new))
-            .await?;
+    match decided.owner {
+        Ownership::Untouched => {}
+        Ownership::Cleared => issues.assign(&token, org, project, print, None).await?,
+        Ownership::Given(who) => {
+            issues
+                .assign(&token, org, project, print, Some(AccountId::new(who)))
+                .await?;
+        }
     }
     Ok(StatusCode::NO_CONTENT.into_response())
 }

@@ -2,18 +2,14 @@ use std::collections::BTreeMap;
 
 use clickhouse::Row;
 use comettrace_core::{
-    EXCEPTION_EVENT, Fingerprint, PRINT_BYTES, ProjectId, Scope, SinkError, Span, SpanEvent,
-    SpanKind, SpanStatus, UnixSeconds,
+    EXCEPTION_EVENT, EXCEPTION_MESSAGE, EXCEPTION_TYPE, Fingerprint, PRINT_BYTES, ProjectId, Scope,
+    SinkError, Span, SpanEvent, SpanKind, SpanStatus, UnixSeconds,
 };
 use serde::Serialize;
 use serde_repr::Serialize_repr;
 use uuid::Uuid;
 
 const HTTP_STATUS_CODE: &str = "http.status_code";
-
-pub(crate) const EXCEPTION_TYPE: &str = "exception.type";
-pub(crate) const EXCEPTION_MESSAGE: &str = "exception.message";
-pub(crate) const EXCEPTION_STACKTRACE: &str = "exception.stacktrace";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr)]
 #[repr(i8)]

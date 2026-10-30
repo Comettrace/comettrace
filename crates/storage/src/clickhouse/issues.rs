@@ -20,6 +20,7 @@ const COUNTED: &str = "SELECT \
    FROM span_events \
    WHERE tenant_id = ? \
      AND name = 'exception' \
+     AND fingerprint != toFixedString('', 16) \
      AND time >= fromUnixTimestamp64Nano(?) \
      AND time < fromUnixTimestamp64Nano(?) \
      AND (? = 0 OR project_id = ?) \
@@ -173,10 +174,11 @@ fn read_occurrence(row: OccurrenceRow) -> Result<Occurrence, ReadError> {
 
 #[cfg(test)]
 mod tests {
-    use comettrace_core::EXCEPTION_EVENT;
+    use comettrace_core::{
+        EXCEPTION_EVENT, EXCEPTION_MESSAGE, EXCEPTION_STACKTRACE, EXCEPTION_TYPE,
+    };
 
     use super::{COUNTED, OCCURRENCES};
-    use crate::clickhouse::rows::{EXCEPTION_MESSAGE, EXCEPTION_STACKTRACE, EXCEPTION_TYPE};
 
     #[test]
     fn neither_query_reads_across_tenants() {
@@ -203,6 +205,15 @@ mod tests {
                 "a query without the event name would group log events into issues"
             );
         }
+    }
+
+    #[test]
+    fn the_list_skips_rows_written_before_the_print_existed() {
+        assert!(
+            COUNTED.contains("AND fingerprint != toFixedString('', 16)"),
+            "an exception stored before migration 0006 carries sixteen zero bytes \
+             and must not become one phantom issue"
+        );
     }
 
     #[test]
