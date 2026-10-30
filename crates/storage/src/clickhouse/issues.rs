@@ -173,10 +173,11 @@ fn read_occurrence(row: OccurrenceRow) -> Result<Occurrence, ReadError> {
 
 #[cfg(test)]
 mod tests {
-    use comettrace_core::EXCEPTION_EVENT;
+    use comettrace_core::{
+        EXCEPTION_EVENT, EXCEPTION_MESSAGE, EXCEPTION_STACKTRACE, EXCEPTION_TYPE,
+    };
 
     use super::{COUNTED, OCCURRENCES};
-    use crate::clickhouse::rows::{EXCEPTION_MESSAGE, EXCEPTION_STACKTRACE, EXCEPTION_TYPE};
 
     #[test]
     fn neither_query_reads_across_tenants() {
