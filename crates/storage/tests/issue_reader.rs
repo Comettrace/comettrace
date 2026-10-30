@@ -342,6 +342,54 @@ async fn counting_is_scoped_to_the_window() {
 }
 
 #[tokio::test]
+async fn an_exception_stored_before_the_print_existed_is_not_an_issue() {
+    let Some(client) = prepared("comettrace_issues_unprinted").await else {
+        return;
+    };
+    client
+        .query(
+            "INSERT INTO span_events \
+               (tenant_id, project_id, service_name, time, trace_id, span_id, name, \
+                attributes, expire_at) \
+             SELECT ?, ?, 'checkout', fromUnixTimestamp64Nano(?), ?, ?, ?, \
+                map('exception.type', 'StaleError', 'exception.message', 'gone'), \
+                toDateTime(?)",
+        )
+        .bind(tenant(1).as_uuid())
+        .bind(project(10).as_uuid())
+        .bind(i64::try_from(T0).expect("in range"))
+        .bind("0123456789abcdef")
+        .bind("01234567")
+        .bind("exception")
+        .bind(u32::try_from(NOW).expect("in range"))
+        .execute()
+        .await
+        .expect("a row written the way the sink did before migration 0006");
+    stored(
+        &client,
+        Scope::of(tenant(1)).in_project(Some(project(10))),
+        vec![thrown(
+            1,
+            "checkout",
+            vec![an_exception(T0, "TimeoutError", "deadline exceeded")],
+        )],
+    )
+    .await;
+
+    let issues = ClickhouseIssues::new(client)
+        .issues(tenant(1), &IssueFilter::over(around_t0()))
+        .await
+        .expect("the list is read");
+
+    assert_eq!(
+        issues.len(),
+        1,
+        "the unprinted row must not form a phantom issue"
+    );
+    assert_eq!(&*issues[0].exception_type, "TimeoutError");
+}
+
+#[tokio::test]
 async fn another_tenants_exceptions_are_never_counted() {
     let Some(client) = prepared("comettrace_issues_tenants").await else {
         return;
