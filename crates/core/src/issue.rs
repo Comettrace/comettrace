@@ -14,6 +14,9 @@ use crate::span::{SpanId, TraceId};
 use crate::tenant::TenantId;
 
 pub const EXCEPTION_EVENT: &str = "exception";
+pub const EXCEPTION_TYPE: &str = "exception.type";
+pub const EXCEPTION_MESSAGE: &str = "exception.message";
+pub const EXCEPTION_STACKTRACE: &str = "exception.stacktrace";
 pub const PRINT_BYTES: usize = 16;
 
 const DEFAULT_LIMIT: u32 = 50;

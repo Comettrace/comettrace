@@ -50,9 +50,9 @@ pub use identity::{
 };
 pub use ingest::{Ingest, IngestError, Payload};
 pub use issue::{
-    BadFingerprint, Counted, Decision, EXCEPTION_EVENT, Fingerprint, Issue, IssueDecisions,
-    IssueError, IssueFilter, IssueReader, Issues, Occurrence, PRINT_BYTES, Recorded, Status,
-    fingerprint, normalise,
+    BadFingerprint, Counted, Decision, EXCEPTION_EVENT, EXCEPTION_MESSAGE, EXCEPTION_STACKTRACE,
+    EXCEPTION_TYPE, Fingerprint, Issue, IssueDecisions, IssueError, IssueFilter, IssueReader,
+    Issues, Occurrence, PRINT_BYTES, Recorded, Status, fingerprint, normalise,
 };
 pub use key::IngestKey;
 pub use membership::{Membership, Memberships, OrgRole, Who, Whoami, WhoamiError};
